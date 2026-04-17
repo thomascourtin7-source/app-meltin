@@ -10,4 +10,6 @@ export type DailyServiceRow = {
   rdv2: string;
   vol: string;
   destProv: string;
+  /** Colonne optionnelle du Sheet (ASSIGNÉ, CHAUFFEUR, etc.) — texte brut. */
+  sheetAssignee: string;
 };

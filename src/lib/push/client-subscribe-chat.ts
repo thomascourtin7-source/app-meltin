@@ -15,7 +15,7 @@ export function urlBase64ToUint8Array(base64String: string): Uint8Array {
 
 export type ChatPushSubscribeResult =
   | { ok: true }
-  | { ok: false; error: string };
+  | { ok: false; error: string; offline?: boolean };
 
 const READY_TIMEOUT_MS = 15_000;
 
@@ -47,12 +47,16 @@ type PushSubscriptionJSON = {
 
 async function postSubscribeToApi(
   subscription: PushSubscriptionJSON,
-  senderName: string
+  displayName: string
 ): Promise<ChatPushSubscribeResult> {
   const save = await fetch("/api/push/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ subscription, senderName }),
+    body: JSON.stringify({
+      subscription,
+      userName: displayName,
+      senderName: displayName,
+    }),
   });
 
   if (!save.ok) {
@@ -64,7 +68,17 @@ async function postSubscribeToApi(
       typeof (err as { error: unknown }).error === "string"
         ? (err as { error: string }).error
         : "Enregistrement refusé.";
-    return { ok: false, error: msg };
+    const offlineFromJson =
+      typeof err === "object" &&
+      err !== null &&
+      "offline" in err &&
+      (err as { offline: unknown }).offline === true;
+    const offline: boolean =
+      offlineFromJson ||
+      save.status === 503 ||
+      save.status === 502 ||
+      save.status === 504;
+    return { ok: false, error: msg, offline };
   }
 
   return { ok: true };
@@ -94,7 +108,7 @@ export type SubscribeChatPushOptions = {
 };
 
 /**
- * Permission navigateur + abonnement push + enregistrement (sender_name) via /api/push/subscribe.
+ * Permission navigateur + abonnement push + enregistrement (`user_name`) via /api/push/subscribe.
  * L’enregistrement du SW (`navigator.serviceWorker.register`) doit être fait avant (ex. Chat.tsx).
  */
 export async function subscribeChatPush(

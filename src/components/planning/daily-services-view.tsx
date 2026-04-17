@@ -24,36 +24,41 @@ import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
+import {
+  DEFAULT_PLANNING_ASSIGNEE_SLUG,
+  KNOWN_PLANNING_ASSIGNEE_SLUGS,
+  PLANNING_ASSIGNEE_OPTIONS,
+  matchSheetAssigneeToTeamLabel,
+} from "@/lib/planning/planning-team";
+import {
+  serviceUrgencyIdentityKey,
+  stableServiceRowKey,
+} from "@/lib/planning/service-row-keys";
 import { cn } from "@/lib/utils";
 
 const POLL_MS = 5 * 60 * 1000;
 
-const ASSIGNEE_OPTIONS = [
-  { value: "__none__", label: "Non assigné" },
-  { value: "javed", label: "Javed" },
-  { value: "thomas", label: "Thomas" },
-  { value: "simon", label: "Simon" },
-  { value: "karthik", label: "Karthik" },
-  { value: "elias", label: "Elias" },
-  { value: "pravin", label: "Pravin" },
-  { value: "deva", label: "Deva" },
-  { value: "kumar", label: "Kumar" },
-  { value: "subcontracted", label: "Sous-traité" },
-  { value: "emoji_alert", label: "🚨🚨🚨" },
-] as const;
+const DEFAULT_ASSIGNEE = DEFAULT_PLANNING_ASSIGNEE_SLUG;
 
-const DEFAULT_ASSIGNEE = ASSIGNEE_OPTIONS[0].value;
-
-const KNOWN_ASSIGNEE_VALUES: string[] = ASSIGNEE_OPTIONS.map((o) => o.value);
+const KNOWN_ASSIGNEE_VALUES: string[] = KNOWN_PLANNING_ASSIGNEE_SLUGS;
 
 const PLANNING_ASSIGNEES_STORAGE_KEY = "meltin_planning_assignees_v2";
 
 /** Snapshots des identités « vues » par jour (détection des nouvelles lignes). */
 const PLANNING_ROW_SNAPSHOT_KEY = "meltin_planning_row_snapshot_v1";
 
+/** Dernière valeur colonne « assigné » du Sheet par ligne (push ciblé). */
+const PLANNING_SHEET_ASSIGNEE_SNAPSHOT_KEY =
+  "meltin_planning_sheet_assignee_snapshot_v1";
+
 type AssigneeStore = Record<string, Record<string, string>>;
 
 type SnapshotStore = Record<string, Record<string, string[]>>;
+
+type SheetAssigneeSnapshotStore = Record<
+  string,
+  Record<string, Record<string, string>>
+>;
 
 function loadAssigneeStore(): AssigneeStore {
   if (typeof window === "undefined") return {};
@@ -98,14 +103,29 @@ function saveSnapshotStore(store: SnapshotStore): void {
   }
 }
 
-/**
- * Identité métier demandée : date + client + vol + RDV (rdv1 & rdv2).
- * Sert à repérer une ligne nouvellement apparue dans le Sheet.
- */
-function serviceUrgencyIdentityKey(row: DailyServiceRow): string {
-  return [row.dateIso, row.client, row.vol, row.rdv1, row.rdv2]
-    .map((s) => String(s ?? "").trim())
-    .join("|");
+function loadSheetAssigneeSnapshot(): SheetAssigneeSnapshotStore {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(PLANNING_SHEET_ASSIGNEE_SNAPSHOT_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed as SheetAssigneeSnapshotStore;
+  } catch {
+    return {};
+  }
+}
+
+function saveSheetAssigneeSnapshot(store: SheetAssigneeSnapshotStore): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      PLANNING_SHEET_ASSIGNEE_SNAPSHOT_KEY,
+      JSON.stringify(store)
+    );
+  } catch {
+    /* quota */
+  }
 }
 
 function formatLocalYmd(d: Date): string {
@@ -141,25 +161,6 @@ function openNativeDatePicker(input: HTMLInputElement | null): void {
     }
   }
   input.click();
-}
-
-/**
- * Clé stable par ligne (sans index) : reste la même si on change de date puis qu’on revient au jour concerné.
- */
-function stableServiceRowKey(row: DailyServiceRow): string {
-  return [
-    row.dateIso,
-    row.client,
-    row.type,
-    row.vol,
-    row.destProv,
-    row.rdv1,
-    row.rdv2,
-    row.tel,
-    row.driverInfo,
-  ]
-    .map((s) => String(s ?? "").trim())
-    .join("|");
 }
 
 function formatTelDriverLine(row: DailyServiceRow): string {
@@ -248,7 +249,7 @@ function ServiceBlock({
             <SelectValue />
           </SelectTrigger>
           <SelectContent className="max-h-72">
-            {ASSIGNEE_OPTIONS.map((opt) => (
+            {PLANNING_ASSIGNEE_OPTIONS.map((opt) => (
               <SelectItem
                 key={opt.value}
                 value={opt.value}
@@ -452,6 +453,66 @@ export function DailyServicesView() {
         }).catch(() => {});
       }
     }
+  }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate]);
+
+  /** Colonne « assigné » du Sheet : changement → push uniquement vers le membre ciblé. */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const rows = data?.rows;
+    if (!rows?.length) return;
+
+    const dateKey = normalizeCanonicalDateKey(selectedDate);
+    const rowsForDay = rows.filter(
+      (r) => normalizeCanonicalDateKey(r.dateIso) === dateKey
+    );
+    if (!rowsForDay.length) return;
+
+    const snapshots = loadSheetAssigneeSnapshot();
+    const prevMap = snapshots[spreadsheetId]?.[dateKey];
+
+    const nextMap: Record<string, string> = {};
+    for (const row of rowsForDay) {
+      nextMap[stableServiceRowKey(row)] = row.sheetAssignee.trim();
+    }
+
+    if (prevMap === undefined) {
+      snapshots[spreadsheetId] = {
+        ...(snapshots[spreadsheetId] ?? {}),
+        [dateKey]: nextMap,
+      };
+      saveSheetAssigneeSnapshot(snapshots);
+      return;
+    }
+
+    for (const row of rowsForDay) {
+      const stableKey = stableServiceRowKey(row);
+      const prevRaw = (prevMap[stableKey] ?? "").trim();
+      const nextRaw = row.sheetAssignee.trim();
+      if (prevRaw === nextRaw) continue;
+
+      const target = matchSheetAssigneeToTeamLabel(nextRaw);
+      if (!target) continue;
+
+      const prevTarget = matchSheetAssigneeToTeamLabel(prevRaw);
+      if (prevTarget === target) continue;
+
+      void fetch("/api/push/planning-assignee-alert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spreadsheetId,
+          dateKey,
+          stableRowKey: stableKey,
+          assigneeName: target,
+        }),
+      }).catch(() => {});
+    }
+
+    snapshots[spreadsheetId] = {
+      ...(snapshots[spreadsheetId] ?? {}),
+      [dateKey]: nextMap,
+    };
+    saveSheetAssigneeSnapshot(snapshots);
   }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate]);
 
   useEffect(() => {

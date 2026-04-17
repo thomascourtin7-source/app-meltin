@@ -12,23 +12,29 @@ function configureWebPush(): boolean {
   return true;
 }
 
-export type ChatMessagePushInput = {
-  id: string;
-  sender_name: string;
-  content: string;
-  image_url: string | null;
-};
+function normSender(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
 
 /**
- * Envoie une notification push à tous les abonnés sauf ceux ayant le même `user_name` (prénom chat).
+ * Envoie une notification push uniquement aux abonnés dont `user_name`
+ * correspond au membre ciblé (ex. « Simon », comme après « S'enregistrer »).
  */
-export async function notifyChatSubscribersExceptSender(
-  message: ChatMessagePushInput
+export async function notifyPlanningAssigneeSubscribers(
+  targetDisplayName: string,
+  payload: { title: string; body: string }
 ): Promise<{ sent: number; failed: number }> {
   if (!configureWebPush()) return { sent: 0, failed: 0 };
 
   const admin = getSupabaseAdmin();
   if (!admin) return { sent: 0, failed: 0 };
+
+  const want = normSender(targetDisplayName);
+  if (!want) return { sent: 0, failed: 0 };
 
   const { data: rows, error } = await admin
     .from("push_subscriptions")
@@ -36,23 +42,21 @@ export async function notifyChatSubscribersExceptSender(
 
   if (error || !rows?.length) return { sent: 0, failed: 0 };
 
-  const senderNorm = message.sender_name.trim();
-  const text =
-    message.image_url?.trim() && !message.content.trim()
-      ? "Photo"
-      : message.content.trim().slice(0, 200) || "Message";
+  const targets = rows.filter(
+    (r) => normSender(String(r.user_name ?? "")) === want
+  );
 
-  const payload = JSON.stringify({
-    senderName: message.sender_name,
-    text,
-    messageId: message.id,
+  const body = JSON.stringify({
+    type: "planning-update",
+    title: payload.title,
+    body: payload.body,
+    openUrl: "/",
   });
 
   let sent = 0;
   let failed = 0;
 
-  for (const row of rows) {
-    if ((row.user_name as string).trim() === senderNorm) continue;
+  for (const row of targets) {
     try {
       await webpush.sendNotification(
         {
@@ -62,8 +66,8 @@ export async function notifyChatSubscribersExceptSender(
             auth: row.auth as string,
           },
         } as WebPushSubscription,
-        payload,
-        { TTL: 60 }
+        body,
+        { TTL: 3600 }
       );
       sent++;
     } catch {

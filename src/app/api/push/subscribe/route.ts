@@ -33,12 +33,20 @@ export async function POST(req: Request) {
     );
   }
 
-  const senderRaw = (body as { senderName?: unknown }).senderName;
-  const senderName =
-    typeof senderRaw === "string" ? senderRaw.trim() : "";
-  if (senderName.length < 1 || senderName.length > 120) {
+  const b = body as { userName?: unknown; senderName?: unknown };
+  const nameRaw =
+    typeof b.userName === "string"
+      ? b.userName
+      : typeof b.senderName === "string"
+        ? b.senderName
+        : "";
+  const userName = nameRaw.trim();
+  if (userName.length < 1 || userName.length > 120) {
     return NextResponse.json(
-      { error: "Indiquez un prénom valide (senderName, 1–120 caractères)." },
+      {
+        error:
+          "Indiquez un nom valide (userName ou senderName, 1–120 caractères).",
+      },
       { status: 400 }
     );
   }
@@ -49,36 +57,28 @@ export async function POST(req: Request) {
       {
         error:
           "SUPABASE_SERVICE_ROLE_KEY ou NEXT_PUBLIC_SUPABASE_URL manquant côté serveur.",
+        offline: true,
       },
       { status: 503 }
     );
   }
 
-  const now = new Date().toISOString();
-  const { data, error } = await admin
-    .from("push_subscriptions")
-    .upsert(
-      {
-        endpoint: sub.endpoint,
-        p256dh: sub.keys.p256dh,
-        auth: sub.keys.auth,
-        sender_name: senderName,
-        updated_at: now,
-      },
-      { onConflict: "endpoint" }
-    )
-    .select("id")
-    .maybeSingle();
+  const { error } = await admin.from("push_subscriptions").upsert(
+    {
+      endpoint: sub.endpoint,
+      p256dh: sub.keys.p256dh,
+      auth: sub.keys.auth,
+      user_name: userName,
+    },
+    { onConflict: "endpoint" }
+  );
 
   if (error) {
     return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
+      { error: error.message, offline: true },
+      { status: 503 }
     );
   }
 
-  return NextResponse.json({
-    ok: true,
-    id: data?.id ?? null,
-  });
+  return NextResponse.json({ ok: true });
 }

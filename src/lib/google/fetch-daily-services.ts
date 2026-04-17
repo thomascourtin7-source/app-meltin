@@ -9,7 +9,7 @@ const SHEETS_VALUES_BASE =
 
 /**
  * Plage par défaut : onglet **Feuille 1** (vérifier dans Google Sheets que le nom correspond),
- * colonnes A–K jusqu’à la ligne 1000 (données ex. ligne 508 incluses).
+ * colonnes A–M jusqu’à la ligne 1000 (colonne « assigné » optionnelle).
  * Surcharge : PLANNING_SHEET_RANGE ou NEXT_PUBLIC_PLANNING_SHEET_RANGE
  */
 function getSheetRange(): string {
@@ -17,7 +17,7 @@ function getSheetRange(): string {
     process.env.PLANNING_SHEET_RANGE?.trim() ||
     process.env.NEXT_PUBLIC_PLANNING_SHEET_RANGE?.trim();
   if (fromEnv) return fromEnv;
-  return "'Feuille 1'!A1:K1000";
+  return "'Feuille 1'!A1:M1000";
 }
 
 export type DailyServicesFetchResult = {

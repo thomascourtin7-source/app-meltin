@@ -111,6 +111,7 @@ export function PushNotificationCard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           subscription,
+          userName: "__planning",
           senderName: "__planning",
         }),
       });
@@ -124,8 +125,16 @@ export function PushNotificationCard() {
           typeof (err as { error: unknown }).error === "string"
             ? (err as { error: string }).error
             : "Enregistrement refusé.";
-        setStatus("error");
-        setMessage(msg);
+        const offline =
+          (err &&
+            typeof err === "object" &&
+            "offline" in err &&
+            (err as { offline: unknown }).offline === true) ||
+          save.status === 503 ||
+          save.status === 502 ||
+          save.status === 504;
+        setStatus(offline ? "idle" : "error");
+        setMessage(offline ? "Mode hors-ligne" : msg);
         return;
       }
 
@@ -198,7 +207,14 @@ export function PushNotificationCard() {
         </div>
 
         {message ? (
-          <p className="text-sm text-destructive" role="alert">
+          <p
+            className={
+              message === "Mode hors-ligne"
+                ? "text-sm text-muted-foreground"
+                : "text-sm text-destructive"
+            }
+            role={message === "Mode hors-ligne" ? "status" : "alert"}
+          >
             {message}
           </p>
         ) : null}

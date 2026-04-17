@@ -212,6 +212,7 @@ export function Chat({ variant }: ChatProps) {
     "idle" | "loading" | "subscribed" | "error"
   >("idle");
   const [chatPushMessage, setChatPushMessage] = useState<string | null>(null);
+  const [chatPushOfflineHint, setChatPushOfflineHint] = useState(false);
   const editingMessageIdRef = useRef<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -395,6 +396,7 @@ export function Chat({ variant }: ChatProps) {
 
   const onEnableChatPush = useCallback(async () => {
     setChatPushMessage(null);
+    setChatPushOfflineHint(false);
     const vapid = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim();
     if (!vapid) {
       window.alert("Clé VAPID manquante");
@@ -431,7 +433,13 @@ export function Chat({ variant }: ChatProps) {
       setChatPushStatus("subscribed");
     } else {
       setChatPushStatus("error");
-      setChatPushMessage(r.error);
+      if (r.offline) {
+        setChatPushOfflineHint(true);
+        setChatPushMessage(null);
+      } else {
+        setChatPushOfflineHint(false);
+        setChatPushMessage(r.error);
+      }
     }
   }, [trimmedName]);
 
@@ -833,7 +841,9 @@ export function Chat({ variant }: ChatProps) {
                     ? "Alertes actives"
                     : "Activer les alertes"}
                 </Button>
-                {chatPushMessage ? (
+                {chatPushOfflineHint ? (
+                  <p className="text-xs text-muted-foreground">Mode hors-ligne</p>
+                ) : chatPushMessage ? (
                   <p className="text-xs text-destructive" role="alert">
                     {chatPushMessage}
                   </p>

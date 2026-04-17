@@ -173,6 +173,17 @@ export function parseDailyServiceRows(
     "DRIVER",
     "driver",
   ]);
+  const assigneeCol = findColumnIndex(headers, [
+    "ASSIGNÉ",
+    "ASSIGNE",
+    "ASSIGNATION",
+    "CHAUFFEUR",
+    "CONDUCTEUR",
+    "ÉQUIPE",
+    "EQUIPE",
+    "ASSIGNED",
+    "DRIVER ASSIGNED",
+  ]);
 
   if (dateCol < 0 || clientCol < 0 || typeCol < 0) {
     throw new Error(
@@ -202,6 +213,7 @@ export function parseDailyServiceRows(
       rdv2: rdv2Col >= 0 ? cell(row, rdv2Col) : "",
       vol: volCol >= 0 ? cell(row, volCol) : "",
       destProv: destCol >= 0 ? cell(row, destCol) : "",
+      sheetAssignee: assigneeCol >= 0 ? cell(row, assigneeCol) : "",
     });
   }
   return {
