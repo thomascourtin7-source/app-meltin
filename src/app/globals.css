@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -126,5 +126,17 @@
   }
   html {
     @apply font-sans;
+  }
+
+  /*
+   * Badge « N » / indicateur Next.js : injecté par le runtime en dev, pas par layout.tsx.
+   * Désactivation principale : next.config.ts -> devIndicators: false
+   * Repli CSS (dev uniquement) pour next-devtools.
+   */
+  html[data-env="development"] [class*="dev-tools-indicator"],
+  html[data-env="development"] [class*="devtools-indicator"] {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
   }
 }

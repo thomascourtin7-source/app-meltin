@@ -17,6 +17,11 @@
 /.next/
 /out/
 
+# next-pwa (régénérés à chaque build) — sw.js est manuel (push)
+/public/workbox-*.js
+/public/fallback-*.js
+/public/swe-worker-*.js
+
 # production
 /build
 
