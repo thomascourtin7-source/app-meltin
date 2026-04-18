@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import { Chat } from "@/components/chat/Chat";
 import { ChatUIProvider } from "@/components/chat/chat-ui-provider";
+import { PlanningPreparationProvider } from "@/components/planning/planning-preparation-context";
 import { PlanningPushBootstrap } from "@/components/push/planning-push-bootstrap";
 import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
@@ -87,16 +88,18 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <PlanningPushBootstrap />
         <ChatUIProvider>
-          <SiteHeader />
-          <div className="flex flex-1">
-            <aside className="hidden md:block md:w-80 md:shrink-0 md:border-r md:border-border/80 md:bg-background">
-              <div className="sticky top-14 h-[calc(100dvh-3.5rem)]">
-                <Chat variant="desktop" />
-              </div>
-            </aside>
-            <main className="flex min-w-0 flex-1 flex-col">{children}</main>
-          </div>
-          <Chat variant="mobile" />
+          <PlanningPreparationProvider>
+            <SiteHeader />
+            <div className="flex flex-1">
+              <aside className="hidden md:block md:w-80 md:shrink-0 md:border-r md:border-border/80 md:bg-background">
+                <div className="sticky top-14 h-[calc(100dvh-3.5rem)]">
+                  <Chat variant="desktop" />
+                </div>
+              </aside>
+              <main className="flex min-w-0 flex-1 flex-col">{children}</main>
+            </div>
+            <Chat variant="mobile" />
+          </PlanningPreparationProvider>
         </ChatUIProvider>
       </body>
     </html>

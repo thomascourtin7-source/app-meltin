@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import {
   Calendar,
@@ -36,6 +37,7 @@ import {
   PLANNING_ASSIGNEE_OPTIONS,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
   PLANNING_URGENT_ASSIGNEE_SLUG,
+  assigneeSlugToNotifyLabel,
   isUrgentAssignee,
   matchSheetAssigneeToTeamLabel,
   normalizeAssigneeListFromStored,
@@ -45,8 +47,10 @@ import {
   serviceUrgencyIdentityKey,
   stableServiceRowKey,
 } from "@/lib/planning/service-row-keys";
+import { computeConflictRowKeys } from "@/lib/planning/time-conflicts";
 import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
+import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -250,6 +254,8 @@ type ServiceBlockProps = {
   rowKey: string;
   assignees: string[];
   onAssigneesChange: (key: string, next: string[]) => void;
+  hasTimeConflict?: boolean;
+  showConflictUi?: boolean;
 };
 
 /** Police : meilleur rendu des emojis sur iOS / Android. */
@@ -263,6 +269,8 @@ function ServiceBlock({
   rowKey,
   assignees,
   onAssigneesChange,
+  hasTimeConflict = false,
+  showConflictUi = false,
 }: ServiceBlockProps) {
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
 
@@ -301,9 +309,21 @@ function ServiceBlock({
         "mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-card px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
         isUrgent
           ? "border-red-300/60 bg-red-50/90 dark:border-red-900/50 dark:bg-red-950/35"
-          : "border-border/50"
+          : "border-border/50",
+        hasTimeConflict &&
+          showConflictUi &&
+          "bg-red-50 dark:bg-red-950/25"
       )}
     >
+      {hasTimeConflict && showConflictUi ? (
+        <div
+          className="mb-3 flex items-center gap-1.5 text-xs font-medium text-red-800 dark:text-red-200"
+          role="status"
+        >
+          <span aria-hidden>⚠️</span>
+          <span>Conflit horaire</span>
+        </div>
+      ) : null}
       <div className="mb-5">
         <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
           Assignation
@@ -479,6 +499,11 @@ function ServiceBlock({
 }
 
 export function DailyServicesView() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { isPreparingTomorrow, setPreparingTomorrow } = usePlanningPreparation();
+
   const configuredId = useLocalSpreadsheetId();
   const spreadsheetId =
     process.env.NEXT_PUBLIC_PLANNING_SPREADSHEET_ID?.trim() ||
@@ -492,6 +517,11 @@ export function DailyServicesView() {
   const [calendarPressed, setCalendarPressed] = useState(false);
 
   const [assigneesBump, setAssigneesBump] = useState(0);
+  const [planningDoneBusy, setPlanningDoneBusy] = useState(false);
+  const [planningDoneMsg, setPlanningDoneMsg] = useState<string | null>(null);
+  const [conflictRowKeys, setConflictRowKeys] = useState<Set<string>>(
+    () => new Set()
+  );
 
   /** Migration one-shot : normalise les assignations (tableaux / slugs / emojis). */
   useEffect(() => {
@@ -561,6 +591,9 @@ export function DailyServicesView() {
   const isTomorrowSelected = selectedKey === tomorrowYmd;
   const isCustomDateSelected = !isTodaySelected && !isTomorrowSelected;
 
+  /** `mode=prep` dans l’URL force le mode préparation (même si le contexte a été perdu). */
+  const urlPrepMode = searchParams.get("mode") === "prep";
+
   const selectDateAndRefresh = useCallback(
     (ymd: string) => {
       setSelectedDate(normalizeCanonicalDateKey(ymd));
@@ -569,6 +602,63 @@ export function DailyServicesView() {
     [mutate]
   );
 
+  /**
+   * `?mode=prep` → active la préparation.
+   * `?day=tomorrow` ou `?date=tomorrow` → sélectionne la date de demain.
+   * Sur `/` uniquement : nettoie l’URL après `?day=tomorrow` (comportement historique).
+   */
+  const planningQueryKey = searchParams.toString();
+  useEffect(() => {
+    const modePrep = searchParams.get("mode") === "prep";
+    const tomorrowQ =
+      searchParams.get("day") === "tomorrow" ||
+      searchParams.get("date") === "tomorrow";
+    if (!modePrep && !tomorrowQ) return;
+
+    if (modePrep) setPreparingTomorrow(true);
+    if (tomorrowQ) {
+      const ymd = normalizeCanonicalDateKey(
+        formatLocalYmd(addDaysLocal(new Date(), 1))
+      );
+      setSelectedDate(ymd);
+      void mutate();
+    }
+    if (pathname === "/" && searchParams.get("day") === "tomorrow") {
+      router.replace("/", { scroll: false });
+    }
+  }, [planningQueryKey, pathname, mutate, router, setPreparingTomorrow]);
+
+  const onPlanningReadyNotify = useCallback(async () => {
+    setPlanningDoneBusy(true);
+    setPlanningDoneMsg(null);
+    try {
+      const res = await fetch("/api/push/planning-daily-ready", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data: unknown = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg =
+          data &&
+          typeof data === "object" &&
+          "error" in data &&
+          typeof (data as { error: unknown }).error === "string"
+            ? (data as { error: string }).error
+            : "Envoi impossible.";
+        throw new Error(msg);
+      }
+      setPreparingTomorrow(false);
+      setPlanningDoneMsg(null);
+      router.replace(pathname, { scroll: false });
+    } catch (e) {
+      setPlanningDoneMsg(
+        e instanceof Error ? e.message : "Échec de l’envoi."
+      );
+    } finally {
+      setPlanningDoneBusy(false);
+    }
+  }, [setPreparingTomorrow, router, pathname]);
+
   /** Déjà filtrées côté API par `?date=` ; garde-fou local si besoin. */
   const filtered = useMemo(() => {
     const rows = data?.rows ?? [];
@@ -576,6 +666,21 @@ export function DailyServicesView() {
       (r) => normalizeCanonicalDateKey(r.dateIso) === selectedKey
     );
   }, [data?.rows, selectedKey]);
+
+  const preparationModeActive =
+    isTomorrowSelected && (isPreparingTomorrow || urlPrepMode);
+
+  useEffect(() => {
+    if (!preparationModeActive) {
+      setConflictRowKeys(new Set());
+      return;
+    }
+    const rowKeysAndRows = filtered.map((row) => ({
+      rowKey: stableServiceRowKey(row),
+      row,
+    }));
+    setConflictRowKeys(computeConflictRowKeys(rowKeysAndRows, assignees));
+  }, [preparationModeActive, filtered, assignees, assigneesBump]);
 
   const setAssigneesForRow = useCallback(
     (key: string, next: string[]) => {
@@ -586,6 +691,15 @@ export function DailyServicesView() {
       if (typeof window === "undefined") return;
       try {
         const all = loadAssigneeStore();
+        const prevRaw = all[spreadsheetId]?.[key];
+        const prevArr = normalizeAssigneeListFromStored(prevRaw);
+        const prevNotify = new Set(
+          prevArr.filter(
+            (s) =>
+              s !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(s)
+          )
+        );
+
         const cur = { ...(all[spreadsheetId] ?? {}), [key]: safe };
         all[spreadsheetId] = cur;
         window.localStorage.setItem(
@@ -593,11 +707,31 @@ export function DailyServicesView() {
           JSON.stringify(all)
         );
         setAssigneesBump((b) => b + 1);
+
+        const dateKey = normalizeCanonicalDateKey(selectedDate);
+        if (dateKey === tomorrowYmd) {
+          return;
+        }
+        for (const slug of safe) {
+          if (prevNotify.has(slug)) continue;
+          const label = assigneeSlugToNotifyLabel(slug);
+          if (!label) continue;
+          void fetch("/api/push/planning-assignee-alert", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              spreadsheetId,
+              dateKey,
+              stableRowKey: key,
+              assigneeName: label,
+            }),
+          }).catch(() => {});
+        }
       } catch {
         /* quota / private mode */
       }
     },
-    [spreadsheetId]
+    [spreadsheetId, selectedDate, tomorrowYmd]
   );
 
   /** Détection d’urgence : nouvelles lignes du jour → 🚨 si pas encore d’assignation (y compris après refresh SWR). */
@@ -719,16 +853,18 @@ export function DailyServicesView() {
       const prevTarget = matchSheetAssigneeToTeamLabel(prevRaw);
       if (prevTarget === target) continue;
 
-      void fetch("/api/push/planning-assignee-alert", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          spreadsheetId,
-          dateKey,
-          stableRowKey: stableKey,
-          assigneeName: target,
-        }),
-      }).catch(() => {});
+      if (dateKey !== tomorrowYmd) {
+        void fetch("/api/push/planning-assignee-alert", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            spreadsheetId,
+            dateKey,
+            stableRowKey: stableKey,
+            assigneeName: target,
+          }),
+        }).catch(() => {});
+      }
     }
 
     snapshots[spreadsheetId] = {
@@ -736,7 +872,7 @@ export function DailyServicesView() {
       [dateKey]: nextMap,
     };
     saveSheetAssigneeSnapshot(snapshots);
-  }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate]);
+  }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate, tomorrowYmd]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -770,7 +906,12 @@ export function DailyServicesView() {
   }, [data, selectedDate, selectedKey]);
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6">
+    <div
+      className={cn(
+        "relative mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6",
+        preparationModeActive && "pb-28 sm:pb-24"
+      )}
+    >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
@@ -886,6 +1027,8 @@ export function DailyServicesView() {
                   rowKey={rowKey}
                   assignees={assigneeList}
                   onAssigneesChange={setAssigneesForRow}
+                  hasTimeConflict={conflictRowKeys.has(rowKey)}
+                  showConflictUi={preparationModeActive}
                 />
               );
             })}
@@ -907,6 +1050,49 @@ export function DailyServicesView() {
           ) : null}
         </>
       )}
+
+      {preparationModeActive ? (
+        <div
+          className={cn(
+            "fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-background/95 p-4 shadow-[0_-4px_24px_-4px_rgba(0,0,0,0.08)] backdrop-blur-sm",
+            "pb-[max(1rem,env(safe-area-inset-bottom))] dark:shadow-[0_-4px_24px_-4px_rgba(0,0,0,0.25)]"
+          )}
+        >
+          <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <Button
+              type="button"
+              size="lg"
+              disabled={planningDoneBusy}
+              onClick={() => void onPlanningReadyNotify()}
+              className="inline-flex w-full gap-2 rounded-xl border shadow-sm sm:w-auto sm:min-w-[280px]"
+              variant="default"
+            >
+              {planningDoneBusy ? (
+                <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />
+              ) : null}
+              ✅ Planning terminé
+            </Button>
+            {planningDoneMsg ? (
+              <p
+                className={cn(
+                  "text-center text-sm sm:text-left",
+                  planningDoneMsg.includes("Échec") ||
+                    planningDoneMsg.includes("impossible")
+                    ? "text-destructive"
+                    : "text-muted-foreground"
+                )}
+                role="status"
+              >
+                {planningDoneMsg}
+              </p>
+            ) : (
+              <p className="text-center text-xs text-muted-foreground sm:text-left">
+                Notifie toute l’équipe que le planning de demain est prêt.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

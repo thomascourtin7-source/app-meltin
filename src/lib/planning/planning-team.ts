@@ -105,6 +105,18 @@ export function isUrgentAssignee(stored: string): boolean {
   );
 }
 
+/**
+ * Libellé pour notifications push (`user_name` en base) : même chaîne que le prénom chat.
+ * Retourne null si non assigné ou urgence (pas de push nominatif).
+ */
+export function assigneeSlugToNotifyLabel(slug: string): string | null {
+  if (slug === DEFAULT_PLANNING_ASSIGNEE_SLUG || isUrgentAssignee(slug)) {
+    return null;
+  }
+  const opt = PLANNING_ASSIGNEE_OPTIONS.find((o) => o.value === slug);
+  return opt?.label ?? slug;
+}
+
 function normKey(s: string): string {
   return s
     .trim()

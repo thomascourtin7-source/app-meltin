@@ -25,7 +25,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useLocalStorageString } from "@/hooks/use-local-storage-string";
-import { subscribeChatPush } from "@/lib/push/client-subscribe-chat";
+import {
+  savePushSubscriptionToServer,
+  subscribeChatPush,
+} from "@/lib/push/client-subscribe-chat";
+import { CHAT_USERNAME_STORAGE_KEY } from "@/lib/chat/constants";
 import { getSupabaseBrowserClient, type MessageRow } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { useChatUI } from "./chat-ui-provider";
@@ -33,9 +37,6 @@ import { useChatUI } from "./chat-ui-provider";
 const ROOM_ID = "general";
 const CHAT_ATTACHMENTS_BUCKET = "chat-attachments";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-/** Clé demandée pour le prénom (sender_name) */
-const USERNAME_KEY = "meltin_chat_username";
-
 /** Espace en bas quand le clavier virtuel réduit la visual viewport (mobile). */
 function useVisualViewportKeyboardInset(enabled: boolean) {
   const [insetPx, setInsetPx] = useState(0);
@@ -64,7 +65,7 @@ function useVisualViewportKeyboardInset(enabled: boolean) {
 
   return insetPx;
 }
-/** Ancienne clé — migrée une fois vers USERNAME_KEY */
+/** Ancienne clé — migrée une fois vers {@link CHAT_USERNAME_STORAGE_KEY} */
 const LEGACY_DISPLAY_NAME_KEY = "meltin_chat_display_name";
 
 function formatTime(iso: string): string {
@@ -189,7 +190,7 @@ type ChatProps = {
 
 export function Chat({ variant }: ChatProps) {
   const [isMounted, setIsMounted] = useState(false);
-  const usernameStore = useLocalStorageString(USERNAME_KEY, "");
+  const usernameStore = useLocalStorageString(CHAT_USERNAME_STORAGE_KEY, "");
   const [onboardingDraft, setOnboardingDraft] = useState("");
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
@@ -259,7 +260,7 @@ export function Chat({ variant }: ChatProps) {
   useEffect(() => {
     if (!isMounted || typeof window === "undefined") return;
     try {
-      const current = window.localStorage.getItem(USERNAME_KEY)?.trim();
+      const current = window.localStorage.getItem(CHAT_USERNAME_STORAGE_KEY)?.trim();
       const legacy = window.localStorage.getItem(LEGACY_DISPLAY_NAME_KEY)?.trim();
       if (!current && legacy) {
         persistUsername(legacy);
@@ -393,6 +394,44 @@ export function Chat({ variant }: ChatProps) {
       cancelled = true;
     };
   }, [hasUsername]);
+
+  /** Réassocie l’abonnement push navigateur au prénom courant (`user_name` Supabase). */
+  useEffect(() => {
+    if (!hasUsername || !trimmedName) return;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (cancelled || !sub) return;
+        const raw = sub.toJSON();
+        if (!raw.endpoint || !raw.keys?.p256dh || !raw.keys?.auth) return;
+        await savePushSubscriptionToServer(
+          {
+            endpoint: raw.endpoint,
+            expirationTime: raw.expirationTime,
+            keys: { p256dh: raw.keys.p256dh, auth: raw.keys.auth },
+          },
+          trimmedName
+        );
+      } catch {
+        /* hors-ligne ou quota */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasUsername, trimmedName]);
+
+  const disconnectProfile = useCallback(() => {
+    usernameStore.clear();
+    setEditingName(false);
+    setOnboardingDraft("");
+    setChatPushStatus("idle");
+    setChatPushMessage(null);
+    setChatPushOfflineHint(false);
+  }, [usernameStore]);
 
   const onEnableChatPush = useCallback(async () => {
     setChatPushMessage(null);
@@ -817,7 +856,15 @@ export function Chat({ variant }: ChatProps) {
                     setEditingName(true);
                   }}
                 >
-                  Modifier
+                  Changer de profil
+                </button>
+                <span className="text-muted-foreground"> · </span>
+                <button
+                  type="button"
+                  className="text-muted-foreground underline-offset-4 hover:text-destructive hover:underline"
+                  onClick={disconnectProfile}
+                >
+                  Se déconnecter
                 </button>
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-2">

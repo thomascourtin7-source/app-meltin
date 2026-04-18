@@ -29,15 +29,17 @@ function PhoneContactSheetTrigger({ raw }: { raw: string }) {
       <SheetTrigger
         nativeButton={false}
         render={
-          <button
-            type="button"
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label={`Ouvrir les options de contact pour ${normalized.e164Display}`}
             className={cn(phoneButtonClass, "touch-manipulation")}
             style={{ touchAction: "manipulation" }}
-          />
+          >
+            {raw}
+          </span>
         }
-      >
-        {raw}
-      </SheetTrigger>
+      />
       <SheetContent
         side="bottom"
         className="z-[100] gap-0 rounded-t-2xl pb-[max(1rem,env(safe-area-inset-bottom))]"
