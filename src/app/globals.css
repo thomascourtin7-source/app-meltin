@@ -139,4 +139,16 @@
     visibility: hidden !important;
     pointer-events: none !important;
   }
+
+  /* Planning : urgence (emoji_alert) — pas de tronquage, rendu centré dans le trigger */
+  [data-slot="select-trigger"] .select-value--urgent {
+    overflow: visible !important;
+    line-clamp: unset !important;
+    -webkit-line-clamp: unset !important;
+    -webkit-box-orient: unset !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+  }
 }

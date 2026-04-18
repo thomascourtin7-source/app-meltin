@@ -20,7 +20,7 @@ self.addEventListener("push", function (event) {
   var body;
   var tag;
   var openUrl = "/";
-  var icon = "/icons/icon-192.png";
+  var icon = "/icons/icon-192x192.png";
 
   if (type === "planning-update") {
     title = data.title || "🚨 NOUVEAU SERVICE DETECTÉ";

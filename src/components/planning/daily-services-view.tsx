@@ -18,7 +18,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
@@ -26,9 +25,12 @@ import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
 import {
   DEFAULT_PLANNING_ASSIGNEE_SLUG,
-  KNOWN_PLANNING_ASSIGNEE_SLUGS,
   PLANNING_ASSIGNEE_OPTIONS,
+  PLANNING_URGENT_ASSIGNEE_DISPLAY,
+  PLANNING_URGENT_ASSIGNEE_SLUG,
+  isUrgentAssignee,
   matchSheetAssigneeToTeamLabel,
+  normalizeAssigneeStoredValue,
 } from "@/lib/planning/planning-team";
 import {
   serviceUrgencyIdentityKey,
@@ -39,8 +41,6 @@ import { cn } from "@/lib/utils";
 const POLL_MS = 5 * 60 * 1000;
 
 const DEFAULT_ASSIGNEE = DEFAULT_PLANNING_ASSIGNEE_SLUG;
-
-const KNOWN_ASSIGNEE_VALUES: string[] = KNOWN_PLANNING_ASSIGNEE_SLUGS;
 
 const PLANNING_ASSIGNEES_STORAGE_KEY = "meltin_planning_assignees_v2";
 
@@ -71,11 +71,6 @@ function loadAssigneeStore(): AssigneeStore {
   } catch {
     return {};
   }
-}
-
-function normalizeStoredValue(value: string | undefined): string {
-  if (value && KNOWN_ASSIGNEE_VALUES.includes(value)) return value;
-  return DEFAULT_ASSIGNEE;
 }
 
 function loadSnapshotStore(): SnapshotStore {
@@ -150,19 +145,6 @@ function dateNavButtonClass(active: boolean): string {
   );
 }
 
-function openNativeDatePicker(input: HTMLInputElement | null): void {
-  if (!input) return;
-  if (typeof input.showPicker === "function") {
-    try {
-      input.showPicker();
-      return;
-    } catch {
-      /* certains navigateurs lancent si non gesture */
-    }
-  }
-  input.click();
-}
-
 function formatTelDriverLine(row: DailyServiceRow): string {
   const t = row.tel.trim();
   const d = row.driverInfo.trim();
@@ -214,7 +196,11 @@ type ServiceBlockProps = {
   onAssigneeChange: (key: string, value: string) => void;
 };
 
-const URGENT_ASSIGNEE = "emoji_alert";
+/** Police : meilleur rendu des emojis sur iOS / Android. */
+const ASSIGNEE_SELECT_EMOJI_FONT =
+  "[font-family:system-ui,-apple-system,'Segoe_UI_Emoji','Apple_Color_Emoji',sans-serif]";
+
+const URGENT_ASSIGNEE = PLANNING_URGENT_ASSIGNEE_SLUG;
 
 function ServiceBlock({
   row,
@@ -223,7 +209,12 @@ function ServiceBlock({
   onAssigneeChange,
 }: ServiceBlockProps) {
   const telDriver = formatTelDriverLine(row);
-  const isUrgent = assignee === URGENT_ASSIGNEE;
+  const isUrgent = isUrgentAssignee(assignee);
+  const triggerDisplayText =
+    assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+      ? PLANNING_URGENT_ASSIGNEE_DISPLAY
+      : PLANNING_ASSIGNEE_OPTIONS.find((opt) => opt.value === assignee)?.label ||
+        assignee;
 
   return (
     <div
@@ -244,24 +235,46 @@ function ServiceBlock({
         >
           <SelectTrigger
             size="sm"
-            className="h-8 w-full border border-border/50 bg-muted/40 text-sm shadow-none sm:max-w-[280px]"
+            className={cn(
+              "h-8 w-full border border-border/50 bg-muted/40 text-sm shadow-none sm:max-w-[280px]",
+              ASSIGNEE_SELECT_EMOJI_FONT,
+              assignee === PLANNING_URGENT_ASSIGNEE_SLUG &&
+                "[&_[data-slot=select-value]]:overflow-visible [&_[data-slot=select-value]]:[line-clamp:unset]"
+            )}
+            aria-label={`Assigné à : ${triggerDisplayText}`}
           >
-            <SelectValue />
+            {/* Pas de <SelectValue /> : Base UI afficherait la value brute (emoji_alert). */}
+            <span
+              data-slot="select-value"
+              className={cn(
+                "select-value flex min-h-0 flex-1",
+                assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+                  ? "select-value--urgent items-center justify-center overflow-visible text-center text-lg leading-none tracking-tight whitespace-nowrap [line-clamp:unset]"
+                  : "min-w-0 truncate text-left"
+              )}
+            >
+              {assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+                ? PLANNING_URGENT_ASSIGNEE_DISPLAY
+                : PLANNING_ASSIGNEE_OPTIONS.find((opt) => opt.value === assignee)
+                    ?.label || assignee}
+            </span>
           </SelectTrigger>
-          <SelectContent className="max-h-72">
+          <SelectContent
+            className={cn("max-h-72", ASSIGNEE_SELECT_EMOJI_FONT)}
+          >
             {PLANNING_ASSIGNEE_OPTIONS.map((opt) => (
               <SelectItem
                 key={opt.value}
                 value={opt.value}
                 className={
-                  opt.value === "emoji_alert"
+                  opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
                     ? "py-2.5 text-base leading-none focus:bg-muted focus-visible:bg-muted"
                     : undefined
                 }
               >
                 <span
                   className={
-                    opt.value === "emoji_alert"
+                    opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
                       ? "inline-block text-lg tracking-tight"
                       : undefined
                   }
@@ -304,8 +317,43 @@ export function DailyServicesView() {
     formatLocalYmd(new Date())
   );
   const datePickerRef = useRef<HTMLInputElement>(null);
+  const [calendarPressed, setCalendarPressed] = useState(false);
 
   const [assigneesBump, setAssigneesBump] = useState(0);
+
+  /** Migration one-shot : normalise les assignations (anciennes clés / emojis seuls). */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(PLANNING_ASSIGNEES_STORAGE_KEY);
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return;
+      const store = parsed as AssigneeStore;
+      let changed = false;
+      for (const sid of Object.keys(store)) {
+        const rows = store[sid];
+        if (!rows || typeof rows !== "object") continue;
+        for (const rowKey of Object.keys(rows)) {
+          const v = rows[rowKey];
+          const n = normalizeAssigneeStoredValue(v);
+          if (v !== n) {
+            rows[rowKey] = n;
+            changed = true;
+          }
+        }
+      }
+      if (changed) {
+        window.localStorage.setItem(
+          PLANNING_ASSIGNEES_STORAGE_KEY,
+          JSON.stringify(store)
+        );
+        startTransition(() => setAssigneesBump((b) => b + 1));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const assignees = useMemo(() => {
     void assigneesBump;
@@ -314,7 +362,7 @@ export function DailyServicesView() {
     if (!sheetMap) return {};
     const next: Record<string, string> = {};
     for (const [k, v] of Object.entries(sheetMap)) {
-      next[k] = normalizeStoredValue(v);
+      next[k] = normalizeAssigneeStoredValue(v);
     }
     return next;
   }, [spreadsheetId, assigneesBump]);
@@ -359,7 +407,7 @@ export function DailyServicesView() {
 
   const setAssignee = useCallback(
     (key: string, value: string) => {
-      const safe = normalizeStoredValue(value);
+      const safe = normalizeAssigneeStoredValue(value);
       if (typeof window === "undefined") return;
       try {
         const all = loadAssigneeStore();
@@ -593,32 +641,42 @@ export function DailyServicesView() {
           >
             Demain
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            aria-label="Choisir une date dans le calendrier"
-            className={cn(
-              "size-9 shrink-0 rounded-lg shadow-none",
-              isCustomDateSelected
-                ? "bg-neutral-950 text-white hover:bg-neutral-900 hover:text-white dark:bg-neutral-50 dark:text-neutral-950 dark:hover:bg-neutral-200 dark:hover:text-neutral-950"
-                : "bg-muted text-foreground hover:bg-muted/80"
-            )}
-            onClick={() => openNativeDatePicker(datePickerRef.current)}
-          >
-            <Calendar className="size-4" aria-hidden />
-          </Button>
-          <input
-            ref={datePickerRef}
-            type="date"
-            className="sr-only"
-            tabIndex={-1}
-            value={selectedDate}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v) selectDateAndRefresh(v);
-            }}
-            aria-labelledby="planning-day-label"
-          />
+          {/* input[type=date] au-dessus de l’icône : ouverture native fiable sur iOS (pas seulement onClick → input caché). */}
+          <div className="relative isolate z-[9999] flex h-11 w-11 shrink-0 items-center justify-center sm:h-9 sm:w-9">
+            <input
+              ref={datePickerRef}
+              id="planning-date-picker-input"
+              type="date"
+              value={selectedDate}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) selectDateAndRefresh(v);
+              }}
+              aria-labelledby="planning-day-label"
+              aria-label="Choisir une date dans le calendrier"
+              className={cn(
+                "absolute inset-0 z-[9999] box-border h-full w-full max-w-none cursor-pointer opacity-0",
+                "touch-manipulation text-base leading-none"
+              )}
+              style={{ touchAction: "manipulation" }}
+              onPointerDown={() => setCalendarPressed(true)}
+              onPointerUp={() => setCalendarPressed(false)}
+              onPointerLeave={() => setCalendarPressed(false)}
+              onPointerCancel={() => setCalendarPressed(false)}
+            />
+            <div
+              aria-hidden
+              className={cn(
+                "pointer-events-none flex h-full w-full items-center justify-center rounded-lg shadow-none transition-[opacity,transform] duration-150",
+                isCustomDateSelected
+                  ? "bg-neutral-950 text-white dark:bg-neutral-50 dark:text-neutral-950"
+                  : "bg-muted text-foreground",
+                calendarPressed && "scale-[0.96] opacity-70"
+              )}
+            >
+              <Calendar className="size-4" />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -643,7 +701,7 @@ export function DailyServicesView() {
           <div className="w-full">
             {filtered.map((row, index) => {
               const rowKey = stableServiceRowKey(row);
-              const assignee = normalizeStoredValue(assignees[rowKey]);
+              const assignee = normalizeAssigneeStoredValue(assignees[rowKey]);
               return (
                 <ServiceBlock
                   key={`${rowKey}#${index}`}

@@ -1,6 +1,18 @@
 /**
+ * Urgence : valeur technique stable (localStorage, logique, comparaisons).
+ * L’affichage utilise toujours {@link assigneeDisplayLabel}.
+ */
+export const PLANNING_URGENT_ASSIGNEE_SLUG = "emoji_alert" as const;
+
+/** Texte affiché pour l’urgence (sirènes). */
+export const PLANNING_URGENT_ASSIGNEE_DISPLAY = "🚨🚨🚨" as const;
+
+/** @deprecated Utiliser {@link PLANNING_URGENT_ASSIGNEE_SLUG} — alias pour le code existant. */
+export const PLANNING_URGENT_ASSIGNEE_VALUE = PLANNING_URGENT_ASSIGNEE_SLUG;
+
+/**
  * Membres affichables (sélecteur planning + feuille Google « assigné »).
- * La valeur `value` sert au localStorage des assignations UI ; `label` est le texte humain (et dans le Sheet).
+ * `value` = clé technique ; `label` = texte affiché (🚨 pour l’urgence).
  */
 export const PLANNING_ASSIGNEE_OPTIONS = [
   { value: "__none__", label: "Non assigné" },
@@ -13,7 +25,10 @@ export const PLANNING_ASSIGNEE_OPTIONS = [
   { value: "deva", label: "Deva" },
   { value: "kumar", label: "Kumar" },
   { value: "subcontracted", label: "Sous-traité" },
-  { value: "emoji_alert", label: "🚨🚨🚨" },
+  {
+    value: PLANNING_URGENT_ASSIGNEE_SLUG,
+    label: PLANNING_URGENT_ASSIGNEE_DISPLAY,
+  },
 ] as const;
 
 export type PlanningAssigneeSlug = (typeof PLANNING_ASSIGNEE_OPTIONS)[number]["value"];
@@ -25,8 +40,45 @@ export const KNOWN_PLANNING_ASSIGNEE_SLUGS: string[] =
 
 /** Noms proposés dans « S'enregistrer » (push ciblé = libellé enregistré côté serveur). */
 export const PLANNING_TEAM_REGISTER_OPTIONS = PLANNING_ASSIGNEE_OPTIONS.filter(
-  (o) => o.value !== "__none__" && o.value !== "emoji_alert"
+  (o) => o.value !== "__none__" && o.value !== PLANNING_URGENT_ASSIGNEE_SLUG
 );
+
+/**
+ * Texte à afficher pour une valeur d’assignation : toujours le `label` de
+ * {@link PLANNING_ASSIGNEE_OPTIONS} (jamais le slug `emoji_alert` à l’écran).
+ */
+export function assigneeDisplayLabel(stored: string): string {
+  if (
+    stored === PLANNING_URGENT_ASSIGNEE_SLUG ||
+    stored === PLANNING_URGENT_ASSIGNEE_DISPLAY
+  ) {
+    return PLANNING_URGENT_ASSIGNEE_DISPLAY;
+  }
+  const opt = PLANNING_ASSIGNEE_OPTIONS.find((o) => o.value === stored);
+  return opt?.label ?? stored;
+}
+
+/**
+ * Normalise une valeur lue depuis le localStorage (anciennes données en emoji pur incluses).
+ */
+export function normalizeAssigneeStoredValue(
+  value: string | undefined
+): string {
+  if (value === undefined || value === "") return DEFAULT_PLANNING_ASSIGNEE_SLUG;
+  if (value === PLANNING_URGENT_ASSIGNEE_DISPLAY) {
+    return PLANNING_URGENT_ASSIGNEE_SLUG;
+  }
+  if (value === PLANNING_URGENT_ASSIGNEE_SLUG) return PLANNING_URGENT_ASSIGNEE_SLUG;
+  if (KNOWN_PLANNING_ASSIGNEE_SLUGS.includes(value)) return value;
+  return DEFAULT_PLANNING_ASSIGNEE_SLUG;
+}
+
+export function isUrgentAssignee(stored: string): boolean {
+  return (
+    stored === PLANNING_URGENT_ASSIGNEE_SLUG ||
+    stored === PLANNING_URGENT_ASSIGNEE_DISPLAY
+  );
+}
 
 function normKey(s: string): string {
   return s

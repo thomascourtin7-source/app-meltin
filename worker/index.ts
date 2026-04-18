@@ -27,7 +27,7 @@ self.addEventListener("push", (event: PushEvent) => {
     }
   }
 
-  const icon = "/icons/icon-192.png";
+  const icon = "/icons/icon-192x192.png";
   let title: string;
   let body: string;
   let tag: string;
