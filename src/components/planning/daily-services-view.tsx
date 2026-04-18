@@ -9,7 +9,14 @@ import {
   useState,
 } from "react";
 import useSWR from "swr";
-import { Calendar, Loader2, RefreshCw } from "lucide-react";
+import {
+  Calendar,
+  Loader2,
+  Plus,
+  RefreshCw,
+  UserCircle,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -25,11 +32,13 @@ import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
 import {
   DEFAULT_PLANNING_ASSIGNEE_SLUG,
+  MAX_PLANNING_ASSIGNEES_PER_SERVICE,
   PLANNING_ASSIGNEE_OPTIONS,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
   PLANNING_URGENT_ASSIGNEE_SLUG,
   isUrgentAssignee,
   matchSheetAssigneeToTeamLabel,
+  normalizeAssigneeListFromStored,
   normalizeAssigneeStoredValue,
 } from "@/lib/planning/planning-team";
 import {
@@ -37,12 +46,16 @@ import {
   stableServiceRowKey,
 } from "@/lib/planning/service-row-keys";
 import { cn } from "@/lib/utils";
+import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
 
 const POLL_MS = 5 * 60 * 1000;
 
 const DEFAULT_ASSIGNEE = DEFAULT_PLANNING_ASSIGNEE_SLUG;
 
-const PLANNING_ASSIGNEES_STORAGE_KEY = "meltin_planning_assignees_v2";
+const PLANNING_ASSIGNEES_STORAGE_KEY = "meltin_planning_assignees_v3";
+
+/** Ancienne clé (chaîne unique par ligne) → migrée une fois vers v3. */
+const PLANNING_ASSIGNEES_STORAGE_KEY_LEGACY_V2 = "meltin_planning_assignees_v2";
 
 /** Snapshots des identités « vues » par jour (détection des nouvelles lignes). */
 const PLANNING_ROW_SNAPSHOT_KEY = "meltin_planning_row_snapshot_v1";
@@ -51,7 +64,8 @@ const PLANNING_ROW_SNAPSHOT_KEY = "meltin_planning_row_snapshot_v1";
 const PLANNING_SHEET_ASSIGNEE_SNAPSHOT_KEY =
   "meltin_planning_sheet_assignee_snapshot_v1";
 
-type AssigneeStore = Record<string, Record<string, string>>;
+/** Par feuille : par clé de ligne stable, tableau de slugs (1 à 4). */
+type AssigneeStore = Record<string, Record<string, string[]>>;
 
 type SnapshotStore = Record<string, Record<string, string[]>>;
 
@@ -60,14 +74,46 @@ type SheetAssigneeSnapshotStore = Record<
   Record<string, Record<string, string>>
 >;
 
+function migrateLegacyV2ToV3(
+  legacy: Record<string, Record<string, unknown>>
+): AssigneeStore {
+  const out: AssigneeStore = {};
+  for (const [sid, rows] of Object.entries(legacy)) {
+    if (!rows || typeof rows !== "object") continue;
+    out[sid] = {};
+    for (const [rowKey, v] of Object.entries(rows)) {
+      out[sid][rowKey] = normalizeAssigneeListFromStored(v);
+    }
+  }
+  return out;
+}
+
 function loadAssigneeStore(): AssigneeStore {
   if (typeof window === "undefined") return {};
   try {
-    const raw = window.localStorage.getItem(PLANNING_ASSIGNEES_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed as AssigneeStore;
+    const rawV3 = window.localStorage.getItem(PLANNING_ASSIGNEES_STORAGE_KEY);
+    if (rawV3) {
+      const parsed: unknown = JSON.parse(rawV3);
+      if (!parsed || typeof parsed !== "object") return {};
+      return migrateLegacyV2ToV3(parsed as Record<string, Record<string, unknown>>);
+    }
+    const rawV2 = window.localStorage.getItem(
+      PLANNING_ASSIGNEES_STORAGE_KEY_LEGACY_V2
+    );
+    if (rawV2) {
+      const parsed: unknown = JSON.parse(rawV2);
+      if (parsed && typeof parsed === "object") {
+        const migrated = migrateLegacyV2ToV3(
+          parsed as Record<string, Record<string, unknown>>
+        );
+        window.localStorage.setItem(
+          PLANNING_ASSIGNEES_STORAGE_KEY,
+          JSON.stringify(migrated)
+        );
+        return migrated;
+      }
+    }
+    return {};
   } catch {
     return {};
   }
@@ -145,13 +191,23 @@ function dateNavButtonClass(active: boolean): string {
   );
 }
 
-function formatTelDriverLine(row: DailyServiceRow): string {
-  const t = row.tel.trim();
-  const d = row.driverInfo.trim();
-  if (!t && !d) return "";
-  if (!d) return t;
-  if (!t) return d;
-  return `${t} / ${d}`;
+/** Vol + créneaux RDV sur une seule ligne lisible. */
+function formatVolRdvLine(row: DailyServiceRow): string {
+  const vol = row.vol.trim() || "—";
+  const r1 = row.rdv1.trim();
+  const r2 = row.rdv2.trim();
+  let rdvPart = "—";
+  if (r1 && r2) rdvPart = `${r1} – ${r2}`;
+  else if (r1) rdvPart = r1;
+  else if (r2) rdvPart = r2;
+  return `Vol : ${vol} | RDV : ${rdvPart}`;
+}
+
+/** Nom à mettre en avant (vert) : assigné réel, hors urgence et hors « Non assigné ». */
+function isAssigneeHighlighted(slug: string): boolean {
+  return (
+    slug !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(slug)
+  );
 }
 
 type PlanningDebug = {
@@ -192,8 +248,8 @@ async function planningServicesFetcher(
 type ServiceBlockProps = {
   row: DailyServiceRow;
   rowKey: string;
-  assignee: string;
-  onAssigneeChange: (key: string, value: string) => void;
+  assignees: string[];
+  onAssigneesChange: (key: string, next: string[]) => void;
 };
 
 /** Police : meilleur rendu des emojis sur iOS / Android. */
@@ -205,102 +261,218 @@ const URGENT_ASSIGNEE = PLANNING_URGENT_ASSIGNEE_SLUG;
 function ServiceBlock({
   row,
   rowKey,
-  assignee,
-  onAssigneeChange,
+  assignees,
+  onAssigneesChange,
 }: ServiceBlockProps) {
-  const telDriver = formatTelDriverLine(row);
-  const isUrgent = isUrgentAssignee(assignee);
-  const triggerDisplayText =
-    assignee === PLANNING_URGENT_ASSIGNEE_SLUG
-      ? PLANNING_URGENT_ASSIGNEE_DISPLAY
-      : PLANNING_ASSIGNEE_OPTIONS.find((opt) => opt.value === assignee)?.label ||
-        assignee;
+  const isUrgent = assignees.some((a) => isUrgentAssignee(a));
+
+  const updateSlot = (slot: number, value: string) => {
+    const next = [...assignees];
+    next[slot] = normalizeAssigneeStoredValue(value);
+    onAssigneesChange(rowKey, next);
+  };
+
+  const addRow = () => {
+    if (assignees.length >= MAX_PLANNING_ASSIGNEES_PER_SERVICE) return;
+    onAssigneesChange(rowKey, [
+      ...assignees,
+      DEFAULT_PLANNING_ASSIGNEE_SLUG,
+    ]);
+  };
+
+  const removeRow = (slot: number) => {
+    if (assignees.length <= 1) return;
+    onAssigneesChange(
+      rowKey,
+      assignees.filter((_, i) => i !== slot)
+    );
+  };
+
+  const destProv = row.destProv.trim();
+  const typeLine = row.type.trim();
+  const driverDetails = row.driverInfo.trim();
+
+  const ASSIGN_GREEN =
+    "font-bold text-emerald-900 dark:text-emerald-400";
 
   return (
     <div
       className={cn(
-        "mb-8 w-full max-w-4xl last:mb-0 md:mx-auto rounded-lg px-2 py-2 -mx-2",
-        isUrgent && "bg-red-50 dark:bg-red-950/30"
+        "mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-card px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+        isUrgent
+          ? "border-red-300/60 bg-red-50/90 dark:border-red-900/50 dark:bg-red-950/35"
+          : "border-border/50"
       )}
     >
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-        <span className="shrink-0 text-xs text-muted-foreground">
-          Assigné à :
+      <div className="mb-5">
+        <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
+          Assignation
         </span>
-        <Select
-          value={assignee}
-          onValueChange={(v) =>
-            onAssigneeChange(rowKey, v ?? DEFAULT_ASSIGNEE)
-          }
-        >
-          <SelectTrigger
-            size="sm"
-            className={cn(
-              "h-8 w-full border border-border/50 bg-muted/40 text-sm shadow-none sm:max-w-[280px]",
-              ASSIGNEE_SELECT_EMOJI_FONT,
-              assignee === PLANNING_URGENT_ASSIGNEE_SLUG &&
-                "[&_[data-slot=select-value]]:overflow-visible [&_[data-slot=select-value]]:[line-clamp:unset]"
-            )}
-            aria-label={`Assigné à : ${triggerDisplayText}`}
-          >
-            {/* Pas de <SelectValue /> : Base UI afficherait la value brute (emoji_alert). */}
-            <span
-              data-slot="select-value"
-              className={cn(
-                "select-value flex min-h-0 flex-1",
-                assignee === PLANNING_URGENT_ASSIGNEE_SLUG
-                  ? "select-value--urgent items-center justify-center overflow-visible text-center text-lg leading-none tracking-tight whitespace-nowrap [line-clamp:unset]"
-                  : "min-w-0 truncate text-left"
-              )}
-            >
-              {assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+        <div className="flex flex-col gap-2 sm:gap-2.5">
+          {assignees.map((assignee, slot) => {
+            const triggerDisplayText =
+              assignee === PLANNING_URGENT_ASSIGNEE_SLUG
                 ? PLANNING_URGENT_ASSIGNEE_DISPLAY
                 : PLANNING_ASSIGNEE_OPTIONS.find((opt) => opt.value === assignee)
-                    ?.label || assignee}
-            </span>
-          </SelectTrigger>
-          <SelectContent
-            className={cn("max-h-72", ASSIGNEE_SELECT_EMOJI_FONT)}
-          >
-            {PLANNING_ASSIGNEE_OPTIONS.map((opt) => (
-              <SelectItem
-                key={opt.value}
-                value={opt.value}
-                className={
-                  opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
-                    ? "py-2.5 text-base leading-none focus:bg-muted focus-visible:bg-muted"
-                    : undefined
-                }
+                    ?.label || assignee;
+            const showRemoveLine = slot > 0;
+            const canAddMore =
+              slot === 0 &&
+              assignees.length < MAX_PLANNING_ASSIGNEES_PER_SERVICE;
+            const highlightAssignee = isAssigneeHighlighted(assignee);
+
+            return (
+              <div
+                key={slot}
+                className="flex flex-row flex-nowrap items-center gap-2"
               >
-                <span
-                  className={
-                    opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
-                      ? "inline-block text-lg tracking-tight"
-                      : undefined
-                  }
-                >
-                  {opt.label}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+                <div className="min-w-0 w-full max-w-[200px] flex-1 sm:max-w-[200px]">
+                  <Select
+                    value={assignee}
+                    onValueChange={(v) =>
+                      updateSlot(slot, v ?? DEFAULT_ASSIGNEE)
+                    }
+                  >
+                    <SelectTrigger
+                      size="sm"
+                      className={cn(
+                        "h-8 w-full justify-start gap-2 border border-border/50 bg-muted/40 text-sm shadow-none",
+                        ASSIGNEE_SELECT_EMOJI_FONT,
+                        assignee === PLANNING_URGENT_ASSIGNEE_SLUG &&
+                          "[&_[data-slot=select-value]]:overflow-visible [&_[data-slot=select-value]]:[line-clamp:unset]"
+                      )}
+                      aria-label={`Assigné à : ${triggerDisplayText}`}
+                    >
+                      {highlightAssignee ? (
+                        <UserCircle
+                          className={cn(
+                            "size-4 shrink-0",
+                            "text-emerald-900 dark:text-emerald-400"
+                          )}
+                          aria-hidden
+                        />
+                      ) : null}
+                      {/* Pas de <SelectValue /> : Base UI afficherait la value brute (emoji_alert). */}
+                      <span
+                        data-slot="select-value"
+                        className={cn(
+                          "select-value flex min-h-0 flex-1",
+                          assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+                            ? "select-value--urgent items-center justify-center overflow-visible text-center text-lg leading-none tracking-tight whitespace-nowrap [line-clamp:unset]"
+                            : "min-w-0 truncate text-left",
+                          highlightAssignee && ASSIGN_GREEN
+                        )}
+                      >
+                        {assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+                          ? PLANNING_URGENT_ASSIGNEE_DISPLAY
+                          : PLANNING_ASSIGNEE_OPTIONS.find(
+                              (opt) => opt.value === assignee
+                            )?.label || assignee}
+                      </span>
+                    </SelectTrigger>
+                    <SelectContent
+                      className={cn(
+                        "z-[9999] max-h-72",
+                        ASSIGNEE_SELECT_EMOJI_FONT
+                      )}
+                    >
+                      {PLANNING_ASSIGNEE_OPTIONS.map((opt) => (
+                        <SelectItem
+                          key={opt.value}
+                          value={opt.value}
+                          className={
+                            opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
+                              ? "py-2.5 text-base leading-none focus:bg-muted focus-visible:bg-muted"
+                              : undefined
+                          }
+                        >
+                          <span
+                            className={
+                              opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
+                                ? "inline-block text-lg tracking-tight"
+                                : undefined
+                            }
+                          >
+                            {opt.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {canAddMore ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 self-center rounded-lg border-dashed shadow-none touch-manipulation"
+                    style={{ touchAction: "manipulation" }}
+                    onClick={addRow}
+                    aria-label="Ajouter un assigné"
+                  >
+                    <Plus className="size-4" aria-hidden />
+                  </Button>
+                ) : null}
+                {showRemoveLine ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className={cn(
+                      "h-8 w-8 shrink-0 self-center rounded-md border-destructive/25 text-destructive shadow-none",
+                      "touch-manipulation transition-[color,background-color,transform,box-shadow]",
+                      "hover:border-destructive/50 hover:bg-destructive/10 hover:text-destructive",
+                      "active:scale-[0.96] active:bg-destructive/20",
+                      "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    )}
+                    style={{ touchAction: "manipulation" }}
+                    onClick={() => removeRow(slot)}
+                    aria-label="Supprimer cette ligne d’assignation"
+                  >
+                    <X className="size-4 shrink-0" aria-hidden />
+                  </Button>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      <div className="space-y-0 text-sm leading-relaxed text-foreground">
-        <p className="font-medium">
-          {row.type} - {row.client}
+      <div className="space-y-0">
+        <h2 className="mb-3 text-xl font-bold leading-snug tracking-tight text-foreground">
+          <PlanningPhoneRichText text={row.client.trim() || "—"} />
+        </h2>
+        <p className="mb-3 text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+          <span className="font-semibold text-slate-800 dark:text-slate-200">
+            Type :{" "}
+          </span>
+          <PlanningPhoneRichText text={typeLine || "—"} />
         </p>
-        <p className={cn(!telDriver && "text-muted-foreground")}>
-          {telDriver || "—"}
+        <p className="mb-3 text-sm font-medium leading-relaxed text-slate-800 dark:text-slate-200">
+          <PlanningPhoneRichText text={formatVolRdvLine(row)} />
         </p>
-        <div className="h-3 min-h-3" aria-hidden />
-        <p>
-          {row.vol} - {row.destProv}
-        </p>
-        <p>
-          {row.rdv1} - {row.rdv2}
-        </p>
+        <div className="space-y-3 border-t border-border/40 pt-4 text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+          <p>
+            <span className="font-semibold text-slate-800 dark:text-slate-200">
+              Dest. / prov. :{" "}
+            </span>
+            <PlanningPhoneRichText text={destProv || "—"} />
+          </p>
+          <p>
+            <span className="font-semibold text-slate-800 dark:text-slate-200">
+              {"Tél. : "}
+            </span>
+            <PlanningPhoneRichText text={row.tel.trim() || "—"} />
+          </p>
+          {driverDetails ? (
+            <p>
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                Détails :{" "}
+              </span>
+              <PlanningPhoneRichText text={driverDetails} />
+            </p>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -321,7 +493,7 @@ export function DailyServicesView() {
 
   const [assigneesBump, setAssigneesBump] = useState(0);
 
-  /** Migration one-shot : normalise les assignations (anciennes clés / emojis seuls). */
+  /** Migration one-shot : normalise les assignations (tableaux / slugs / emojis). */
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -336,8 +508,8 @@ export function DailyServicesView() {
         if (!rows || typeof rows !== "object") continue;
         for (const rowKey of Object.keys(rows)) {
           const v = rows[rowKey];
-          const n = normalizeAssigneeStoredValue(v);
-          if (v !== n) {
+          const n = normalizeAssigneeListFromStored(v);
+          if (JSON.stringify(v) !== JSON.stringify(n)) {
             rows[rowKey] = n;
             changed = true;
           }
@@ -360,9 +532,9 @@ export function DailyServicesView() {
     if (typeof window === "undefined") return {};
     const sheetMap = loadAssigneeStore()[spreadsheetId];
     if (!sheetMap) return {};
-    const next: Record<string, string> = {};
+    const next: Record<string, string[]> = {};
     for (const [k, v] of Object.entries(sheetMap)) {
-      next[k] = normalizeAssigneeStoredValue(v);
+      next[k] = normalizeAssigneeListFromStored(v);
     }
     return next;
   }, [spreadsheetId, assigneesBump]);
@@ -405,9 +577,12 @@ export function DailyServicesView() {
     );
   }, [data?.rows, selectedKey]);
 
-  const setAssignee = useCallback(
-    (key: string, value: string) => {
-      const safe = normalizeAssigneeStoredValue(value);
+  const setAssigneesForRow = useCallback(
+    (key: string, next: string[]) => {
+      let safe = next
+        .slice(0, MAX_PLANNING_ASSIGNEES_PER_SERVICE)
+        .map((x) => normalizeAssigneeStoredValue(x));
+      if (safe.length === 0) safe = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
       if (typeof window === "undefined") return;
       try {
         const all = loadAssigneeStore();
@@ -467,7 +642,7 @@ export function DailyServicesView() {
     for (const id of newIdentities) {
       for (const stableKey of identityToStables.get(id) ?? []) {
         if (!(stableKey in sheetAssign)) {
-          sheetAssign[stableKey] = URGENT_ASSIGNEE;
+          sheetAssign[stableKey] = [URGENT_ASSIGNEE];
           changed = true;
           if (!identitiesMarkedUrgent.includes(id)) identitiesMarkedUrgent.push(id);
         }
@@ -701,14 +876,16 @@ export function DailyServicesView() {
           <div className="w-full">
             {filtered.map((row, index) => {
               const rowKey = stableServiceRowKey(row);
-              const assignee = normalizeAssigneeStoredValue(assignees[rowKey]);
+              const assigneeList = normalizeAssigneeListFromStored(
+                assignees[rowKey]
+              );
               return (
                 <ServiceBlock
                   key={`${rowKey}#${index}`}
                   row={row}
                   rowKey={rowKey}
-                  assignee={assignee}
-                  onAssigneeChange={setAssignee}
+                  assignees={assigneeList}
+                  onAssigneesChange={setAssigneesForRow}
                 />
               );
             })}

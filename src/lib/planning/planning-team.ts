@@ -35,6 +35,9 @@ export type PlanningAssigneeSlug = (typeof PLANNING_ASSIGNEE_OPTIONS)[number]["v
 
 export const DEFAULT_PLANNING_ASSIGNEE_SLUG: PlanningAssigneeSlug = "__none__";
 
+/** Nombre maximum d’assignés distincts par ligne de service (UI + localStorage). */
+export const MAX_PLANNING_ASSIGNEES_PER_SERVICE = 4 as const;
+
 export const KNOWN_PLANNING_ASSIGNEE_SLUGS: string[] =
   PLANNING_ASSIGNEE_OPTIONS.map((o) => o.value);
 
@@ -71,6 +74,28 @@ export function normalizeAssigneeStoredValue(
   if (value === PLANNING_URGENT_ASSIGNEE_SLUG) return PLANNING_URGENT_ASSIGNEE_SLUG;
   if (KNOWN_PLANNING_ASSIGNEE_SLUGS.includes(value)) return value;
   return DEFAULT_PLANNING_ASSIGNEE_SLUG;
+}
+
+/**
+ * Normalise une assignation persistée : ancienne chaîne unique ou tableau (v3).
+ * Toujours au moins un créneau ; au plus {@link MAX_PLANNING_ASSIGNEES_PER_SERVICE}.
+ */
+export function normalizeAssigneeListFromStored(raw: unknown): string[] {
+  if (raw === undefined || raw === null) {
+    return [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+  }
+  if (typeof raw === "string") {
+    return [normalizeAssigneeStoredValue(raw)];
+  }
+  if (Array.isArray(raw)) {
+    const slots = raw
+      .slice(0, MAX_PLANNING_ASSIGNEES_PER_SERVICE)
+      .map((x) =>
+        normalizeAssigneeStoredValue(typeof x === "string" ? x : undefined)
+      );
+    return slots.length > 0 ? slots : [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+  }
+  return [DEFAULT_PLANNING_ASSIGNEE_SLUG];
 }
 
 export function isUrgentAssignee(stored: string): boolean {
