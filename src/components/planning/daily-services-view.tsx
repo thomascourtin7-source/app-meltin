@@ -667,6 +667,7 @@ export function DailyServicesView() {
     );
   }, [data?.rows, selectedKey]);
 
+  /** Conflits : uniquement jour « Demain » + préparation (contexte ou `?mode=prep`). */
   const preparationModeActive =
     isTomorrowSelected && (isPreparingTomorrow || urlPrepMode);
 
@@ -873,37 +874,6 @@ export function DailyServicesView() {
     };
     saveSheetAssigneeSnapshot(snapshots);
   }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate, tomorrowYmd]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const payload = data as PlanningServicesPayload | undefined;
-    console.log("[Planning] date sélectionnée (sélecteur, YYYY-MM-DD) :", selectedDate);
-    console.log("[Planning] clé normalisée pour filtre :", selectedKey);
-    console.log(
-      "[Planning] premières lignes brutes du Sheet (max 20) :",
-      payload?.debug?.rawFirstRows
-    );
-    console.log(
-      "[Planning] plage API / ligne d’en-tête / colonne DATE :",
-      payload?.debug?.range,
-      "headerRowIndex =",
-      payload?.debug?.headerRowIndex,
-      "dateColumnIndex =",
-      payload?.debug?.dateColumnIndex
-    );
-    console.log(
-      "[Planning] échantillon cellules DATE brutes (après en-tête) :",
-      payload?.debug?.rawDateCellSamples
-    );
-    console.log(
-      "[Planning] dates distinctes parsées (échantillon) :",
-      payload?.debug?.uniqueParsedDates
-    );
-    console.log(
-      "[Planning] lignes parsées (max 8) :",
-      (payload?.rows ?? []).slice(0, 8)
-    );
-  }, [data, selectedDate, selectedKey]);
 
   return (
     <div

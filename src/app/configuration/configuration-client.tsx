@@ -52,7 +52,6 @@ export function ConfigurationClient() {
             variant="default"
             size="lg"
             onClick={() => {
-              console.log("Mode préparation activé");
               setPreparingTomorrow(true);
               router.push("/planning?mode=prep&date=tomorrow");
             }}
