@@ -256,9 +256,48 @@ export function Chat({ variant }: ChatProps) {
     stickToBottomRef.current = gap < 56;
   }, []);
 
+  const scrollToBottomTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+
+  /** `force: true` = focus sur l’input (toujours). Sinon = resize viewport, seulement si stick au bas. */
+  const scrollToBottom = useCallback(
+    (opts: { force: boolean }) => {
+      if (variant !== "page") return;
+      if (!opts.force && !stickToBottomRef.current) return;
+      if (opts.force) stickToBottomRef.current = true;
+      if (scrollToBottomTimerRef.current) {
+        clearTimeout(scrollToBottomTimerRef.current);
+      }
+      scrollToBottomTimerRef.current = setTimeout(() => {
+        scrollToBottomTimerRef.current = null;
+        const el = scrollRef.current;
+        if (!el) return;
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+        messagesEndRef.current?.scrollIntoView({
+          block: "end",
+          behavior: "smooth",
+        });
+      }, 240);
+    },
+    [variant]
+  );
+
+  const handleTextareaFocus = useCallback(() => {
+    scrollToBottom({ force: true });
+  }, [scrollToBottom]);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- montage client uniquement
     setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (scrollToBottomTimerRef.current) {
+        clearTimeout(scrollToBottomTimerRef.current);
+      }
+    };
   }, []);
 
   const configError =
@@ -405,7 +444,7 @@ export function Chat({ variant }: ChatProps) {
     return () => ro.disconnect();
   }, [variant, hasUsername, keyboardInsetPx]);
 
-  /** VisualViewport : borne la hauteur de la liste pour qu’elle ne passe pas sous le clavier. */
+  /** VisualViewport : hauteur de la zone messages + scroll bas après resize (clavier iOS). */
   useEffect(() => {
     if (variant !== "page") {
       setMessagesMaxHeightPx(null);
@@ -415,7 +454,7 @@ export function Chat({ variant }: ChatProps) {
     const vv = window.visualViewport;
     if (!vv) return;
 
-    const update = () => {
+    const updateHeight = () => {
       const scrollEl = scrollRef.current;
       if (!scrollEl) return;
       const top = scrollEl.getBoundingClientRect().top;
@@ -423,39 +462,34 @@ export function Chat({ variant }: ChatProps) {
       setMessagesMaxHeightPx(Math.max(120, bottomVisible - top - 4));
     };
 
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    window.addEventListener("resize", update);
-    update();
-    const t = window.setTimeout(update, 0);
-    const ro = new ResizeObserver(update);
+    const onViewportChange = () => {
+      updateHeight();
+      scrollToBottom({ force: false });
+    };
+
+    vv.addEventListener("resize", onViewportChange);
+    vv.addEventListener("scroll", onViewportChange);
+    window.addEventListener("resize", updateHeight);
+    updateHeight();
+    const t = window.setTimeout(updateHeight, 0);
+    const ro = new ResizeObserver(updateHeight);
     const el = scrollRef.current;
     if (el) ro.observe(el);
     return () => {
       window.clearTimeout(t);
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
+      vv.removeEventListener("resize", onViewportChange);
+      vv.removeEventListener("scroll", onViewportChange);
+      window.removeEventListener("resize", updateHeight);
       ro.disconnect();
     };
-  }, [variant, keyboardInsetPx, composerHeightPx, messages.length, hasUsername]);
-
-  /** Focus sur le textarea : amener le dernier message au-dessus du composer / clavier. */
-  useEffect(() => {
-    if (variant !== "page" || !hasUsername) return;
-    const ta = textareaRef.current;
-    if (!ta) return;
-    const onFocus = () => {
-      requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "end",
-        });
-      });
-    };
-    ta.addEventListener("focus", onFocus);
-    return () => ta.removeEventListener("focus", onFocus);
-  }, [variant, hasUsername, messages.length]);
+  }, [
+    variant,
+    keyboardInsetPx,
+    composerHeightPx,
+    messages.length,
+    hasUsername,
+    scrollToBottom,
+  ]);
 
   useEffect(() => {
     if (!hasUsername || typeof window === "undefined") return;
@@ -1112,8 +1146,15 @@ export function Chat({ variant }: ChatProps) {
                 ? {
                     minHeight: 0,
                     ...(messagesMaxHeightPx != null
-                      ? { maxHeight: `${messagesMaxHeightPx}px` }
+                      ? {
+                          height: `${messagesMaxHeightPx}px`,
+                          maxHeight: `${messagesMaxHeightPx}px`,
+                        }
                       : {}),
+                    paddingBottom:
+                      keyboardInsetPx > 0
+                        ? "max(0.75rem, env(safe-area-inset-bottom))"
+                        : "0.5rem",
                   }
                 : undefined
             }
@@ -1505,7 +1546,13 @@ export function Chat({ variant }: ChatProps) {
                   onClick={(e) =>
                     setSelectionStart(e.currentTarget.selectionStart)
                   }
-                  onFocus={(e) => scrollIntoViewOnMobileFocus(e.currentTarget)}
+                  onFocus={(e) => {
+                    if (variant === "page") {
+                      handleTextareaFocus();
+                    } else {
+                      scrollIntoViewOnMobileFocus(e.currentTarget);
+                    }
+                  }}
                   placeholder={
                     editingMessageId
                       ? "Modifier le message…"
