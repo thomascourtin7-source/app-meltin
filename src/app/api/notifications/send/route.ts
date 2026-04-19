@@ -3,6 +3,7 @@ import { WebPushError } from "web-push";
 
 import type { PushSubscriptionJSON } from "@/lib/push/subscriptions-store";
 import { sendWebPushToSubscription } from "@/lib/push/send-notification";
+import { applyVapidDetailsIfPossible } from "@/lib/push/vapid-config";
 
 function isOriginAllowed(req: Request): boolean {
   if (process.env.NODE_ENV === "development") return true;
@@ -51,6 +52,29 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: "Subscription Web Push incomplète." },
       { status: 400 }
+    );
+  }
+
+  /**
+   * `webpush.setVapidDetails` : 1er argument = `process.env.VAPID_SUBJECT` (mailto: ou https:).
+   * Sans sujet, Apple renvoie BadJwtToken — voir `applyVapidDetailsIfPossible`.
+   */
+  if (!applyVapidDetailsIfPossible()) {
+    const missingSubject = !process.env.VAPID_SUBJECT?.trim();
+    console.error(
+      "[notifications/send] VAPID incomplet — setVapidDetails non appliqué.",
+      missingSubject
+        ? "Cause probable : VAPID_SUBJECT manquant (requis pour Apple)."
+        : "Cause probable : NEXT_PUBLIC_VAPID_PUBLIC_KEY ou VAPID_PRIVATE_KEY manquant."
+    );
+    return NextResponse.json(
+      {
+        error: missingSubject
+          ? "VAPID_SUBJECT requis sur le serveur (ex. mailto:contact@votredomaine.com) pour Apple Web Push."
+          : "Clés VAPID incomplètes côté serveur.",
+        code: missingSubject ? "VAPID_SUBJECT_MISSING" : "VAPID_KEYS_MISSING",
+      },
+      { status: 503 }
     );
   }
 

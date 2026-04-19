@@ -2,15 +2,7 @@ import webpush from "web-push";
 import type { PushSubscription as WebPushSubscription } from "web-push";
 
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-
-function configureWebPush(): boolean {
-  const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-  const privateKey = process.env.VAPID_PRIVATE_KEY;
-  const subject = process.env.VAPID_SUBJECT ?? "mailto:planning@localhost";
-  if (!publicKey || !privateKey) return false;
-  webpush.setVapidDetails(subject, publicKey, privateKey);
-  return true;
-}
+import { applyVapidDetailsIfPossible } from "@/lib/push/vapid-config";
 
 export type ChatMessagePushInput = {
   id: string;
@@ -25,7 +17,7 @@ export type ChatMessagePushInput = {
 export async function notifyChatSubscribersExceptSender(
   message: ChatMessagePushInput
 ): Promise<{ sent: number; failed: number }> {
-  if (!configureWebPush()) return { sent: 0, failed: 0 };
+  if (!applyVapidDetailsIfPossible()) return { sent: 0, failed: 0 };
 
   const admin = getSupabaseAdmin();
   if (!admin) return { sent: 0, failed: 0 };
