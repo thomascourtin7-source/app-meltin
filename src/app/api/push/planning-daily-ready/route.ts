@@ -16,10 +16,9 @@ function isOriginAllowed(req: Request): boolean {
   }
 }
 
-const DEFAULT_TITLE = "Planning demain";
-const DEFAULT_BODY =
-  "📅 Le planning de demain est disponible ! Vérifiez vos assignations.";
-const DEFAULT_OPEN = "/planning?date=tomorrow";
+const DEFAULT_TITLE = "📅 Planning";
+const DEFAULT_BODY = "Le planning a été modifié";
+const DEFAULT_OPEN = "/";
 
 /** Diffusion globale : tous les abonnés push (préparation terminée). */
 export async function POST(req: Request) {

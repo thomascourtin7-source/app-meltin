@@ -499,6 +499,15 @@ function ServiceBlock({
   );
 }
 
+/** Alarme active mais aucun membre réel assigné (hors urgence / non assigné). */
+function rowNeedsAlarmUncovered(assignees: string[]): boolean {
+  const hasUrgent = assignees.some((a) => isUrgentAssignee(a));
+  const hasReal = assignees.some(
+    (a) => a !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(a)
+  );
+  return hasUrgent && !hasReal;
+}
+
 async function sendPushNotification(opts: {
   title: string;
   body: string;
@@ -903,6 +912,41 @@ export function DailyServicesView() {
       }
     }
   }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate]);
+
+  /** Cas 5 : alarme sans assignation réelle → Web Push global (déduplication serveur). */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const rows = data?.rows;
+    if (!rows?.length) return;
+
+    const todayKey = normalizeCanonicalDateKey(formatLocalYmd(new Date()));
+    if (normalizeCanonicalDateKey(selectedDate) !== todayKey) return;
+
+    const store = loadAssigneeStore();
+    const sheet = store[spreadsheetId] ?? {};
+    let uncovered = false;
+    for (const row of rows) {
+      const key = stableServiceRowKey(row);
+      const slots = normalizeAssigneeListFromStored(sheet[key]);
+      if (rowNeedsAlarmUncovered(slots)) {
+        uncovered = true;
+        break;
+      }
+    }
+    if (!uncovered) return;
+
+    void fetch("/api/push/planning-alarm-uncovered", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spreadsheetId, dateKey: todayKey }),
+    }).catch(() => {});
+  }, [
+    data?.rows,
+    data?.fetchedAt,
+    spreadsheetId,
+    selectedDate,
+    assigneesBump,
+  ]);
 
   /** Colonne « assigné » du Sheet : changement → push uniquement vers le membre ciblé. */
   useEffect(() => {

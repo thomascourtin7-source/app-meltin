@@ -45,6 +45,9 @@ self.addEventListener("push", (event: PushEvent) => {
     title = data.senderName ?? data.title ?? "Meltin";
     body = (data.text ?? data.body ?? "Nouveau message").slice(0, 200);
     tag = data.messageId ? `chat-${data.messageId}` : `chat-${title}`;
+    if (typeof data.openUrl === "string" && data.openUrl.length > 0) {
+      openUrl = data.openUrl;
+    }
   }
 
   const opts = {

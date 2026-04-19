@@ -1,24 +1,16 @@
 import { NextResponse } from "next/server";
 
-import { broadcastPlanningUpdate } from "@/lib/push/send-notification";
+import { broadcastAlarmUncoveredPush } from "@/lib/push/send-notification";
 
-const DEDUPE_MS = 5 * 60 * 1000;
+const DEDUPE_MS = 10 * 60 * 1000;
 const dedupe = new Map<string, number>();
 
 function pruneDedupe(): void {
-  if (dedupe.size < 300) return;
+  if (dedupe.size < 200) return;
   const now = Date.now();
   for (const [k, t] of dedupe) {
     if (now - t > DEDUPE_MS) dedupe.delete(k);
   }
-}
-
-function dedupeKey(
-  spreadsheetId: string,
-  dateKey: string,
-  newIdentityKeys: string[]
-): string {
-  return `${spreadsheetId}\x1f${dateKey}\x1f${[...newIdentityKeys].sort().join("\x1e")}`;
 }
 
 function isOriginAllowed(req: Request): boolean {
@@ -35,9 +27,9 @@ function isOriginAllowed(req: Request): boolean {
   }
 }
 
-const NOTIFICATION_TITLE = "📅 Planning";
-const NOTIFICATION_BODY = "Le planning a été modifié";
-
+/**
+ * Cas 5 : service avec alarme sans assignation réelle — alerte globale.
+ */
 export async function POST(req: Request) {
   if (!isOriginAllowed(req)) {
     return NextResponse.json({ error: "Origin non autorisée." }, { status: 403 });
@@ -58,24 +50,18 @@ export async function POST(req: Request) {
   const spreadsheetId =
     typeof b.spreadsheetId === "string" ? b.spreadsheetId.trim() : "";
   const dateKey = typeof b.dateKey === "string" ? b.dateKey.trim() : "";
-  const newIdentityKeys = Array.isArray(b.newIdentityKeys)
-    ? b.newIdentityKeys.filter(
-        (x): x is string => typeof x === "string" && x.length > 0
-      )
-    : [];
 
-  if (!spreadsheetId || !dateKey || newIdentityKeys.length === 0) {
+  if (!spreadsheetId || !dateKey) {
     return NextResponse.json(
       {
-        error:
-          "Champs requis : spreadsheetId (string), dateKey (string), newIdentityKeys (string[] non vide).",
+        error: "Champs requis : spreadsheetId (string), dateKey (string).",
       },
       { status: 400 }
     );
   }
 
   pruneDedupe();
-  const key = dedupeKey(spreadsheetId, dateKey, newIdentityKeys);
+  const key = `${spreadsheetId}\x1f${dateKey}\x1falarm-uncovered`;
   const now = Date.now();
   const last = dedupe.get(key);
   if (last !== undefined && now - last < DEDUPE_MS) {
@@ -87,11 +73,7 @@ export async function POST(req: Request) {
   }
   dedupe.set(key, now);
 
-  const result = await broadcastPlanningUpdate({
-    title: NOTIFICATION_TITLE,
-    body: NOTIFICATION_BODY,
-    openUrl: "/",
-  });
+  const result = await broadcastAlarmUncoveredPush();
 
   return NextResponse.json({ ok: true, skipped: false, ...result });
 }

@@ -27,9 +27,9 @@ function isOriginAllowed(req: Request): boolean {
   }
 }
 
-const TITLE = "Transport assigné";
+const TITLE = "📅 Planning mis à jour";
 const BODY =
-  "Une ligne du planning t’a été assignée dans la feuille. Ouvre l’app pour voir.";
+  "Votre planning a été modifié. Cliquez pour voir vos nouveaux horaires.";
 
 export async function POST(req: Request) {
   if (!isOriginAllowed(req)) {

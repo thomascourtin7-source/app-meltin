@@ -2,6 +2,7 @@ import webpush from "web-push";
 import type { PushSubscription as WebPushSubscription } from "web-push";
 import type { SendResult } from "web-push";
 
+import { sendPushNotification } from "@/lib/notifications";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 import { applyVapidDetailsIfPossible } from "./vapid-config";
@@ -54,20 +55,48 @@ export async function broadcastPlanningUpdate(payload: {
   let failed = 0;
 
   for (const raw of subs) {
-    try {
-      await webpush.sendNotification(
-        raw as WebPushSubscription,
-        JSON.stringify({
-          type: "planning-update",
-          title: payload.title,
-          body: payload.body,
-          openUrl,
-        })
-      );
-      sent++;
-    } catch {
-      failed++;
-    }
+    const r = await sendPushNotification(
+      raw,
+      payload.title,
+      payload.body,
+      openUrl,
+      { variant: "planning" }
+    );
+    if (r.ok) sent++;
+    else failed++;
+  }
+
+  return { sent, failed };
+}
+
+const ALARM_UNCOVERED_TITLE = "🚨 ALERTE : Service";
+const ALARM_UNCOVERED_BODY =
+  "Un service avec alarme est sans assignation. Action requise !";
+
+/** Cas 5 : service avec alarme non couvert — diffusion à tous les abonnés. */
+export async function broadcastAlarmUncoveredPush(): Promise<{
+  sent: number;
+  failed: number;
+}> {
+  if (!configureWebPush()) {
+    return { sent: 0, failed: 0 };
+  }
+
+  const openUrl = "/";
+  const subs = await getPlanningPushTargets();
+  let sent = 0;
+  let failed = 0;
+
+  for (const raw of subs) {
+    const r = await sendPushNotification(
+      raw,
+      ALARM_UNCOVERED_TITLE,
+      ALARM_UNCOVERED_BODY,
+      openUrl,
+      { variant: "planning" }
+    );
+    if (r.ok) sent++;
+    else failed++;
   }
 
   return { sent, failed };
