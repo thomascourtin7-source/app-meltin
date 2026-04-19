@@ -9,7 +9,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import Link from "next/link";
 import {
+  ArrowLeft,
   Bell,
   Loader2,
   MoreVertical,
@@ -23,7 +25,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useLocalStorageString } from "@/hooks/use-local-storage-string";
 import {
   savePushSubscriptionToServer,
@@ -32,7 +33,6 @@ import {
 import { CHAT_USERNAME_STORAGE_KEY } from "@/lib/chat/constants";
 import { getSupabaseBrowserClient, type MessageRow } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { useChatUI } from "./chat-ui-provider";
 import { InvisibleCloseLayer } from "./invisible-close-layer";
 
 const ROOM_ID = "general";
@@ -40,7 +40,7 @@ const CHAT_ATTACHMENTS_BUCKET = "chat-attachments";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /**
  * Pixels entre le bas du layout viewport et le bas de la visual viewport
- * (clavier + barre accessoire iOS). À utiliser en `bottom` sur un composer `fixed`.
+ * (clavier + barre accessoire iOS). À utiliser sur le composer (sticky/fixed).
  */
 function useVisualViewportKeyboardInset(enabled: boolean) {
   const [insetPx, setInsetPx] = useState(0);
@@ -188,7 +188,7 @@ function MessageContentWithMentions({
   );
 }
 
-type ChatVariant = "desktop" | "mobile";
+type ChatVariant = "desktop" | "page";
 
 type ChatProps = {
   variant: ChatVariant;
@@ -229,17 +229,12 @@ export function Chat({ variant }: ChatProps) {
   const [composerHeightPx, setComposerHeightPx] = useState(132);
 
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
-  const chatUI = useChatUI();
-  const closeMobile = useCallback(
-    () => chatUI.setMobileOpen(false),
-    [chatUI]
-  );
 
-  const keyboardInsetPx = useVisualViewportKeyboardInset(variant === "mobile");
+  const keyboardInsetPx = useVisualViewportKeyboardInset(variant === "page");
 
   const scrollIntoViewOnMobileFocus = useCallback(
     (el: HTMLElement | null) => {
-      if (variant !== "mobile" || !el) return;
+      if (variant !== "page" || !el) return;
       requestAnimationFrame(() => {
         el.scrollIntoView({ block: "center", behavior: "smooth" });
       });
@@ -372,19 +367,17 @@ export function Chat({ variant }: ChatProps) {
     };
   }, [supabase]);
 
-  const mobileOpen = chatUI.mobileOpen;
-
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, variant, mobileOpen]);
+  }, [messages, variant]);
 
   const trimmedName = usernameStore.value.trim();
   const hasUsername = trimmedName.length > 0;
 
   useLayoutEffect(() => {
-    if (variant !== "mobile" || !hasUsername) return;
+    if (variant !== "page" || !hasUsername) return;
     const el = composerRef.current;
     if (!el) return;
     const sync = () => {
@@ -395,7 +388,7 @@ export function Chat({ variant }: ChatProps) {
     const ro = new ResizeObserver(sync);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [variant, hasUsername, mobileOpen, keyboardInsetPx]);
+  }, [variant, hasUsername, keyboardInsetPx]);
 
   useEffect(() => {
     if (!hasUsername || typeof window === "undefined") return;
@@ -861,12 +854,12 @@ export function Chat({ variant }: ChatProps) {
     <div
       className={cn(
         "flex min-h-0 flex-col",
-        variant === "mobile"
-          ? "relative isolate z-0 h-full min-h-[100dvh] max-h-[100dvh] bg-white"
+        variant === "page"
+          ? "relative isolate z-0 flex h-full min-h-0 w-full flex-1 flex-col bg-white"
           : "h-full bg-background"
       )}
     >
-      {variant === "mobile" ? (
+      {variant === "page" ? (
         <div
           aria-hidden
           className="pointer-events-none fixed inset-0 -z-10 bg-white"
@@ -874,12 +867,21 @@ export function Chat({ variant }: ChatProps) {
       ) : null}
       <header
         className={cn(
-          "flex shrink-0 items-start justify-between gap-3 py-3",
-          variant === "mobile"
+          "flex shrink-0 items-start gap-2 py-3",
+          variant === "page"
             ? "border-0 px-2 pt-[max(0.75rem,env(safe-area-inset-top))]"
-            : "border-b border-border px-4"
+            : "justify-between border-b border-border px-4"
         )}
       >
+        {variant === "page" ? (
+          <Link
+            href="/planning"
+            className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-foreground hover:bg-muted"
+            aria-label="Retour au planning"
+          >
+            <ArrowLeft className="size-5" />
+          </Link>
+        ) : null}
         <div className="min-w-0 flex-1 space-y-1">
           <h2 className="text-sm font-semibold tracking-tight">Messages équipe</h2>
           {hasUsername && !editingName ? (
@@ -968,18 +970,6 @@ export function Chat({ variant }: ChatProps) {
             </div>
           ) : null}
         </div>
-        {variant === "mobile" ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 rounded-full"
-            onClick={closeMobile}
-            aria-label="Fermer le chat"
-          >
-            <X className="size-5" />
-          </Button>
-        ) : null}
       </header>
 
       {!hasUsername ? (
@@ -1037,18 +1027,18 @@ export function Chat({ variant }: ChatProps) {
         <>
           <InvisibleCloseLayer
             scrollRef={scrollRef}
-            enabled={variant === "mobile"}
+            enabled={variant === "page"}
             onActivate={() => {
               textareaRef.current?.blur();
             }}
             className={cn(
               "min-h-0 w-full max-w-full flex-1 space-y-4 overflow-y-auto overscroll-y-contain sm:px-4",
-              variant === "mobile"
+              variant === "page"
                 ? "touch-pan-y px-0 py-2"
                 : "px-3 py-3"
             )}
             style={
-              variant === "mobile" && hasUsername
+              variant === "page" && hasUsername
                 ? { paddingBottom: composerHeightPx }
                 : undefined
             }
@@ -1279,12 +1269,12 @@ export function Chat({ variant }: ChatProps) {
             ref={composerRef}
             className={cn(
               "z-30 shrink-0 bg-white",
-              variant === "mobile"
-                ? "fixed left-0 right-0 border-0 px-0 pt-0 shadow-none"
+              variant === "page"
+                ? "sticky bottom-0 left-0 right-0 w-full border-0 px-0 pt-0 shadow-none"
                 : "relative border-t border-border bg-background px-3 pt-3"
             )}
             style={
-              variant === "mobile"
+              variant === "page"
                 ? {
                     bottom: keyboardInsetPx,
                     paddingBottom:
@@ -1365,103 +1355,115 @@ export function Chat({ variant }: ChatProps) {
             ) : null}
             <div
               className={cn(
-                "flex",
-                variant === "mobile" ? "gap-0 px-0" : "gap-2"
+                "flex w-full items-center justify-center",
+                variant === "page" ? "px-4 pb-1" : "px-0"
               )}
             >
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/*"
-                className="sr-only"
-                tabIndex={-1}
-                onChange={onImageInputChange}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
+              <div
                 className={cn(
-                  "h-11 w-11 shrink-0 self-end",
-                  variant === "mobile" ? "rounded-none" : "rounded-xl"
+                  "flex min-w-0 items-center gap-3",
+                  variant === "page"
+                    ? "mx-auto w-full max-w-2xl rounded-full bg-muted/50 px-4 py-2.5 shadow-sm"
+                    : "w-full rounded-2xl border border-border/70 bg-muted/40 px-3 py-1.5"
                 )}
-                disabled={!canAttach}
-                onClick={() => imageInputRef.current?.click()}
-                aria-label="Joindre une image"
               >
-                {uploadingImage ? (
-                  <span className="size-4 animate-pulse rounded-full bg-primary" />
-                ) : (
-                  <Paperclip className="size-5" />
-                )}
-              </Button>
-              <textarea
-                ref={textareaRef}
-                value={draft}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  const pos = e.target.selectionStart;
-                  const ctx = getMentionContext(v, pos);
-                  if (ctx?.atIndex !== lastMentionAtRef.current) {
-                    mentionIdxRef.current = 0;
-                    setMentionHighlightIdx(0);
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  tabIndex={-1}
+                  onChange={onImageInputChange}
+                />
+                <Button
+                  type="button"
+                  variant={variant === "page" ? "ghost" : "outline"}
+                  size="icon"
+                  className={cn(
+                    "h-10 w-10 shrink-0",
+                    variant === "page"
+                      ? "rounded-full text-muted-foreground hover:bg-white/80"
+                      : "rounded-xl"
+                  )}
+                  disabled={!canAttach}
+                  onClick={() => imageInputRef.current?.click()}
+                  aria-label="Joindre une image"
+                >
+                  {uploadingImage ? (
+                    <span className="size-4 animate-pulse rounded-full bg-primary" />
+                  ) : (
+                    <Paperclip className="size-5" />
+                  )}
+                </Button>
+                <textarea
+                  ref={textareaRef}
+                  value={draft}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const pos = e.target.selectionStart;
+                    const ctx = getMentionContext(v, pos);
+                    if (ctx?.atIndex !== lastMentionAtRef.current) {
+                      mentionIdxRef.current = 0;
+                      setMentionHighlightIdx(0);
+                    }
+                    lastMentionAtRef.current = ctx?.atIndex ?? null;
+                    setDraft(v);
+                    setSelectionStart(pos);
+                    const cands = ctx
+                      ? filterMentionCandidates(participantNames, ctx.query)
+                      : [];
+                    const max = Math.max(0, cands.length - 1);
+                    if (mentionIdxRef.current > max) {
+                      mentionIdxRef.current = max;
+                      setMentionHighlightIdx(max);
+                    }
+                  }}
+                  onKeyDown={onKeyDown}
+                  onSelect={(e) =>
+                    setSelectionStart(e.currentTarget.selectionStart)
                   }
-                  lastMentionAtRef.current = ctx?.atIndex ?? null;
-                  setDraft(v);
-                  setSelectionStart(pos);
-                  const cands = ctx
-                    ? filterMentionCandidates(participantNames, ctx.query)
-                    : [];
-                  const max = Math.max(0, cands.length - 1);
-                  if (mentionIdxRef.current > max) {
-                    mentionIdxRef.current = max;
-                    setMentionHighlightIdx(max);
+                  onClick={(e) =>
+                    setSelectionStart(e.currentTarget.selectionStart)
                   }
-                }}
-                onKeyDown={onKeyDown}
-                onSelect={(e) =>
-                  setSelectionStart(e.currentTarget.selectionStart)
-                }
-                onClick={(e) =>
-                  setSelectionStart(e.currentTarget.selectionStart)
-                }
-                onFocus={(e) => scrollIntoViewOnMobileFocus(e.currentTarget)}
-                placeholder={
-                  editingMessageId
-                    ? "Modifier le message…"
-                    : "Message… (Entrée pour envoyer)"
-                }
-                disabled={!hasUsername || !supabase || uploadingImage}
-                rows={2}
-                maxLength={2000}
-                autoComplete="off"
-                data-lpignore="true"
-                className={cn(
-                  "min-h-[44px] flex-1 resize-none border border-input bg-transparent py-2.5 text-sm",
-                  variant === "mobile"
-                    ? "rounded-none border-x-0 px-0"
-                    : "rounded-xl px-3",
-                  "placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-                  "disabled:cursor-not-allowed disabled:opacity-50"
-                )}
-              />
-              <Button
-                type="button"
-                size="icon"
-                className={cn(
-                  "h-11 w-11 shrink-0 self-end",
-                  variant === "mobile" ? "rounded-none" : "rounded-xl"
-                )}
-                disabled={!canSend}
-                onClick={() => void sendMessage()}
-                aria-label="Envoyer"
-              >
-                {sending ? (
-                  <span className="size-4 animate-pulse rounded-full bg-primary-foreground/80" />
-                ) : (
-                  <Send className="size-5" />
-                )}
-              </Button>
+                  onFocus={(e) => scrollIntoViewOnMobileFocus(e.currentTarget)}
+                  placeholder={
+                    editingMessageId
+                      ? "Modifier le message…"
+                      : "Message… (Entrée pour envoyer)"
+                  }
+                  disabled={!hasUsername || !supabase || uploadingImage}
+                  rows={2}
+                  maxLength={2000}
+                  autoComplete="off"
+                  data-lpignore="true"
+                  className={cn(
+                    "min-h-[44px] flex-1 resize-none bg-transparent leading-snug",
+                    "border-none outline-none focus-visible:ring-0 focus-visible:ring-offset-0",
+                    "placeholder:text-muted-foreground",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                    variant === "page"
+                      ? "px-3 py-2 text-[16px]"
+                      : "px-2 py-2 text-sm"
+                  )}
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  className={cn(
+                    "h-10 w-10 shrink-0",
+                    variant === "page" ? "rounded-full" : "rounded-xl"
+                  )}
+                  disabled={!canSend}
+                  onClick={() => void sendMessage()}
+                  aria-label="Envoyer"
+                >
+                  {sending ? (
+                    <span className="size-4 animate-pulse rounded-full bg-primary-foreground/80" />
+                  ) : (
+                    <Send className="size-5" />
+                  )}
+                </Button>
+              </div>
             </div>
           </footer>
         </>
@@ -1478,26 +1480,11 @@ export function Chat({ variant }: ChatProps) {
     );
   }
 
-  // Mobile: masqué par défaut, ouverture via bouton "Messages" dans le header.
   if (!isMounted) return null;
-  const setMobileOpen = chatUI.setMobileOpen;
 
   return (
-    <>
-      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetContent
-          side="bottom"
-          fullScreen
-          className={cn(
-            "md:hidden gap-0 border-0 p-0",
-            "supports-[height:100dvh]:min-h-[100dvh]",
-            keyboardInsetPx > 0 && "!pb-0"
-          )}
-          showCloseButton={false}
-        >
-          {ChatPanel}
-        </SheetContent>
-      </Sheet>
-    </>
+    <section className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+      {ChatPanel}
+    </section>
   );
 }

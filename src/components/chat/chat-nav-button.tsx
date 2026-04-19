@@ -1,24 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { MessageCircle } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { useChatUI } from "./chat-ui-provider";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export function ChatNavButton() {
-  const { setMobileOpen } = useChatUI();
-
   return (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      className="gap-1.5 md:hidden"
-      onClick={() => setMobileOpen(true)}
+    <Link
+      href="/chat"
+      className={cn(
+        buttonVariants({ variant: "outline", size: "sm" }),
+        "gap-1.5 md:hidden"
+      )}
     >
       <MessageCircle className="size-4" aria-hidden />
       Messages
-    </Button>
+    </Link>
   );
 }
-
