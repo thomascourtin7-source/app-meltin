@@ -13,6 +13,15 @@ export function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return outputArray;
 }
 
+/** Copie explicite pour `PushManager.subscribe` (TS + Safari iOS / BufferSource). */
+export function toApplicationServerKeyBufferSource(
+  key: Uint8Array
+): BufferSource {
+  const out = new Uint8Array(key.length);
+  out.set(key);
+  return out;
+}
+
 export type ChatPushSubscribeResult =
   | { ok: true }
   | { ok: false; error: string; offline?: boolean };
@@ -154,23 +163,33 @@ export async function subscribeChatPush(
     return { ok: false, error: msg };
   }
 
-  const applicationServerKey = urlBase64ToUint8Array(publicKey);
+  const applicationServerKey = toApplicationServerKeyBufferSource(
+    urlBase64ToUint8Array(publicKey)
+  );
   let sub: PushSubscription;
   try {
     sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: applicationServerKey.buffer.slice(
-        applicationServerKey.byteOffset,
-        applicationServerKey.byteOffset + applicationServerKey.byteLength
-      ) as ArrayBuffer,
+      applicationServerKey,
     });
   } catch (e) {
+    const name = e instanceof Error ? e.name : "";
+    if (name === "NotAllowedError") {
+      return {
+        ok: false,
+        error:
+          "Notifications bloquées (Safari : Réglages → Safari → Avancé → données de site, ou Notifications pour ce site).",
+      };
+    }
     const msg =
       e instanceof Error ? e.message : "Échec de l’abonnement push.";
     return { ok: false, error: msg };
   }
 
   const raw = sub.toJSON();
+  if (raw.endpoint?.includes("push.apple.com")) {
+    console.log("Token Safari généré:", sub.toJSON());
+  }
   if (!raw.endpoint || !raw.keys?.p256dh || !raw.keys?.auth) {
     return { ok: false, error: "Subscription Web Push incomplète." };
   }

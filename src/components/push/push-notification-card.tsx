@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bell, BellOff, Loader2 } from "lucide-react";
 
+import {
+  toApplicationServerKeyBufferSource,
+  urlBase64ToUint8Array,
+} from "@/lib/push/client-subscribe-chat";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,19 +15,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-
-function urlBase64ToUint8Array(base64String: string): BufferSource {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding)
-    .replace(/-/g, "+")
-    .replace(/_/g, "/");
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
-}
 
 export function PushNotificationCard() {
   const supported =
@@ -36,6 +27,7 @@ export function PushNotificationCard() {
     "idle"
   );
   const [message, setMessage] = useState<string | null>(null);
+  const [testBusy, setTestBusy] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -92,20 +84,58 @@ export function PushNotificationCard() {
         return;
       }
 
-      const perm = await Notification.requestPermission();
+      const reg = await navigator.serviceWorker.ready;
+
+      let perm: NotificationPermission;
+      try {
+        perm = await Notification.requestPermission();
+      } catch (e) {
+        const n = e instanceof Error ? e.name : "";
+        if (n === "NotAllowedError") {
+          setStatus("error");
+          setMessage(
+            "Notifications bloquées par Safari (Réglages → site ou autorisations)."
+          );
+          return;
+        }
+        throw e;
+      }
       if (perm !== "granted") {
         setStatus("error");
         setMessage("Permission de notification refusée.");
         return;
       }
 
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
-      });
+      const applicationServerKey = toApplicationServerKeyBufferSource(
+        urlBase64ToUint8Array(publicKey)
+      );
+
+      let sub: PushSubscription;
+      try {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey,
+        });
+      } catch (e) {
+        const n = e instanceof Error ? e.name : "";
+        if (n === "NotAllowedError") {
+          setStatus("error");
+          setMessage(
+            "Abonnement push refusé (NotAllowedError). Vérifiez les notifications pour ce site dans Réglages iOS."
+          );
+          return;
+        }
+        throw e;
+      }
 
       const subscription = sub.toJSON();
+      if (
+        subscription.endpoint &&
+        subscription.endpoint.includes("push.apple.com")
+      ) {
+        console.log("Token Safari généré:", subscription);
+      }
+
       const save = await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -144,6 +174,44 @@ export function PushNotificationCard() {
       setMessage(
         "Échec de l’abonnement (HTTPS ou service worker requis en production)."
       );
+    }
+  }, []);
+
+  const sendTestToSelf = useCallback(async () => {
+    setMessage(null);
+    setTestBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        setMessage("Aucun abonnement push actif sur cet appareil.");
+        return;
+      }
+      const subscription = sub.toJSON();
+      const res = await fetch("/api/push/test-self", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription }),
+      });
+      if (!res.ok) {
+        const err: unknown = await res.json().catch(() => ({}));
+        const msg =
+          err &&
+          typeof err === "object" &&
+          "error" in err &&
+          typeof (err as { error: unknown }).error === "string"
+            ? (err as { error: string }).error
+            : "Envoi du test impossible.";
+        setMessage(msg);
+        return;
+      }
+      setMessage(
+        "Test envoyé. Si la notification n’apparaît pas, vérifiez le mode Concentration et les réglages du site."
+      );
+    } catch {
+      setMessage("Échec du test push.");
+    } finally {
+      setTestBusy(false);
     }
   }, []);
 
@@ -204,6 +272,21 @@ export function PushNotificationCard() {
             )}
             {status === "subscribed" ? "Abonné" : "Activer les alertes"}
           </Button>
+          {status === "subscribed" ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={testBusy}
+              className="gap-2"
+              onClick={() => void sendTestToSelf()}
+            >
+              {testBusy ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : null}
+              Envoyer un test à moi-même
+            </Button>
+          ) : null}
         </div>
 
         {message ? (

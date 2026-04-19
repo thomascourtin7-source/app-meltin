@@ -78,3 +78,18 @@ export async function broadcastPlanningUpdate(payload: {
 
   return { sent, failed };
 }
+
+/** Envoi d’une seule notification Web Push (ex. test « à moi-même »). */
+export async function sendWebPushToSubscription(
+  sub: { endpoint: string; keys: { p256dh: string; auth: string } },
+  payload: Record<string, unknown>
+): Promise<void> {
+  configureWebPush();
+  if (!process.env.VAPID_PRIVATE_KEY) {
+    throw new Error("VAPID non configuré.");
+  }
+  await webpush.sendNotification(
+    sub as WebPushSubscription,
+    JSON.stringify(payload)
+  );
+}

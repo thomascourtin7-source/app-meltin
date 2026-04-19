@@ -63,6 +63,11 @@ export async function POST(req: Request) {
     );
   }
 
+  /** Safari iOS : l’endpoint est fourni par Apple (`…push.apple.com…`) — on le stocke tel quel. */
+  if (sub.endpoint.includes("push.apple.com")) {
+    console.log("[push/subscribe] enregistrement endpoint Apple Web Push");
+  }
+
   const { error } = await admin.from("push_subscriptions").upsert(
     {
       endpoint: sub.endpoint,
