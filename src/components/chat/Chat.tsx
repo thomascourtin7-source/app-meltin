@@ -38,7 +38,10 @@ import { InvisibleCloseLayer } from "./invisible-close-layer";
 const ROOM_ID = "general";
 const CHAT_ATTACHMENTS_BUCKET = "chat-attachments";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-/** Espace en bas quand le clavier virtuel réduit la visual viewport (mobile). */
+/**
+ * Pixels entre le bas du layout viewport et le bas de la visual viewport
+ * (clavier + barre accessoire iOS). À utiliser en `bottom` sur un composer `fixed`.
+ */
 function useVisualViewportKeyboardInset(enabled: boolean) {
   const [insetPx, setInsetPx] = useState(0);
 
@@ -57,10 +60,12 @@ function useVisualViewportKeyboardInset(enabled: boolean) {
 
     vv.addEventListener("resize", update);
     vv.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
     update();
     return () => {
       vv.removeEventListener("resize", update);
       vv.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
     };
   }, [enabled]);
 
@@ -850,12 +855,7 @@ export function Chat({ variant }: ChatProps) {
   const effectiveError = configError ?? error;
   const effectiveLoading = configError ? false : loading;
 
-  const chatFooterPadBottom =
-    variant === "mobile"
-      ? keyboardInsetPx > 0
-        ? "0px"
-        : "env(safe-area-inset-bottom)"
-      : `calc(max(0.75rem, env(safe-area-inset-bottom)) + ${keyboardInsetPx}px)`;
+  const desktopFooterPadBottom = `calc(max(0.75rem, env(safe-area-inset-bottom)) + ${keyboardInsetPx}px)`;
 
   const ChatPanel = (
     <div
@@ -869,7 +869,7 @@ export function Chat({ variant }: ChatProps) {
       {variant === "mobile" ? (
         <div
           aria-hidden
-          className="pointer-events-none fixed -bottom-full left-0 right-0 z-0 h-screen bg-white"
+          className="pointer-events-none fixed inset-0 -z-10 bg-white"
         />
       ) : null}
       <header
@@ -1280,10 +1280,20 @@ export function Chat({ variant }: ChatProps) {
             className={cn(
               "z-30 shrink-0 bg-white",
               variant === "mobile"
-                ? "fixed bottom-0 left-0 right-0 border-0 px-0 pt-2"
+                ? "fixed left-0 right-0 border-0 px-0 pt-0 shadow-none"
                 : "relative border-t border-border bg-background px-3 pt-3"
             )}
-            style={{ paddingBottom: chatFooterPadBottom }}
+            style={
+              variant === "mobile"
+                ? {
+                    bottom: keyboardInsetPx,
+                    paddingBottom:
+                      keyboardInsetPx > 0
+                        ? 0
+                        : "env(safe-area-inset-bottom)",
+                  }
+                : { paddingBottom: desktopFooterPadBottom }
+            }
           >
             {editingMessageId ? (
               <div className="mb-2 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-100 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800/50">
@@ -1355,8 +1365,8 @@ export function Chat({ variant }: ChatProps) {
             ) : null}
             <div
               className={cn(
-                "flex gap-2",
-                variant === "mobile" && "px-0"
+                "flex",
+                variant === "mobile" ? "gap-0 px-0" : "gap-2"
               )}
             >
               <input
@@ -1424,10 +1434,12 @@ export function Chat({ variant }: ChatProps) {
                 disabled={!hasUsername || !supabase || uploadingImage}
                 rows={2}
                 maxLength={2000}
+                autoComplete="off"
+                data-lpignore="true"
                 className={cn(
                   "min-h-[44px] flex-1 resize-none border border-input bg-transparent py-2.5 text-sm",
                   variant === "mobile"
-                    ? "rounded-none border-x-0 px-2.5"
+                    ? "rounded-none border-x-0 px-0"
                     : "rounded-xl px-3",
                   "placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
                   "disabled:cursor-not-allowed disabled:opacity-50"
