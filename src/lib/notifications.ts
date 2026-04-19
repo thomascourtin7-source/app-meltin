@@ -15,6 +15,8 @@ export type SendPushNotificationOptions = {
   /** Chat → payload sans `type` (voir service worker). Planning → `planning-update`. */
   variant?: "chat" | "planning";
   messageId?: string;
+  /** Libellé pour les logs Vercel (`Tentative d'envoi push pour :`). */
+  debugType?: string;
 };
 
 function buildPayload(
@@ -51,6 +53,10 @@ export async function sendPushNotification(
   url: string,
   options?: SendPushNotificationOptions
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (options?.debugType) {
+    console.log("Tentative d'envoi push pour :", options.debugType);
+  }
+
   if (!applyVapidDetailsIfPossible()) {
     console.warn("[sendPushNotification] VAPID incomplet — envoi ignoré.");
     return { ok: false, error: "VAPID_NOT_CONFIGURED" };

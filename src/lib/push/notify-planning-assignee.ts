@@ -17,6 +17,8 @@ export async function notifyPlanningAssigneeSubscribers(
   targetDisplayName: string,
   payload: { title: string; body: string }
 ): Promise<{ sent: number; failed: number }> {
+  console.log("Tentative d'envoi push pour :", "planning-assignee-targeted");
+
   const admin = getSupabaseAdmin();
   if (!admin) return { sent: 0, failed: 0 };
 

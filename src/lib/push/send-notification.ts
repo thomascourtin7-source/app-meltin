@@ -45,6 +45,8 @@ export async function broadcastPlanningUpdate(payload: {
   /** Chemin ou URL relative pour l’ouverture au clic (ex. /planning?date=tomorrow). */
   openUrl?: string;
 }): Promise<{ sent: number; failed: number }> {
+  console.log("Tentative d'envoi push pour :", "planning-broadcast-all");
+
   if (!configureWebPush()) {
     return { sent: 0, failed: 0 };
   }
@@ -78,6 +80,8 @@ export async function broadcastAlarmUncoveredPush(): Promise<{
   sent: number;
   failed: number;
 }> {
+  console.log("Tentative d'envoi push pour :", "planning-alarm-uncovered");
+
   if (!configureWebPush()) {
     return { sent: 0, failed: 0 };
   }

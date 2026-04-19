@@ -562,6 +562,11 @@ export function DailyServicesView() {
   const [conflictRowKeys, setConflictRowKeys] = useState<Set<string>>(
     () => new Set()
   );
+  /** Signature des lignes du jour affiché → notif « planning modifié » si changement. */
+  const planningRowsSignatureRef = useRef<{
+    dateKey: string;
+    sig: string;
+  } | null>(null);
 
   /** Migration one-shot : normalise les assignations (tableaux / slugs / emojis). */
   useEffect(() => {
@@ -631,6 +636,37 @@ export function DailyServicesView() {
   const isTodaySelected = selectedKey === todayYmd;
   const isTomorrowSelected = selectedKey === tomorrowYmd;
   const isCustomDateSelected = !isTodaySelected && !isTomorrowSelected;
+
+  /** Tout changement sur les lignes du jour affiché → push général (dédup serveur). */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const rows = data?.rows;
+    if (!rows?.length) return;
+    const dateKey = normalizeCanonicalDateKey(selectedDate);
+    const rowsForDay = rows.filter(
+      (r) => normalizeCanonicalDateKey(r.dateIso) === dateKey
+    );
+    const sig = rowsForDay
+      .map(
+        (r) =>
+          `${stableServiceRowKey(r)}\x1f${r.sheetAssignee.trim()}\x1f${r.type.trim()}\x1f${r.destProv.trim()}\x1f${r.dateIso}`
+      )
+      .sort()
+      .join("|");
+    const prev = planningRowsSignatureRef.current;
+    if (prev === null || prev.dateKey !== dateKey) {
+      planningRowsSignatureRef.current = { dateKey, sig };
+      return;
+    }
+    if (prev.sig !== sig) {
+      void fetch("/api/push/planning-sheet-delta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spreadsheetId, dateKey }),
+      }).catch(() => {});
+    }
+    planningRowsSignatureRef.current = { dateKey, sig };
+  }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate]);
 
   /** Planning déjà validé pour la date « demain » (persisté → pas de mode rouge au refresh). */
   const isTomorrowPlanningFinalized = useMemo(() => {
@@ -977,6 +1013,31 @@ export function DailyServicesView() {
       return;
     }
 
+    const planningDay: "today" | "tomorrow" | "other" =
+      dateKey === todayYmd ? "today" : dateKey === tomorrowYmd ? "tomorrow" : "other";
+
+    const isPrep =
+      new URLSearchParams(window.location.search).get("mode") === "prep";
+    const silentTomorrowPrep = dateKey === tomorrowYmd && isPrep;
+
+    for (const stableKey of Object.keys(prevMap)) {
+      if (stableKey in nextMap) continue;
+      const prevRaw = (prevMap[stableKey] ?? "").trim();
+      const targetRemoved = matchSheetAssigneeToTeamLabel(prevRaw);
+      if (!targetRemoved || silentTomorrowPrep) continue;
+      void fetch("/api/push/planning-row-removed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spreadsheetId,
+          dateKey,
+          stableRowKey: stableKey,
+          assigneeName: targetRemoved,
+          planningDay,
+        }),
+      }).catch(() => {});
+    }
+
     for (const row of rowsForDay) {
       const stableKey = stableServiceRowKey(row);
       const prevRaw = (prevMap[stableKey] ?? "").trim();
@@ -989,9 +1050,6 @@ export function DailyServicesView() {
       const prevTarget = matchSheetAssigneeToTeamLabel(prevRaw);
       if (prevTarget === target) continue;
 
-      const isPrep =
-        new URLSearchParams(window.location.search).get("mode") === "prep";
-      const silentTomorrowPrep = dateKey === tomorrowYmd && isPrep;
       if (!silentTomorrowPrep) {
         void fetch("/api/push/planning-assignee-alert", {
           method: "POST",
@@ -1001,6 +1059,7 @@ export function DailyServicesView() {
             dateKey,
             stableRowKey: stableKey,
             assigneeName: target,
+            planningDay,
           }),
         }).catch(() => {});
       }
@@ -1016,6 +1075,7 @@ export function DailyServicesView() {
     data?.fetchedAt,
     spreadsheetId,
     selectedDate,
+    todayYmd,
     tomorrowYmd,
     searchParams,
   ]);

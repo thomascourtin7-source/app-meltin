@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { notifyPlanningAssigneeSubscribers } from "@/lib/push/notify-planning-assignee";
+import { broadcastPlanningUpdate } from "@/lib/push/send-notification";
 
 const DEDUPE_MS = 5 * 60 * 1000;
 const dedupe = new Map<string, number>();
@@ -27,19 +27,9 @@ function isOriginAllowed(req: Request): boolean {
   }
 }
 
-const BODY =
-  "Votre planning a été modifié. Cliquez pour voir.";
-
-type PlanningDay = "today" | "tomorrow" | "other";
-
-function titleForAssigneePush(planningDay: PlanningDay): string {
-  if (planningDay === "today") return "📅 Aujourd'hui : Planning mis à jour";
-  if (planningDay === "tomorrow") return "📅 Demain : Planning mis à jour";
-  return "📅 Planning mis à jour";
-}
-
+/** Tout changement détecté côté client sur les lignes du jour (sans mention). */
 export async function POST(req: Request) {
-  console.log("Tentative d'envoi push pour :", "planning-assignee-alert");
+  console.log("Tentative d'envoi push pour :", "planning-sheet-delta");
 
   if (!isOriginAllowed(req)) {
     return NextResponse.json({ error: "Origin non autorisée." }, { status: 403 });
@@ -52,46 +42,31 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "JSON invalide." }, { status: 400 });
   }
 
-  if (!body || typeof body !== "object") {
-    return NextResponse.json({ error: "Corps attendu." }, { status: 400 });
-  }
-
   const b = body as Record<string, unknown>;
   const spreadsheetId =
     typeof b.spreadsheetId === "string" ? b.spreadsheetId.trim() : "";
   const dateKey = typeof b.dateKey === "string" ? b.dateKey.trim() : "";
-  const stableRowKey =
-    typeof b.stableRowKey === "string" ? b.stableRowKey.trim() : "";
-  const assigneeName =
-    typeof b.assigneeName === "string" ? b.assigneeName.trim() : "";
-  const rawDay = b.planningDay;
-  const planningDay: PlanningDay =
-    rawDay === "today" || rawDay === "tomorrow" || rawDay === "other"
-      ? rawDay
-      : "other";
 
-  if (!spreadsheetId || !dateKey || !stableRowKey || !assigneeName) {
+  if (!spreadsheetId || !dateKey) {
     return NextResponse.json(
-      {
-        error:
-          "Champs requis : spreadsheetId, dateKey, stableRowKey, assigneeName.",
-      },
+      { error: "spreadsheetId et dateKey requis." },
       { status: 400 }
     );
   }
 
   pruneDedupe();
-  const dedupeKey = `${spreadsheetId}\x1f${dateKey}\x1f${stableRowKey}\x1f${assigneeName.toLowerCase()}`;
+  const key = `${spreadsheetId}\x1f${dateKey}\x1fdelta`;
   const now = Date.now();
-  const last = dedupe.get(dedupeKey);
+  const last = dedupe.get(key);
   if (last !== undefined && now - last < DEDUPE_MS) {
     return NextResponse.json({ ok: true, skipped: true, reason: "deduped" });
   }
-  dedupe.set(dedupeKey, now);
+  dedupe.set(key, now);
 
-  const result = await notifyPlanningAssigneeSubscribers(assigneeName, {
-    title: titleForAssigneePush(planningDay),
-    body: BODY,
+  const result = await broadcastPlanningUpdate({
+    title: "📅 Planning",
+    body: "Le planning a été modifié",
+    openUrl: "/",
   });
 
   return NextResponse.json({ ok: true, skipped: false, ...result });

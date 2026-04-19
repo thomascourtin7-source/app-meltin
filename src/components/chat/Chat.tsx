@@ -773,6 +773,17 @@ export function Chat({ variant }: ChatProps) {
       setDraft("");
       setReplyingTo(null);
       requestAnimationFrame(() => textareaRef.current?.focus());
+      void fetch("/api/chat/notify-subscribers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: row.id,
+          room_id: row.room_id,
+          sender_name: row.sender_name,
+          content: row.content,
+          image_url: row.image_url ?? null,
+        }),
+      }).catch(() => {});
     }
     setSending(false);
   }, [

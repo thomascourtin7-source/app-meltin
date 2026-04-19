@@ -4,6 +4,8 @@ import {
   truncatePushBody,
 } from "@/lib/notifications";
 
+import { shouldSkipChatMessagePush } from "./chat-push-dedupe";
+
 export type ChatMessagePushInput = {
   id: string;
   sender_name: string;
@@ -38,14 +40,35 @@ function extractMentionNorms(content: string): Set<string> {
 export async function notifyChatSubscribersExceptSender(
   message: ChatMessagePushInput
 ): Promise<{ sent: number; failed: number }> {
+  console.log("Tentative d'envoi push pour :", "chat-message-all-subscribers");
+
+  if (shouldSkipChatMessagePush(message.id)) {
+    console.log(
+      "Tentative d'envoi push pour :",
+      "chat-message-skipped-dedupe"
+    );
+    return { sent: 0, failed: 0 };
+  }
+
   const admin = getSupabaseAdmin();
-  if (!admin) return { sent: 0, failed: 0 };
+  if (!admin) {
+    console.warn(
+      "Tentative d'envoi push pour :",
+      "chat-message-no-supabase-admin"
+    );
+    return { sent: 0, failed: 0 };
+  }
 
   const { data: rows, error } = await admin
     .from("push_subscriptions")
     .select("endpoint, p256dh, auth, user_name");
 
-  if (error || !rows?.length) return { sent: 0, failed: 0 };
+  if (error || !rows?.length) {
+    if (error) {
+      console.warn("Tentative d'envoi push pour :", "chat-message-no-rows", error.message);
+    }
+    return { sent: 0, failed: 0 };
+  }
 
   const senderNorm = normSender(message.sender_name);
   const rawText =
@@ -60,9 +83,10 @@ export async function notifyChatSubscribersExceptSender(
 
   for (const row of rows) {
     const userNorm = normSender(String(row.user_name ?? ""));
-    if (!userNorm || userNorm === senderNorm) continue;
+    /** Expéditeur exclu si le prénom en base correspond ; les abonnés sans `user_name` reçoivent aussi la notif. */
+    if (userNorm && userNorm === senderNorm) continue;
 
-    const isMentioned = mentionNorms.has(userNorm);
+    const isMentioned = userNorm ? mentionNorms.has(userNorm) : false;
     const title = isMentioned
       ? `👤 ${message.sender_name.trim()} (Mention)`
       : message.sender_name.trim();

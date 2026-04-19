@@ -36,6 +36,8 @@ function parseRecord(body: unknown): MessageRecord | null {
 }
 
 export async function POST(req: Request) {
+  console.log("Tentative d'envoi push pour :", "webhook-chat-message");
+
   const secret = process.env.CHAT_MESSAGE_WEBHOOK_SECRET;
   if (secret) {
     const auth = req.headers.get("authorization");

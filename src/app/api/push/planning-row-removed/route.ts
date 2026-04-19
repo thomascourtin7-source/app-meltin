@@ -27,19 +27,19 @@ function isOriginAllowed(req: Request): boolean {
   }
 }
 
-const BODY =
-  "Votre planning a été modifié. Cliquez pour voir.";
-
 type PlanningDay = "today" | "tomorrow" | "other";
 
-function titleForAssigneePush(planningDay: PlanningDay): string {
-  if (planningDay === "today") return "📅 Aujourd'hui : Planning mis à jour";
-  if (planningDay === "tomorrow") return "📅 Demain : Planning mis à jour";
-  return "📅 Planning mis à jour";
+function titleRemoved(day: PlanningDay): string {
+  if (day === "today") return "❌ Vol retiré (Aujourd'hui)";
+  if (day === "tomorrow") return "❌ Vol retiré (Demain)";
+  return "❌ Vol retiré";
 }
 
+const BODY_REMOVED =
+  "Un service vous a été retiré du planning. Vérifiez vos horaires.";
+
 export async function POST(req: Request) {
-  console.log("Tentative d'envoi push pour :", "planning-assignee-alert");
+  console.log("Tentative d'envoi push pour :", "planning-row-removed");
 
   if (!isOriginAllowed(req)) {
     return NextResponse.json({ error: "Origin non autorisée." }, { status: 403 });
@@ -52,10 +52,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "JSON invalide." }, { status: 400 });
   }
 
-  if (!body || typeof body !== "object") {
-    return NextResponse.json({ error: "Corps attendu." }, { status: 400 });
-  }
-
   const b = body as Record<string, unknown>;
   const spreadsheetId =
     typeof b.spreadsheetId === "string" ? b.spreadsheetId.trim() : "";
@@ -64,11 +60,7 @@ export async function POST(req: Request) {
     typeof b.stableRowKey === "string" ? b.stableRowKey.trim() : "";
   const assigneeName =
     typeof b.assigneeName === "string" ? b.assigneeName.trim() : "";
-  const rawDay = b.planningDay;
-  const planningDay: PlanningDay =
-    rawDay === "today" || rawDay === "tomorrow" || rawDay === "other"
-      ? rawDay
-      : "other";
+  const planningDay = b.planningDay as PlanningDay | undefined;
 
   if (!spreadsheetId || !dateKey || !stableRowKey || !assigneeName) {
     return NextResponse.json(
@@ -80,8 +72,13 @@ export async function POST(req: Request) {
     );
   }
 
+  const day: PlanningDay =
+    planningDay === "today" || planningDay === "tomorrow"
+      ? planningDay
+      : "other";
+
   pruneDedupe();
-  const dedupeKey = `${spreadsheetId}\x1f${dateKey}\x1f${stableRowKey}\x1f${assigneeName.toLowerCase()}`;
+  const dedupeKey = `${spreadsheetId}\x1f${dateKey}\x1f${stableRowKey}\x1f${assigneeName.toLowerCase()}\x1fremoved`;
   const now = Date.now();
   const last = dedupe.get(dedupeKey);
   if (last !== undefined && now - last < DEDUPE_MS) {
@@ -90,8 +87,8 @@ export async function POST(req: Request) {
   dedupe.set(dedupeKey, now);
 
   const result = await notifyPlanningAssigneeSubscribers(assigneeName, {
-    title: titleForAssigneePush(planningDay),
-    body: BODY,
+    title: titleRemoved(day),
+    body: BODY_REMOVED,
   });
 
   return NextResponse.json({ ok: true, skipped: false, ...result });
