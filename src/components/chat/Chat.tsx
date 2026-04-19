@@ -30,10 +30,7 @@ import {
   savePushSubscriptionToServer,
   subscribeChatPush,
 } from "@/lib/push/client-subscribe-chat";
-import {
-  CHAT_USERNAME_STORAGE_KEY,
-  CHAT_VIEWPORT_RESIZE_EVENT,
-} from "@/lib/chat/constants";
+import { CHAT_USERNAME_STORAGE_KEY } from "@/lib/chat/constants";
 import { getSupabaseBrowserClient, type MessageRow } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { InvisibleCloseLayer } from "./invisible-close-layer";
@@ -263,33 +260,21 @@ export function Chat({ variant }: ChatProps) {
     null
   );
 
-  /** `force: true` = focus / clavier (toujours). Sinon = seulement si stick au bas. */
-  const scrollToBottom = useCallback(
-    (opts: { force: boolean; delayMs?: number }) => {
-      if (variant !== "page") return;
-      if (!opts.force && !stickToBottomRef.current) return;
-      if (opts.force) stickToBottomRef.current = true;
-      const delayMs = opts.delayMs ?? 240;
-      if (scrollToBottomTimerRef.current) {
-        clearTimeout(scrollToBottomTimerRef.current);
-      }
-      scrollToBottomTimerRef.current = setTimeout(() => {
-        scrollToBottomTimerRef.current = null;
-        const el = scrollRef.current;
-        if (!el) return;
-        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-        messagesEndRef.current?.scrollIntoView({
-          block: "end",
-          behavior: "smooth",
-        });
-      }, delayMs);
-    },
-    [variant]
-  );
-
-  const handleTextareaFocus = useCallback(() => {
-    scrollToBottom({ force: true, delayMs: 300 });
-  }, [scrollToBottom]);
+  /** Délai court après resize/focus (iOS) puis scroll vers le bas de la liste. */
+  const scrollToBottom = useCallback(() => {
+    if (variant !== "page") return;
+    stickToBottomRef.current = true;
+    if (scrollToBottomTimerRef.current) {
+      clearTimeout(scrollToBottomTimerRef.current);
+    }
+    scrollToBottomTimerRef.current = setTimeout(() => {
+      scrollToBottomTimerRef.current = null;
+      messagesEndRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "end",
+      });
+    }, 100);
+  }, [variant]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- montage client uniquement
@@ -493,15 +478,21 @@ export function Chat({ variant }: ChatProps) {
     hasUsername,
   ]);
 
-  /** Scroll bas à chaque changement de VisualViewport (émis par `ChatPageShell`). */
+  /** Clavier : scroll dès que la hauteur du VisualViewport change. */
   useEffect(() => {
-    if (variant !== "page") return;
-    const onShellViewport = () => {
-      scrollToBottom({ force: true });
+    if (variant !== "page" || typeof window === "undefined") return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const handleResize = () => {
+      scrollToBottom();
     };
-    window.addEventListener(CHAT_VIEWPORT_RESIZE_EVENT, onShellViewport);
+
+    vv.addEventListener("resize", handleResize);
+    vv.addEventListener("scroll", handleResize);
     return () => {
-      window.removeEventListener(CHAT_VIEWPORT_RESIZE_EVENT, onShellViewport);
+      vv.removeEventListener("resize", handleResize);
+      vv.removeEventListener("scroll", handleResize);
     };
   }, [variant, scrollToBottom]);
 
@@ -1562,7 +1553,7 @@ export function Chat({ variant }: ChatProps) {
                   }
                   onFocus={(e) => {
                     if (variant === "page") {
-                      handleTextareaFocus();
+                      scrollToBottom();
                     } else {
                       scrollIntoViewOnMobileFocus(e.currentTarget);
                     }

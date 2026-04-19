@@ -2,11 +2,9 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
-import { CHAT_VIEWPORT_RESIZE_EVENT } from "@/lib/chat/constants";
-
 /**
  * Hauteur = `visualViewport.height` pour que la colonne messages se rétrécisse
- * avec le clavier. Émet {@link CHAT_VIEWPORT_RESIZE_EVENT} pour déclencher le scroll bas.
+ * avec le clavier. Le scroll bas est géré dans le composant Chat via VisualViewport.
  */
 export function ChatPageShell({ children }: { children: ReactNode }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -17,7 +15,7 @@ export function ChatPageShell({ children }: { children: ReactNode }) {
     const vv = window.visualViewport;
     if (!vv) return;
 
-    const updateScroll = () => {
+    const syncHeight = () => {
       const h = vv.height;
       setHeightPx(h);
       const el = rootRef.current;
@@ -25,17 +23,16 @@ export function ChatPageShell({ children }: { children: ReactNode }) {
         el.style.height = `${h}px`;
         el.style.maxHeight = `${h}px`;
       }
-      window.dispatchEvent(new CustomEvent(CHAT_VIEWPORT_RESIZE_EVENT));
     };
 
-    updateScroll();
-    vv.addEventListener("resize", updateScroll);
-    vv.addEventListener("scroll", updateScroll);
-    window.addEventListener("resize", updateScroll);
+    syncHeight();
+    vv.addEventListener("resize", syncHeight);
+    vv.addEventListener("scroll", syncHeight);
+    window.addEventListener("resize", syncHeight);
     return () => {
-      vv.removeEventListener("resize", updateScroll);
-      vv.removeEventListener("scroll", updateScroll);
-      window.removeEventListener("resize", updateScroll);
+      vv.removeEventListener("resize", syncHeight);
+      vv.removeEventListener("scroll", syncHeight);
+      window.removeEventListener("resize", syncHeight);
     };
   }, []);
 
