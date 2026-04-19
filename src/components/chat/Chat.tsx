@@ -33,6 +33,7 @@ import { CHAT_USERNAME_STORAGE_KEY } from "@/lib/chat/constants";
 import { getSupabaseBrowserClient, type MessageRow } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { useChatUI } from "./chat-ui-provider";
+import { InvisibleCloseLayer } from "./invisible-close-layer";
 
 const ROOM_ID = "general";
 const CHAT_ATTACHMENTS_BUCKET = "chat-attachments";
@@ -852,30 +853,31 @@ export function Chat({ variant }: ChatProps) {
   const chatFooterPadBottom =
     variant === "mobile"
       ? keyboardInsetPx > 0
-        ? `max(env(safe-area-inset-bottom), ${keyboardInsetPx}px)`
-        : `max(0.75rem, env(safe-area-inset-bottom))`
+        ? "0px"
+        : "env(safe-area-inset-bottom)"
       : `calc(max(0.75rem, env(safe-area-inset-bottom)) + ${keyboardInsetPx}px)`;
 
   const ChatPanel = (
     <div
       className={cn(
-        "flex min-h-0 flex-col bg-background",
+        "flex min-h-0 flex-col",
         variant === "mobile"
-          ? "relative isolate z-0 h-full min-h-[100dvh] max-h-[100dvh]"
-          : "h-full"
+          ? "relative isolate z-0 h-full min-h-[100dvh] max-h-[100dvh] bg-white"
+          : "h-full bg-background"
       )}
     >
       {variant === "mobile" ? (
         <div
           aria-hidden
-          className="pointer-events-none fixed bottom-0 left-0 -z-10 h-[50vh] w-full bg-background"
+          className="pointer-events-none fixed -bottom-full left-0 right-0 z-0 h-screen bg-white"
         />
       ) : null}
       <header
         className={cn(
-          "flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3",
-          variant === "mobile" &&
-            "pt-[max(0.75rem,env(safe-area-inset-top))]"
+          "flex shrink-0 items-start justify-between gap-3 py-3",
+          variant === "mobile"
+            ? "border-0 px-2 pt-[max(0.75rem,env(safe-area-inset-top))]"
+            : "border-b border-border px-4"
         )}
       >
         <div className="min-w-0 flex-1 space-y-1">
@@ -1033,11 +1035,17 @@ export function Chat({ variant }: ChatProps) {
         </div>
       ) : (
         <>
-          <div
-            ref={scrollRef}
+          <InvisibleCloseLayer
+            scrollRef={scrollRef}
+            enabled={variant === "mobile"}
+            onActivate={() => {
+              textareaRef.current?.blur();
+            }}
             className={cn(
-              "min-h-0 w-full max-w-full flex-1 space-y-4 overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-4",
-              variant === "mobile" && "touch-pan-y"
+              "min-h-0 w-full max-w-full flex-1 space-y-4 overflow-y-auto overscroll-y-contain sm:px-4",
+              variant === "mobile"
+                ? "touch-pan-y px-0 py-2"
+                : "px-3 py-3"
             )}
             style={
               variant === "mobile" && hasUsername
@@ -1265,15 +1273,15 @@ export function Chat({ variant }: ChatProps) {
                 </div>
               );
             })}
-          </div>
+          </InvisibleCloseLayer>
 
           <footer
             ref={composerRef}
             className={cn(
-              "z-30 shrink-0 border-t border-border bg-background",
+              "z-30 shrink-0 bg-white",
               variant === "mobile"
-                ? "fixed bottom-0 left-0 right-0 px-3 pt-3 shadow-[0_-4px_24px_rgba(0,0,0,0.08)]"
-                : "relative px-3 pt-3"
+                ? "fixed bottom-0 left-0 right-0 border-0 px-0 pt-2"
+                : "relative border-t border-border bg-background px-3 pt-3"
             )}
             style={{ paddingBottom: chatFooterPadBottom }}
           >
@@ -1345,7 +1353,12 @@ export function Chat({ variant }: ChatProps) {
                 ))}
               </ul>
             ) : null}
-            <div className="flex gap-2">
+            <div
+              className={cn(
+                "flex gap-2",
+                variant === "mobile" && "px-0"
+              )}
+            >
               <input
                 ref={imageInputRef}
                 type="file"
@@ -1358,7 +1371,10 @@ export function Chat({ variant }: ChatProps) {
                 type="button"
                 variant="outline"
                 size="icon"
-                className="h-11 w-11 shrink-0 self-end rounded-xl"
+                className={cn(
+                  "h-11 w-11 shrink-0 self-end",
+                  variant === "mobile" ? "rounded-none" : "rounded-xl"
+                )}
                 disabled={!canAttach}
                 onClick={() => imageInputRef.current?.click()}
                 aria-label="Joindre une image"
@@ -1409,7 +1425,10 @@ export function Chat({ variant }: ChatProps) {
                 rows={2}
                 maxLength={2000}
                 className={cn(
-                  "min-h-[44px] flex-1 resize-none rounded-xl border border-input bg-transparent px-3 py-2.5 text-sm",
+                  "min-h-[44px] flex-1 resize-none border border-input bg-transparent py-2.5 text-sm",
+                  variant === "mobile"
+                    ? "rounded-none border-x-0 px-2.5"
+                    : "rounded-xl px-3",
                   "placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
                   "disabled:cursor-not-allowed disabled:opacity-50"
                 )}
@@ -1417,7 +1436,10 @@ export function Chat({ variant }: ChatProps) {
               <Button
                 type="button"
                 size="icon"
-                className="h-11 w-11 shrink-0 self-end rounded-xl"
+                className={cn(
+                  "h-11 w-11 shrink-0 self-end",
+                  variant === "mobile" ? "rounded-none" : "rounded-xl"
+                )}
                 disabled={!canSend}
                 onClick={() => void sendMessage()}
                 aria-label="Envoyer"
