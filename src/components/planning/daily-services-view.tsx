@@ -393,7 +393,7 @@ function ServiceBlock({
                     </SelectTrigger>
                     <SelectContent
                       className={cn(
-                        "z-[9999] max-h-72",
+                        "z-50 max-h-72",
                         ASSIGNEE_SELECT_EMOJI_FONT
                       )}
                     >
@@ -1039,7 +1039,7 @@ export function DailyServicesView() {
             Demain
           </Button>
           {/* input[type=date] au-dessus de l’icône : ouverture native fiable sur iOS (pas seulement onClick → input caché). */}
-          <div className="relative isolate z-[9999] flex h-11 w-11 shrink-0 items-center justify-center sm:h-9 sm:w-9">
+          <div className="relative z-10 flex h-11 w-11 shrink-0 items-center justify-center sm:h-9 sm:w-9">
             <input
               ref={datePickerRef}
               id="planning-date-picker-input"
@@ -1052,7 +1052,7 @@ export function DailyServicesView() {
               aria-labelledby="planning-day-label"
               aria-label="Choisir une date dans le calendrier"
               className={cn(
-                "absolute inset-0 z-[9999] box-border h-full w-full max-w-none cursor-pointer opacity-0",
+                "absolute inset-0 z-10 box-border h-full w-full max-w-none cursor-pointer opacity-0",
                 "touch-manipulation text-base leading-none"
               )}
               style={{ touchAction: "manipulation" }}
