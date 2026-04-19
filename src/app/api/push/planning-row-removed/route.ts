@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { notifyPlanningAssigneeSubscribers } from "@/lib/push/notify-planning-assignee";
 
-const DEDUPE_MS = 5 * 60 * 1000;
+const DEDUPE_MS = 10 * 60 * 1000;
 const dedupe = new Map<string, number>();
 
 function pruneDedupe(): void {
@@ -27,16 +27,8 @@ function isOriginAllowed(req: Request): boolean {
   }
 }
 
-type PlanningDay = "today" | "tomorrow" | "other";
-
-function titleRemoved(day: PlanningDay): string {
-  if (day === "today") return "❌ Vol retiré (Aujourd'hui)";
-  if (day === "tomorrow") return "❌ Vol retiré (Demain)";
-  return "❌ Vol retiré";
-}
-
 const BODY_REMOVED =
-  "Un service vous a été retiré du planning. Vérifiez vos horaires.";
+  "Un service vous a été retiré. Vérifiez votre planning.";
 
 export async function POST(req: Request) {
   console.log("Tentative d'envoi push pour :", "planning-row-removed");
@@ -60,7 +52,8 @@ export async function POST(req: Request) {
     typeof b.stableRowKey === "string" ? b.stableRowKey.trim() : "";
   const assigneeName =
     typeof b.assigneeName === "string" ? b.assigneeName.trim() : "";
-  const planningDay = b.planningDay as PlanningDay | undefined;
+  const displayDate =
+    typeof b.displayDate === "string" ? b.displayDate.trim() : "";
 
   if (!spreadsheetId || !dateKey || !stableRowKey || !assigneeName) {
     return NextResponse.json(
@@ -72,13 +65,12 @@ export async function POST(req: Request) {
     );
   }
 
-  const day: PlanningDay =
-    planningDay === "today" || planningDay === "tomorrow"
-      ? planningDay
-      : "other";
+  const title = displayDate
+    ? `❌ Vol retiré (${displayDate})`
+    : `❌ Vol retiré (${dateKey})`;
 
   pruneDedupe();
-  const dedupeKey = `${spreadsheetId}\x1f${dateKey}\x1f${stableRowKey}\x1f${assigneeName.toLowerCase()}\x1fremoved`;
+  const dedupeKey = `${spreadsheetId}\x1f${dateKey}\x1f${stableRowKey}\x1f${assigneeName.toLowerCase()}\x1fremoved\x1f${displayDate || ""}`;
   const now = Date.now();
   const last = dedupe.get(dedupeKey);
   if (last !== undefined && now - last < DEDUPE_MS) {
@@ -87,7 +79,7 @@ export async function POST(req: Request) {
   dedupe.set(dedupeKey, now);
 
   const result = await notifyPlanningAssigneeSubscribers(assigneeName, {
-    title: titleRemoved(day),
+    title,
     body: BODY_REMOVED,
   });
 

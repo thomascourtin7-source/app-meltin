@@ -30,6 +30,11 @@ import {
 import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
+import { canSendPlanningPushDedupe } from "@/lib/planning/push-client-dedupe";
+import {
+  formatPlanningDateForNotification,
+  planningDayBucket,
+} from "@/lib/planning/push-format";
 import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
 import {
   DEFAULT_PLANNING_ASSIGNEE_SLUG,
@@ -659,11 +664,19 @@ export function DailyServicesView() {
       return;
     }
     if (prev.sig !== sig) {
-      void fetch("/api/push/planning-sheet-delta", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spreadsheetId, dateKey }),
-      }).catch(() => {});
+      if (
+        canSendPlanningPushDedupe(
+          `planning-delta:${spreadsheetId}:${dateKey}`,
+          sig,
+          2 * 60 * 1000
+        )
+      ) {
+        void fetch("/api/push/planning-sheet-delta", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spreadsheetId, dateKey }),
+        }).catch(() => {});
+      }
     }
     planningRowsSignatureRef.current = { dateKey, sig };
   }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate]);
@@ -1013,18 +1026,41 @@ export function DailyServicesView() {
       return;
     }
 
-    const planningDay: "today" | "tomorrow" | "other" =
-      dateKey === todayYmd ? "today" : dateKey === tomorrowYmd ? "tomorrow" : "other";
-
     const isPrep =
       new URLSearchParams(window.location.search).get("mode") === "prep";
     const silentTomorrowPrep = dateKey === tomorrowYmd && isPrep;
 
+    const displayDate = formatPlanningDateForNotification(dateKey);
+
+    const labelFromSheetRaw = (raw: string): string | null =>
+      matchSheetAssigneeToTeamLabel(raw.trim());
+
+    /** Ancien (snapshot) vs nouveau (Sheet) : vol retiré si la ligne disparaît ou n’est plus assignée à X. */
     for (const stableKey of Object.keys(prevMap)) {
-      if (stableKey in nextMap) continue;
       const prevRaw = (prevMap[stableKey] ?? "").trim();
-      const targetRemoved = matchSheetAssigneeToTeamLabel(prevRaw);
-      if (!targetRemoved || silentTomorrowPrep) continue;
+      const prevLabel = labelFromSheetRaw(prevRaw);
+      if (!prevLabel || silentTomorrowPrep) continue;
+
+      const nextExists = stableKey in nextMap;
+      const nextRaw = nextExists ? (nextMap[stableKey] ?? "").trim() : "";
+      const nextLabel =
+        nextRaw !== "" ? labelFromSheetRaw(nextRaw) : null;
+
+      const stillSameAssignee =
+        nextExists && nextLabel !== null && nextLabel === prevLabel;
+      if (stillSameAssignee) continue;
+
+      const eventHash = `remove|${stableKey}|${prevLabel}|${nextLabel ?? "∅"}`;
+      if (
+        !canSendPlanningPushDedupe(
+          `vol-retire:${spreadsheetId}:${dateKey}:${stableKey}:${prevLabel}`,
+          eventHash,
+          10 * 60 * 1000
+        )
+      ) {
+        continue;
+      }
+
       void fetch("/api/push/planning-row-removed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1032,8 +1068,8 @@ export function DailyServicesView() {
           spreadsheetId,
           dateKey,
           stableRowKey: stableKey,
-          assigneeName: targetRemoved,
-          planningDay,
+          assigneeName: prevLabel,
+          displayDate,
         }),
       }).catch(() => {});
     }
@@ -1051,6 +1087,21 @@ export function DailyServicesView() {
       if (prevTarget === target) continue;
 
       if (!silentTomorrowPrep) {
+        const planningDay = planningDayBucket(
+          row.dateIso,
+          todayYmd,
+          tomorrowYmd
+        );
+        const assigneeEventHash = `assign|${stableKey}|${prevRaw}|${nextRaw}`;
+        if (
+          !canSendPlanningPushDedupe(
+            `assign:${spreadsheetId}:${dateKey}:${stableKey}:${target}`,
+            assigneeEventHash,
+            10 * 60 * 1000
+          )
+        ) {
+          continue;
+        }
         void fetch("/api/push/planning-assignee-alert", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
