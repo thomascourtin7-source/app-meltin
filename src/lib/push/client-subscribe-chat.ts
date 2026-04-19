@@ -58,6 +58,9 @@ async function postSubscribeToApi(
   subscription: PushSubscriptionJSON,
   displayName: string
 ): Promise<ChatPushSubscribeResult> {
+  const userId = displayName.trim();
+  console.log("Envoi du token au serveur pour l'utilisateur:", userId);
+
   const save = await fetch("/api/push/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

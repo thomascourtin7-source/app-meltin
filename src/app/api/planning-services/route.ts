@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { fetchDailyServicesFromSheet } from "@/lib/google/fetch-daily-services";
+import { resolveRequestUrl } from "@/lib/http/resolve-request-url";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 
 function resolveSpreadsheetId(request: Request): string | null {
-  const url = new URL(request.url);
+  const url = resolveRequestUrl(request);
   const q = url.searchParams.get("spreadsheetId")?.trim();
   if (q) return q;
   const env =
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const url = new URL(request.url);
+  const url = resolveRequestUrl(request);
   const dateParam = url.searchParams.get("date")?.trim();
   const filterDateIso = dateParam
     ? normalizeCanonicalDateKey(dateParam)

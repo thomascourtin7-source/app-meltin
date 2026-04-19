@@ -136,6 +136,8 @@ export function PushNotificationCard() {
         console.log("Token Safari généré:", subscription);
       }
 
+      console.log("Envoi du token au serveur pour l'utilisateur:", "__planning");
+
       const save = await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -188,25 +190,34 @@ export function PushNotificationCard() {
         return;
       }
       const subscription = sub.toJSON();
-      const res = await fetch("/api/push/test-self", {
+      const res = await fetch("/api/notifications/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subscription }),
       });
       if (!res.ok) {
         const err: unknown = await res.json().catch(() => ({}));
-        const msg =
+        const baseMsg =
           err &&
           typeof err === "object" &&
           "error" in err &&
           typeof (err as { error: unknown }).error === "string"
             ? (err as { error: string }).error
             : "Envoi du test impossible.";
-        setMessage(msg);
+        const pushBody =
+          err &&
+          typeof err === "object" &&
+          "pushBody" in err &&
+          typeof (err as { pushBody: unknown }).pushBody === "string"
+            ? (err as { pushBody: string }).pushBody
+            : "";
+        setMessage(
+          pushBody ? `${baseMsg} — détail : ${pushBody.slice(0, 300)}` : baseMsg
+        );
         return;
       }
       setMessage(
-        "Test envoyé. Si la notification n’apparaît pas, vérifiez le mode Concentration et les réglages du site."
+        "Test envoyé (logs WebPush complets côté serveur : /api/notifications/send). Vérifiez aussi Concentration / réglages du site."
       );
     } catch {
       setMessage("Échec du test push.");

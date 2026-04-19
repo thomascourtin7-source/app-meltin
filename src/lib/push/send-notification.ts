@@ -1,5 +1,6 @@
 import webpush from "web-push";
 import type { PushSubscription as WebPushSubscription } from "web-push";
+import type { SendResult } from "web-push";
 
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -83,12 +84,12 @@ export async function broadcastPlanningUpdate(payload: {
 export async function sendWebPushToSubscription(
   sub: { endpoint: string; keys: { p256dh: string; auth: string } },
   payload: Record<string, unknown>
-): Promise<void> {
+): Promise<SendResult> {
   configureWebPush();
   if (!process.env.VAPID_PRIVATE_KEY) {
     throw new Error("VAPID non configuré.");
   }
-  await webpush.sendNotification(
+  return webpush.sendNotification(
     sub as WebPushSubscription,
     JSON.stringify(payload)
   );

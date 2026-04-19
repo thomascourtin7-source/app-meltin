@@ -63,10 +63,10 @@ export async function POST(req: Request) {
     );
   }
 
-  /** Safari iOS : l’endpoint est fourni par Apple (`…push.apple.com…`) — on le stocke tel quel. */
-  if (sub.endpoint.includes("push.apple.com")) {
-    console.log("[push/subscribe] enregistrement endpoint Apple Web Push");
-  }
+  /** Safari iOS : endpoint `…push.apple.com…` — colonne PostgreSQL `text` (pas de troncature). */
+  console.log(
+    `[push/subscribe] endpoint length=${sub.endpoint.length} (storage=text, apple=${sub.endpoint.includes("push.apple.com")})`
+  );
 
   const { error } = await admin.from("push_subscriptions").upsert(
     {
