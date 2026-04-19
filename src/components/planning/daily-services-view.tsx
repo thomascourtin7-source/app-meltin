@@ -30,11 +30,7 @@ import {
 import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
-import { canSendPlanningPushDedupe } from "@/lib/planning/push-client-dedupe";
-import {
-  formatPlanningDateForNotification,
-  planningDayBucket,
-} from "@/lib/planning/push-format";
+import { planningDayBucket } from "@/lib/planning/push-format";
 import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
 import {
   DEFAULT_PLANNING_ASSIGNEE_SLUG,
@@ -44,7 +40,6 @@ import {
   PLANNING_URGENT_ASSIGNEE_SLUG,
   assigneeSlugToNotifyLabel,
   isUrgentAssignee,
-  matchSheetAssigneeToTeamLabel,
   normalizeAssigneeListFromStored,
   normalizeAssigneeStoredValue,
 } from "@/lib/planning/planning-team";
@@ -70,19 +65,10 @@ const PLANNING_ASSIGNEES_STORAGE_KEY_LEGACY_V2 = "meltin_planning_assignees_v2";
 /** Snapshots des identités « vues » par jour (détection des nouvelles lignes). */
 const PLANNING_ROW_SNAPSHOT_KEY = "meltin_planning_row_snapshot_v1";
 
-/** Dernière valeur colonne « assigné » du Sheet par ligne (push ciblé). */
-const PLANNING_SHEET_ASSIGNEE_SNAPSHOT_KEY =
-  "meltin_planning_sheet_assignee_snapshot_v1";
-
 /** Par feuille : par clé de ligne stable, tableau de slugs (1 à 4). */
 type AssigneeStore = Record<string, Record<string, string[]>>;
 
 type SnapshotStore = Record<string, Record<string, string[]>>;
-
-type SheetAssigneeSnapshotStore = Record<
-  string,
-  Record<string, Record<string, string>>
->;
 
 function migrateLegacyV2ToV3(
   legacy: Record<string, Record<string, unknown>>
@@ -147,31 +133,6 @@ function saveSnapshotStore(store: SnapshotStore): void {
   try {
     window.localStorage.setItem(
       PLANNING_ROW_SNAPSHOT_KEY,
-      JSON.stringify(store)
-    );
-  } catch {
-    /* quota */
-  }
-}
-
-function loadSheetAssigneeSnapshot(): SheetAssigneeSnapshotStore {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(PLANNING_SHEET_ASSIGNEE_SNAPSHOT_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed as SheetAssigneeSnapshotStore;
-  } catch {
-    return {};
-  }
-}
-
-function saveSheetAssigneeSnapshot(store: SheetAssigneeSnapshotStore): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      PLANNING_SHEET_ASSIGNEE_SNAPSHOT_KEY,
       JSON.stringify(store)
     );
   } catch {
@@ -504,15 +465,6 @@ function ServiceBlock({
   );
 }
 
-/** Alarme active mais aucun membre réel assigné (hors urgence / non assigné). */
-function rowNeedsAlarmUncovered(assignees: string[]): boolean {
-  const hasUrgent = assignees.some((a) => isUrgentAssignee(a));
-  const hasReal = assignees.some(
-    (a) => a !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(a)
-  );
-  return hasUrgent && !hasReal;
-}
-
 async function sendPushNotification(opts: {
   title: string;
   body: string;
@@ -567,11 +519,6 @@ export function DailyServicesView() {
   const [conflictRowKeys, setConflictRowKeys] = useState<Set<string>>(
     () => new Set()
   );
-  /** Signature des lignes du jour affiché → notif « planning modifié » si changement. */
-  const planningRowsSignatureRef = useRef<{
-    dateKey: string;
-    sig: string;
-  } | null>(null);
 
   /** Migration one-shot : normalise les assignations (tableaux / slugs / emojis). */
   useEffect(() => {
@@ -641,45 +588,6 @@ export function DailyServicesView() {
   const isTodaySelected = selectedKey === todayYmd;
   const isTomorrowSelected = selectedKey === tomorrowYmd;
   const isCustomDateSelected = !isTodaySelected && !isTomorrowSelected;
-
-  /** Tout changement sur les lignes du jour affiché → push général (dédup serveur). */
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const rows = data?.rows;
-    if (!rows?.length) return;
-    const dateKey = normalizeCanonicalDateKey(selectedDate);
-    const rowsForDay = rows.filter(
-      (r) => normalizeCanonicalDateKey(r.dateIso) === dateKey
-    );
-    const sig = rowsForDay
-      .map(
-        (r) =>
-          `${stableServiceRowKey(r)}\x1f${r.sheetAssignee.trim()}\x1f${r.type.trim()}\x1f${r.destProv.trim()}\x1f${r.dateIso}`
-      )
-      .sort()
-      .join("|");
-    const prev = planningRowsSignatureRef.current;
-    if (prev === null || prev.dateKey !== dateKey) {
-      planningRowsSignatureRef.current = { dateKey, sig };
-      return;
-    }
-    if (prev.sig !== sig) {
-      if (
-        canSendPlanningPushDedupe(
-          `planning-delta:${spreadsheetId}:${dateKey}`,
-          sig,
-          2 * 60 * 1000
-        )
-      ) {
-        void fetch("/api/push/planning-sheet-delta", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ spreadsheetId, dateKey }),
-        }).catch(() => {});
-      }
-    }
-    planningRowsSignatureRef.current = { dateKey, sig };
-  }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate]);
 
   /** Planning déjà validé pour la date « demain » (persisté → pas de mode rouge au refresh). */
   const isTomorrowPlanningFinalized = useMemo(() => {
@@ -855,6 +763,11 @@ export function DailyServicesView() {
         setAssigneesBump((b) => b + 1);
 
         const dateKey = normalizeCanonicalDateKey(selectedDate);
+        const planningDay = planningDayBucket(
+          dateKey,
+          todayYmd,
+          tomorrowYmd
+        );
         const isPrep =
           new URLSearchParams(window.location.search).get("mode") === "prep";
         /** Demain + `mode=prep` : pas de notifs individuelles pendant la préparation. */
@@ -874,6 +787,7 @@ export function DailyServicesView() {
               dateKey,
               stableRowKey: key,
               assigneeName: label,
+              planningDay,
             }),
           }).catch(() => {});
         }
@@ -881,7 +795,7 @@ export function DailyServicesView() {
         /* quota / private mode */
       }
     },
-    [spreadsheetId, selectedDate, tomorrowYmd]
+    [spreadsheetId, selectedDate, tomorrowYmd, todayYmd]
   );
 
   /** Détection d’urgence : nouvelles lignes du jour → 🚨 si pas encore d’assignation (y compris après refresh SWR). */
@@ -921,14 +835,12 @@ export function DailyServicesView() {
     const store = loadAssigneeStore();
     const sheetAssign = { ...(store[spreadsheetId] ?? {}) };
     let changed = false;
-    const identitiesMarkedUrgent: string[] = [];
 
     for (const id of newIdentities) {
       for (const stableKey of identityToStables.get(id) ?? []) {
         if (!(stableKey in sheetAssign)) {
           sheetAssign[stableKey] = [URGENT_ASSIGNEE];
           changed = true;
-          if (!identitiesMarkedUrgent.includes(id)) identitiesMarkedUrgent.push(id);
         }
       }
     }
@@ -947,189 +859,8 @@ export function DailyServicesView() {
         JSON.stringify(store)
       );
       startTransition(() => setAssigneesBump((b) => b + 1));
-
-      if (identitiesMarkedUrgent.length > 0) {
-        void fetch("/api/push/planning-alert", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            spreadsheetId,
-            dateKey: todayKey,
-            newIdentityKeys: identitiesMarkedUrgent,
-          }),
-        }).catch(() => {});
-      }
     }
   }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate]);
-
-  /** Cas 5 : alarme sans assignation réelle → Web Push global (déduplication serveur). */
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const rows = data?.rows;
-    if (!rows?.length) return;
-
-    const todayKey = normalizeCanonicalDateKey(formatLocalYmd(new Date()));
-    if (normalizeCanonicalDateKey(selectedDate) !== todayKey) return;
-
-    const store = loadAssigneeStore();
-    const sheet = store[spreadsheetId] ?? {};
-    let uncovered = false;
-    for (const row of rows) {
-      const key = stableServiceRowKey(row);
-      const slots = normalizeAssigneeListFromStored(sheet[key]);
-      if (rowNeedsAlarmUncovered(slots)) {
-        uncovered = true;
-        break;
-      }
-    }
-    if (!uncovered) return;
-
-    void fetch("/api/push/planning-alarm-uncovered", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spreadsheetId, dateKey: todayKey }),
-    }).catch(() => {});
-  }, [
-    data?.rows,
-    data?.fetchedAt,
-    spreadsheetId,
-    selectedDate,
-    assigneesBump,
-  ]);
-
-  /** Colonne « assigné » du Sheet : changement → push uniquement vers le membre ciblé. */
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const rows = data?.rows;
-    if (!rows?.length) return;
-
-    const dateKey = normalizeCanonicalDateKey(selectedDate);
-    const rowsForDay = rows.filter(
-      (r) => normalizeCanonicalDateKey(r.dateIso) === dateKey
-    );
-    if (!rowsForDay.length) return;
-
-    const snapshots = loadSheetAssigneeSnapshot();
-    const prevMap = snapshots[spreadsheetId]?.[dateKey];
-
-    const nextMap: Record<string, string> = {};
-    for (const row of rowsForDay) {
-      nextMap[stableServiceRowKey(row)] = row.sheetAssignee.trim();
-    }
-
-    if (prevMap === undefined) {
-      snapshots[spreadsheetId] = {
-        ...(snapshots[spreadsheetId] ?? {}),
-        [dateKey]: nextMap,
-      };
-      saveSheetAssigneeSnapshot(snapshots);
-      return;
-    }
-
-    const isPrep =
-      new URLSearchParams(window.location.search).get("mode") === "prep";
-    const silentTomorrowPrep = dateKey === tomorrowYmd && isPrep;
-
-    const displayDate = formatPlanningDateForNotification(dateKey);
-
-    const labelFromSheetRaw = (raw: string): string | null =>
-      matchSheetAssigneeToTeamLabel(raw.trim());
-
-    /** Ancien (snapshot) vs nouveau (Sheet) : vol retiré si la ligne disparaît ou n’est plus assignée à X. */
-    for (const stableKey of Object.keys(prevMap)) {
-      const prevRaw = (prevMap[stableKey] ?? "").trim();
-      const prevLabel = labelFromSheetRaw(prevRaw);
-      if (!prevLabel || silentTomorrowPrep) continue;
-
-      const nextExists = stableKey in nextMap;
-      const nextRaw = nextExists ? (nextMap[stableKey] ?? "").trim() : "";
-      const nextLabel =
-        nextRaw !== "" ? labelFromSheetRaw(nextRaw) : null;
-
-      const stillSameAssignee =
-        nextExists && nextLabel !== null && nextLabel === prevLabel;
-      if (stillSameAssignee) continue;
-
-      const eventHash = `remove|${stableKey}|${prevLabel}|${nextLabel ?? "∅"}`;
-      if (
-        !canSendPlanningPushDedupe(
-          `vol-retire:${spreadsheetId}:${dateKey}:${stableKey}:${prevLabel}`,
-          eventHash,
-          10 * 60 * 1000
-        )
-      ) {
-        continue;
-      }
-
-      void fetch("/api/push/planning-row-removed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          spreadsheetId,
-          dateKey,
-          stableRowKey: stableKey,
-          assigneeName: prevLabel,
-          displayDate,
-        }),
-      }).catch(() => {});
-    }
-
-    for (const row of rowsForDay) {
-      const stableKey = stableServiceRowKey(row);
-      const prevRaw = (prevMap[stableKey] ?? "").trim();
-      const nextRaw = row.sheetAssignee.trim();
-      if (prevRaw === nextRaw) continue;
-
-      const target = matchSheetAssigneeToTeamLabel(nextRaw);
-      if (!target) continue;
-
-      const prevTarget = matchSheetAssigneeToTeamLabel(prevRaw);
-      if (prevTarget === target) continue;
-
-      if (!silentTomorrowPrep) {
-        const planningDay = planningDayBucket(
-          row.dateIso,
-          todayYmd,
-          tomorrowYmd
-        );
-        const assigneeEventHash = `assign|${stableKey}|${prevRaw}|${nextRaw}`;
-        if (
-          !canSendPlanningPushDedupe(
-            `assign:${spreadsheetId}:${dateKey}:${stableKey}:${target}`,
-            assigneeEventHash,
-            10 * 60 * 1000
-          )
-        ) {
-          continue;
-        }
-        void fetch("/api/push/planning-assignee-alert", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            spreadsheetId,
-            dateKey,
-            stableRowKey: stableKey,
-            assigneeName: target,
-            planningDay,
-          }),
-        }).catch(() => {});
-      }
-    }
-
-    snapshots[spreadsheetId] = {
-      ...(snapshots[spreadsheetId] ?? {}),
-      [dateKey]: nextMap,
-    };
-    saveSheetAssigneeSnapshot(snapshots);
-  }, [
-    data?.rows,
-    data?.fetchedAt,
-    spreadsheetId,
-    selectedDate,
-    todayYmd,
-    tomorrowYmd,
-    searchParams,
-  ]);
 
   return (
     <div
