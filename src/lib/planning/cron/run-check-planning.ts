@@ -19,15 +19,16 @@ import {
 } from "@/lib/planning/service-row-keys";
 
 const ZONE = "Europe/Paris";
-const ALARM_COOLDOWN_MS = 30 * 60 * 1000;
 
-type SnapshotV3 = {
-  v: 3;
+type SnapshotV4 = {
+  v: 4;
   globalHash: string;
   /** dateIso → stableKey → texte colonne assigné Sheet */
   byDate: Record<string, Record<string, string>>;
   /** dateIso → identités métier (serviceUrgencyIdentityKey) présentes à cette date */
   identitiesByDate: Record<string, string[]>;
+  /** dateIso → stableKey → hash SHA-256 du contenu ligne (changement précis) */
+  rowHashes: Record<string, Record<string, string>>;
 };
 
 function sha256Hex(s: string): string {
@@ -72,6 +73,47 @@ function hashGlobal(
     }
   }
   return sha256Hex(parts.join("\n"));
+}
+
+/** Ordre stable : même contenu → même hash global (indépendant de l’ordre des clés objet). */
+function hashRowHashesTree(
+  rowHashes: Record<string, Record<string, string>>
+): string {
+  const dates = Object.keys(rowHashes).sort();
+  const parts: string[] = [];
+  for (const d of dates) {
+    const keys = Object.keys(rowHashes[d]).sort();
+    for (const k of keys) {
+      parts.push(`${d}|${k}|${rowHashes[d][k]}`);
+    }
+  }
+  return sha256Hex(parts.join("\n"));
+}
+
+/** Hash par ligne (contenu métier + assignation) pour comparer finement les changements. */
+function rowContentHash(row: DailyServiceRow): string {
+  const line = [
+    stableServiceRowKey(row),
+    row.sheetAssignee.trim(),
+    row.type.trim(),
+    row.destProv.trim(),
+    normalizeCanonicalDateKey(row.dateIso),
+    String(row.client ?? "").trim(),
+    String(row.vol ?? "").trim(),
+  ].join("\x1f");
+  return sha256Hex(line);
+}
+
+function buildRowHashes(
+  rows: DailyServiceRow[]
+): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  for (const row of rows) {
+    const dk = normalizeCanonicalDateKey(row.dateIso);
+    if (!out[dk]) out[dk] = {};
+    out[dk][stableServiceRowKey(row)] = rowContentHash(row);
+  }
+  return out;
 }
 
 function parisTodayYmd(): string {
@@ -120,50 +162,75 @@ function sheetRowAlarmCandidateRaw(assigneeRaw: string): boolean {
   return labelFromSheetRaw(raw) === null;
 }
 
-function parseSnapshot(raw: unknown): SnapshotV3 | null {
+type ParsedSnapshot = {
+  snapshot: SnapshotV4;
+  /** Snapshot DB encore en v3 (sans rowHashes / nouveau globalHash) → migration silencieuse. */
+  isLegacyV3: boolean;
+};
+
+function parseSnapshot(raw: unknown): ParsedSnapshot | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
-  if (o.v !== 3) return null;
+  if (o.v !== 3 && o.v !== 4) return null;
   if (typeof o.globalHash !== "string") return null;
   if (!o.byDate || typeof o.byDate !== "object") return null;
   if (!o.identitiesByDate || typeof o.identitiesByDate !== "object") return null;
-  return o as unknown as SnapshotV3;
+  const isLegacyV3 = o.v === 3;
+  const rowHashes =
+    o.v === 4 &&
+    o.rowHashes &&
+    typeof o.rowHashes === "object" &&
+    o.rowHashes !== null
+      ? (o.rowHashes as Record<string, Record<string, string>>)
+      : {};
+  return {
+    isLegacyV3,
+    snapshot: {
+      v: 4,
+      globalHash: o.globalHash,
+      byDate: o.byDate as Record<string, Record<string, string>>,
+      identitiesByDate: o.identitiesByDate as Record<string, string[]>,
+      rowHashes,
+    },
+  };
 }
 
-async function canSendAlarm(
+/** Au plus une alarme 🚨 par service et par jour calendaire (Paris). */
+async function canSendAlarmToday(
   spreadsheetId: string,
   identityKey: string
 ): Promise<boolean> {
   const admin = getSupabaseAdmin();
   if (!admin) return false;
+  const day = parisTodayYmd();
   const { data, error } = await admin
-    .from("planning_alarm_last_sent")
-    .select("last_notified_at")
+    .from("sent_alarms")
+    .select("spreadsheet_id")
     .eq("spreadsheet_id", spreadsheetId)
     .eq("service_identity_key", identityKey)
+    .eq("sent_on", day)
     .maybeSingle();
   if (error) {
-    console.warn("[cron-planning] alarm lookup", error.message);
-    return true;
+    console.warn("[check-planning] sent_alarms lookup", error.message);
+    return false;
   }
-  if (!data?.last_notified_at) return true;
-  const t = new Date(data.last_notified_at as string).getTime();
-  return Date.now() - t >= ALARM_COOLDOWN_MS;
+  return !data;
 }
 
-async function markAlarmSent(
+async function markAlarmSentToday(
   spreadsheetId: string,
   identityKey: string
 ): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin) return;
-  await admin.from("planning_alarm_last_sent").upsert(
+  await admin.from("sent_alarms").upsert(
     {
       spreadsheet_id: spreadsheetId,
       service_identity_key: identityKey,
-      last_notified_at: new Date().toISOString(),
+      sent_on: parisTodayYmd(),
+      notified_at: new Date().toISOString(),
     },
-    { onConflict: "spreadsheet_id,service_identity_key" }
+    { onConflict: "spreadsheet_id,service_identity_key,sent_on" }
   );
 }
 
@@ -171,6 +238,8 @@ export type PlanningCronResult = {
   ok: boolean;
   error?: string;
   bootstrapped?: boolean;
+  /** v3 → v4 : snapshot réécrit sans envoyer de push. */
+  migratedSnapshot?: boolean;
   skippedUnchanged?: boolean;
   globalHashChanged: boolean;
   sent: {
@@ -212,7 +281,10 @@ export async function executePlanningCronCheck(
 
   const byDate = buildByDate(rows);
   const identitiesByDate = buildIdentitiesByDate(rows);
-  const globalHash = hashGlobal(byDate);
+  const rowHashes = buildRowHashes(rows);
+  const globalHash = sha256Hex(
+    `${hashGlobal(byDate)}\n${hashRowHashesTree(rowHashes)}`
+  );
 
   const { data: stateRow, error: loadErr } = await admin
     .from("planning_cron_state")
@@ -224,10 +296,17 @@ export async function executePlanningCronCheck(
     console.warn("[cron-planning] load state", loadErr.message);
   }
 
-  const prev = parseSnapshot(stateRow?.snapshot);
+  const parsed = parseSnapshot(stateRow?.snapshot);
+  const prev = parsed?.snapshot;
 
   if (!prev?.globalHash) {
-    const snap: SnapshotV3 = { v: 3, globalHash, byDate, identitiesByDate };
+    const snap: SnapshotV4 = {
+      v: 4,
+      globalHash,
+      byDate,
+      identitiesByDate,
+      rowHashes,
+    };
     await admin.from("planning_cron_state").upsert(
       {
         spreadsheet_id: spreadsheetId,
@@ -239,6 +318,30 @@ export async function executePlanningCronCheck(
     return {
       ok: true,
       bootstrapped: true,
+      globalHashChanged: true,
+      sent: emptySent,
+    };
+  }
+
+  if (parsed?.isLegacyV3) {
+    const snap: SnapshotV4 = {
+      v: 4,
+      globalHash,
+      byDate,
+      identitiesByDate,
+      rowHashes,
+    };
+    await admin.from("planning_cron_state").upsert(
+      {
+        spreadsheet_id: spreadsheetId,
+        snapshot: snap as unknown as Record<string, unknown>,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "spreadsheet_id" }
+    );
+    return {
+      ok: true,
+      migratedSnapshot: true,
       globalHashChanged: true,
       sent: emptySent,
     };
@@ -318,13 +421,13 @@ export async function executePlanningCronCheck(
     if (sheetRowAlarmCandidateRaw(prevRaw)) continue;
 
     const id = serviceUrgencyIdentityKey(row);
-    const allowed = await canSendAlarm(spreadsheetId, id);
+    const allowed = await canSendAlarmToday(spreadsheetId, id);
     if (!allowed) continue;
 
     const push = await broadcastAlarmUncoveredPush();
     sent.alarm += push.sent;
     anySpecific = true;
-    await markAlarmSent(spreadsheetId, id);
+    await markAlarmSentToday(spreadsheetId, id);
   }
 
   if (!anySpecific) {
@@ -336,11 +439,12 @@ export async function executePlanningCronCheck(
     sent.general = g.sent;
   }
 
-  const nextSnap: SnapshotV3 = {
-    v: 3,
+  const nextSnap: SnapshotV4 = {
+    v: 4,
     globalHash,
     byDate,
     identitiesByDate,
+    rowHashes,
   };
   await admin.from("planning_cron_state").upsert(
     {
