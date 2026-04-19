@@ -1406,7 +1406,10 @@ export function Chat({ variant }: ChatProps) {
         <SheetContent
           side="bottom"
           fullScreen
-          className={cn("md:hidden gap-0 border-0 p-0")}
+          className={cn(
+            "md:hidden gap-0 border-0 p-0",
+            "supports-[height:100dvh]:min-h-[100dvh]"
+          )}
           showCloseButton={false}
         >
           {ChatPanel}

@@ -65,6 +65,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -76,7 +77,7 @@ export default function RootLayout({
     <html
       lang="fr"
       data-env={process.env.NODE_ENV}
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} h-full w-full max-w-full overflow-x-hidden antialiased`}
     >
       <head>
         <link
@@ -85,7 +86,7 @@ export default function RootLayout({
           sizes="180x180"
         />
       </head>
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full w-full max-w-full flex flex-col overflow-x-hidden">
         <PlanningPushBootstrap />
         <ChatUIProvider>
           <PlanningPreparationProvider>

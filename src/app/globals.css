@@ -121,6 +121,13 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* Anti-balancement horizontal (mobile) : pas de contenu > 100% du viewport */
+  html,
+  body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
   body {
     @apply bg-background text-foreground;
   }
