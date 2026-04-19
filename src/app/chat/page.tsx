@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Messages",
 };
 
+/** VisualViewport + `viewportOffset` : voir `chat-page-shell.tsx` (client). */
 export default function ChatPage() {
   return (
     <ChatPageShell>

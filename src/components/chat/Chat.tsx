@@ -33,6 +33,7 @@ import {
 import { CHAT_USERNAME_STORAGE_KEY } from "@/lib/chat/constants";
 import { getSupabaseBrowserClient, type MessageRow } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { useChatPageViewport } from "@/components/chat/chat-page-viewport-context";
 import { InvisibleCloseLayer } from "./invisible-close-layer";
 
 const ROOM_ID = "general";
@@ -237,7 +238,14 @@ export function Chat({ variant }: ChatProps) {
 
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
 
-  const keyboardInsetPx = useVisualViewportKeyboardInset(variant === "page");
+  const chatPageViewport = useChatPageViewport();
+  const keyboardInsetFromHook = useVisualViewportKeyboardInset(
+    variant !== "page"
+  );
+  const keyboardInsetPx =
+    variant === "page"
+      ? (chatPageViewport?.viewportOffset ?? 0)
+      : keyboardInsetFromHook;
 
   const scrollIntoViewOnMobileFocus = useCallback(
     (el: HTMLElement | null) => {
@@ -448,7 +456,11 @@ export function Chat({ variant }: ChatProps) {
       if (!scrollEl) return;
       const top = scrollEl.getBoundingClientRect().top;
       const bottomVisible = vv.offsetTop + vv.height;
-      setMessagesMaxHeightPx(Math.max(120, bottomVisible - top - 4));
+      const composerPad =
+        composerHeightPx > 0 ? composerHeightPx + 8 : 100;
+      setMessagesMaxHeightPx(
+        Math.max(120, bottomVisible - top - composerPad)
+      );
     };
 
     const onViewportChange = () => {
@@ -1201,10 +1213,15 @@ export function Chat({ variant }: ChatProps) {
                   <div className="min-w-0 max-w-[min(85%,20rem)] shrink sm:max-w-[22rem]">
                     <div
                       className={cn(
-                        "px-3.5 py-2 text-sm leading-snug shadow-sm",
+                        "px-4 py-2 text-sm leading-snug shadow-sm",
+                        variant === "page"
+                          ? "rounded-full"
+                          : isMe
+                            ? "rounded-[1.35rem] rounded-br-md"
+                            : "rounded-[1.35rem] rounded-bl-md",
                         isMe
-                          ? "rounded-[1.35rem] rounded-br-md bg-zinc-800 text-white"
-                          : "rounded-[1.35rem] rounded-bl-md bg-zinc-100 text-zinc-900"
+                          ? "bg-zinc-800 text-white"
+                          : "bg-zinc-100 text-zinc-900"
                       )}
                     >
                       {parent ? (
@@ -1394,9 +1411,9 @@ export function Chat({ variant }: ChatProps) {
           <footer
             ref={composerRef}
             className={cn(
-              "shrink-0 bg-white",
+              "shrink-0",
               variant === "page"
-                ? "sticky bottom-0 left-0 right-0 z-[100] w-full border-0 px-0 pt-0 shadow-none"
+                ? "fixed bottom-0 left-0 right-0 z-[100] w-full border-0 border-t border-zinc-200/80 bg-zinc-50 px-0 pt-0 shadow-none"
                 : "relative z-30 border-t border-border bg-background px-3 pt-3"
             )}
             style={
@@ -1406,7 +1423,7 @@ export function Chat({ variant }: ChatProps) {
                     paddingBottom:
                       keyboardInsetPx > 0
                         ? 0
-                        : "env(safe-area-inset-bottom)",
+                        : "max(0.5rem, env(safe-area-inset-bottom))",
                   }
                 : { paddingBottom: desktopFooterPadBottom }
             }
@@ -1481,15 +1498,15 @@ export function Chat({ variant }: ChatProps) {
             ) : null}
             <div
               className={cn(
-                "relative z-[101] flex w-full items-center justify-center bg-white",
-                variant === "page" ? "px-4 pb-1" : "px-0"
+                "relative z-[101] flex w-full items-center justify-center",
+                variant === "page" ? "bg-zinc-50 px-4 pb-2 pt-1" : "bg-transparent px-0"
               )}
             >
               <div
                 className={cn(
                   "flex min-w-0 items-center gap-3",
                   variant === "page"
-                    ? "mx-auto w-full max-w-2xl rounded-full bg-zinc-100 px-4 py-2.5 shadow-sm"
+                    ? "mx-auto w-full max-w-2xl rounded-full bg-white px-4 py-2 shadow-sm"
                     : "w-full rounded-2xl border border-border/70 bg-muted/40 px-3 py-1.5"
                 )}
               >
@@ -1574,7 +1591,7 @@ export function Chat({ variant }: ChatProps) {
                     "placeholder:text-muted-foreground",
                     "disabled:cursor-not-allowed disabled:opacity-50",
                     variant === "page"
-                      ? "px-3 py-2 text-[16px]"
+                      ? "px-2 py-2 text-[16px]"
                       : "px-2 py-2 text-sm"
                   )}
                 />
