@@ -223,10 +223,17 @@ export function Chat({ variant }: ChatProps) {
   const editingMessageIdRef = useRef<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  /** Si false, l’utilisateur a scrollé vers le haut — pas d’auto-scroll sur nouveaux messages. */
+  const stickToBottomRef = useRef(true);
   const composerRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [composerHeightPx, setComposerHeightPx] = useState(132);
+  /** Hauteur max de la zone messages (VisualViewport iOS) */
+  const [messagesMaxHeightPx, setMessagesMaxHeightPx] = useState<number | null>(
+    null
+  );
 
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
 
@@ -241,6 +248,13 @@ export function Chat({ variant }: ChatProps) {
     },
     [variant]
   );
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = gap < 56;
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- montage client uniquement
@@ -370,6 +384,7 @@ export function Chat({ variant }: ChatProps) {
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    if (variant === "page" && !stickToBottomRef.current) return;
     el.scrollTop = el.scrollHeight;
   }, [messages, variant]);
 
@@ -389,6 +404,58 @@ export function Chat({ variant }: ChatProps) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [variant, hasUsername, keyboardInsetPx]);
+
+  /** VisualViewport : borne la hauteur de la liste pour qu’elle ne passe pas sous le clavier. */
+  useEffect(() => {
+    if (variant !== "page") {
+      setMessagesMaxHeightPx(null);
+      return;
+    }
+    if (typeof window === "undefined") return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const update = () => {
+      const scrollEl = scrollRef.current;
+      if (!scrollEl) return;
+      const top = scrollEl.getBoundingClientRect().top;
+      const bottomVisible = vv.offsetTop + vv.height;
+      setMessagesMaxHeightPx(Math.max(120, bottomVisible - top - 4));
+    };
+
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    update();
+    const t = window.setTimeout(update, 0);
+    const ro = new ResizeObserver(update);
+    const el = scrollRef.current;
+    if (el) ro.observe(el);
+    return () => {
+      window.clearTimeout(t);
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+      ro.disconnect();
+    };
+  }, [variant, keyboardInsetPx, composerHeightPx, messages.length, hasUsername]);
+
+  /** Focus sur le textarea : amener le dernier message au-dessus du composer / clavier. */
+  useEffect(() => {
+    if (variant !== "page" || !hasUsername) return;
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const onFocus = () => {
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "end",
+        });
+      });
+    };
+    ta.addEventListener("focus", onFocus);
+    return () => ta.removeEventListener("focus", onFocus);
+  }, [variant, hasUsername, messages.length]);
 
   useEffect(() => {
     if (!hasUsername || typeof window === "undefined") return;
@@ -641,6 +708,7 @@ export function Chat({ variant }: ChatProps) {
 
     if (insErr) setError(insErr.message);
     else if (inserted) {
+      stickToBottomRef.current = true;
       const row = inserted as MessageRow;
       setMessages((prev) =>
         prev.some((m) => m.id === row.id)
@@ -736,6 +804,7 @@ export function Chat({ variant }: ChatProps) {
 
       if (insErr) setError(insErr.message);
       else if (inserted) {
+        stickToBottomRef.current = true;
         const row = inserted as MessageRow;
         setMessages((prev) =>
           prev.some((m) => m.id === row.id)
@@ -1031,6 +1100,7 @@ export function Chat({ variant }: ChatProps) {
             onActivate={() => {
               textareaRef.current?.blur();
             }}
+            onScroll={variant === "page" ? handleMessagesScroll : undefined}
             className={cn(
               "min-h-0 w-full max-w-full flex-1 space-y-4 overflow-y-auto overscroll-y-contain sm:px-4",
               variant === "page"
@@ -1039,7 +1109,12 @@ export function Chat({ variant }: ChatProps) {
             )}
             style={
               variant === "page" && hasUsername
-                ? { paddingBottom: composerHeightPx }
+                ? {
+                    minHeight: 0,
+                    ...(messagesMaxHeightPx != null
+                      ? { maxHeight: `${messagesMaxHeightPx}px` }
+                      : {}),
+                  }
                 : undefined
             }
           >
@@ -1263,6 +1338,11 @@ export function Chat({ variant }: ChatProps) {
                 </div>
               );
             })}
+            <div
+              ref={messagesEndRef}
+              className="h-0 w-full shrink-0"
+              aria-hidden
+            />
           </InvisibleCloseLayer>
 
           <footer
