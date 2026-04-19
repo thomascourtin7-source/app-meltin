@@ -12,6 +12,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import {
   Calendar,
+  Check,
   Loader2,
   Plus,
   RefreshCw,
@@ -519,6 +520,19 @@ export function DailyServicesView() {
   const [assigneesBump, setAssigneesBump] = useState(0);
   const [planningDoneBusy, setPlanningDoneBusy] = useState(false);
   const [planningDoneMsg, setPlanningDoneMsg] = useState<string | null>(null);
+  /** Message de succès après envoi (toast léger). */
+  const [planningSuccessToast, setPlanningSuccessToast] = useState<
+    string | null
+  >(null);
+  const planningToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  /** Débloque le bouton au pire après 3 s (file d’attente réseau bloquée). */
+  const planningSafetyUnlockRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  /** Affiche « Envoyé ! » brièvement après succès. */
+  const [planningJustSent, setPlanningJustSent] = useState(false);
   const [conflictRowKeys, setConflictRowKeys] = useState<Set<string>>(
     () => new Set()
   );
@@ -628,15 +642,55 @@ export function DailyServicesView() {
     }
   }, [planningQueryKey, pathname, mutate, router, setPreparingTomorrow]);
 
+  useEffect(() => {
+    return () => {
+      if (planningToastTimerRef.current) {
+        clearTimeout(planningToastTimerRef.current);
+        planningToastTimerRef.current = null;
+      }
+      if (planningSafetyUnlockRef.current) {
+        clearTimeout(planningSafetyUnlockRef.current);
+        planningSafetyUnlockRef.current = null;
+      }
+    };
+  }, []);
+
   const onPlanningReadyNotify = useCallback(async () => {
-    setPlanningDoneBusy(true);
+    if (planningSafetyUnlockRef.current) {
+      clearTimeout(planningSafetyUnlockRef.current);
+    }
+    planningSafetyUnlockRef.current = setTimeout(() => {
+      setPlanningDoneBusy(false);
+      planningSafetyUnlockRef.current = null;
+    }, 3000);
+
     setPlanningDoneMsg(null);
+
     try {
-      const res = await fetch("/api/push/planning-daily-ready", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const data: unknown = await res.json().catch(() => ({}));
+      setPlanningDoneBusy(true);
+
+      let res: Response;
+      try {
+        res = await fetch("/api/push/planning-daily-ready", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (networkErr) {
+        console.error(networkErr);
+        throw new Error(
+          networkErr instanceof Error
+            ? networkErr.message
+            : "Réseau indisponible — réessayez."
+        );
+      }
+
+      let data: unknown = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+
       if (!res.ok) {
         const msg =
           data &&
@@ -647,17 +701,42 @@ export function DailyServicesView() {
             : "Envoi impossible.";
         throw new Error(msg);
       }
+
+      /* Succès : arrêt immédiat du chargement + sortie du mode préparation */
+      setPlanningDoneBusy(false);
       setPreparingTomorrow(false);
+      setPlanningJustSent(true);
       setPlanningDoneMsg(null);
-      router.replace(pathname, { scroll: false });
-    } catch (e) {
+
+      try {
+        router.push("/planning");
+      } catch (navErr) {
+        console.error(navErr);
+      }
+
+      if (planningToastTimerRef.current) {
+        clearTimeout(planningToastTimerRef.current);
+      }
+      setPlanningSuccessToast("Notification envoyée à l’équipe.");
+      planningToastTimerRef.current = setTimeout(() => {
+        setPlanningSuccessToast(null);
+        planningToastTimerRef.current = null;
+      }, 4000);
+
+      setTimeout(() => setPlanningJustSent(false), 2000);
+    } catch (error) {
+      console.error(error);
       setPlanningDoneMsg(
-        e instanceof Error ? e.message : "Échec de l’envoi."
+        error instanceof Error ? error.message : "Échec de l’envoi."
       );
     } finally {
       setPlanningDoneBusy(false);
+      if (planningSafetyUnlockRef.current) {
+        clearTimeout(planningSafetyUnlockRef.current);
+        planningSafetyUnlockRef.current = null;
+      }
     }
-  }, [setPreparingTomorrow, router, pathname]);
+  }, [setPreparingTomorrow, router]);
 
   /** Déjà filtrées côté API par `?date=` ; garde-fou local si besoin. */
   const filtered = useMemo(() => {
@@ -1032,7 +1111,7 @@ export function DailyServicesView() {
             <Button
               type="button"
               size="lg"
-              disabled={planningDoneBusy}
+              disabled={planningDoneBusy || planningJustSent}
               onClick={() => void onPlanningReadyNotify()}
               className="inline-flex w-full gap-2 rounded-xl border shadow-sm sm:w-auto sm:min-w-[280px]"
               variant="default"
@@ -1040,7 +1119,7 @@ export function DailyServicesView() {
               {planningDoneBusy ? (
                 <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />
               ) : null}
-              ✅ Planning terminé
+              {planningJustSent ? "Envoyé !" : "✅ Planning terminé"}
             </Button>
             {planningDoneMsg ? (
               <p
@@ -1061,6 +1140,16 @@ export function DailyServicesView() {
               </p>
             )}
           </div>
+        </div>
+      ) : null}
+
+      {planningSuccessToast ? (
+        <div
+          role="status"
+          className="fixed bottom-[max(6rem,env(safe-area-inset-bottom)+4.5rem)] left-1/2 z-50 flex max-w-sm -translate-x-1/2 items-center gap-2 rounded-xl border border-emerald-600/25 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-950 shadow-lg dark:border-emerald-500/30 dark:bg-emerald-950/90 dark:text-emerald-50"
+        >
+          <Check className="size-4 shrink-0" aria-hidden />
+          {planningSuccessToast}
         </div>
       ) : null}
     </div>
