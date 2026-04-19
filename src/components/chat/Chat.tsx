@@ -217,8 +217,10 @@ export function Chat({ variant }: ChatProps) {
   const editingMessageIdRef = useRef<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const [composerHeightPx, setComposerHeightPx] = useState(132);
 
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const chatUI = useChatUI();
@@ -374,6 +376,20 @@ export function Chat({ variant }: ChatProps) {
 
   const trimmedName = usernameStore.value.trim();
   const hasUsername = trimmedName.length > 0;
+
+  useLayoutEffect(() => {
+    if (variant !== "mobile" || !hasUsername) return;
+    const el = composerRef.current;
+    if (!el) return;
+    const sync = () => {
+      const h = el.getBoundingClientRect().height;
+      if (h > 0) setComposerHeightPx(h);
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [variant, hasUsername, mobileOpen, keyboardInsetPx]);
 
   useEffect(() => {
     if (!hasUsername || typeof window === "undefined") return;
@@ -833,8 +849,22 @@ export function Chat({ variant }: ChatProps) {
   const effectiveError = configError ?? error;
   const effectiveLoading = configError ? false : loading;
 
+  const chatFooterPadBottom =
+    variant === "mobile"
+      ? keyboardInsetPx > 0
+        ? `max(env(safe-area-inset-bottom), ${keyboardInsetPx}px)`
+        : `max(0.75rem, env(safe-area-inset-bottom))`
+      : `calc(max(0.75rem, env(safe-area-inset-bottom)) + ${keyboardInsetPx}px)`;
+
   const ChatPanel = (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div
+      className={cn(
+        "flex min-h-0 flex-col bg-background",
+        variant === "mobile"
+          ? "relative isolate h-full min-h-[100dvh] max-h-[100dvh]"
+          : "h-full"
+      )}
+    >
       <header
         className={cn(
           "flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3",
@@ -999,7 +1029,15 @@ export function Chat({ variant }: ChatProps) {
         <>
           <div
             ref={scrollRef}
-            className="min-h-0 w-full max-w-full flex-1 space-y-4 overflow-y-auto px-3 py-3 sm:px-4"
+            className={cn(
+              "min-h-0 w-full max-w-full flex-1 space-y-4 overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-4",
+              variant === "mobile" && "touch-pan-y"
+            )}
+            style={
+              variant === "mobile" && hasUsername
+                ? { paddingBottom: composerHeightPx }
+                : undefined
+            }
           >
             {effectiveLoading ? (
               <p className="text-center text-sm text-muted-foreground">
@@ -1224,10 +1262,14 @@ export function Chat({ variant }: ChatProps) {
           </div>
 
           <footer
-            className="relative shrink-0 border-t border-border bg-background/95 px-3 pt-3 backdrop-blur"
-            style={{
-              paddingBottom: `calc(max(0.75rem, env(safe-area-inset-bottom)) + ${keyboardInsetPx}px)`,
-            }}
+            ref={composerRef}
+            className={cn(
+              "z-30 shrink-0 border-t border-border bg-background",
+              variant === "mobile"
+                ? "fixed bottom-0 left-0 right-0 px-3 pt-3 shadow-[0_-4px_24px_rgba(0,0,0,0.08)]"
+                : "relative px-3 pt-3"
+            )}
+            style={{ paddingBottom: chatFooterPadBottom }}
           >
             {editingMessageId ? (
               <div className="mb-2 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-100 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800/50">
@@ -1408,7 +1450,8 @@ export function Chat({ variant }: ChatProps) {
           fullScreen
           className={cn(
             "md:hidden gap-0 border-0 p-0",
-            "supports-[height:100dvh]:min-h-[100dvh]"
+            "supports-[height:100dvh]:min-h-[100dvh]",
+            keyboardInsetPx > 0 && "!pb-0"
           )}
           showCloseButton={false}
         >

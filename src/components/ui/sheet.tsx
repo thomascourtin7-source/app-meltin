@@ -51,7 +51,13 @@ function SheetContent({
 }) {
   return (
     <SheetPortal>
-      <SheetOverlay />
+      <SheetOverlay
+        className={
+          fullScreen && side === "bottom"
+            ? "bg-background !opacity-100 backdrop-blur-none"
+            : undefined
+        }
+      />
       <SheetPrimitive.Popup
         data-slot="sheet-content"
         data-side={side}
@@ -60,7 +66,7 @@ function SheetContent({
           "fixed z-50 flex flex-col gap-4 bg-popover bg-clip-padding text-sm text-popover-foreground shadow-lg transition duration-200 ease-in-out data-ending-style:opacity-0 data-starting-style:opacity-0 data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:border-t data-[side=bottom]:data-ending-style:translate-y-[2.5rem] data-[side=bottom]:data-starting-style:translate-y-[2.5rem] data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:h-full data-[side=left]:w-3/4 data-[side=left]:border-r data-[side=left]:data-ending-style:translate-x-[-2.5rem] data-[side=left]:data-starting-style:translate-x-[-2.5rem] data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:h-full data-[side=right]:w-3/4 data-[side=right]:border-l data-[side=right]:data-ending-style:translate-x-[2.5rem] data-[side=right]:data-starting-style:translate-x-[2.5rem] data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=top]:data-ending-style:translate-y-[-2.5rem] data-[side=top]:data-starting-style:translate-y-[-2.5rem] data-[side=left]:sm:max-w-sm data-[side=right]:sm:max-w-sm",
           fullScreen &&
             side === "bottom" &&
-            "top-0 left-0 right-0 bottom-0 !inset-0 !h-[100dvh] !max-h-[100dvh] !min-h-0 w-full !max-w-none overflow-hidden rounded-none border-0 !shadow-none !bg-background text-foreground data-[side=bottom]:!translate-y-0 data-[side=bottom]:data-ending-style:!translate-y-0 data-[side=bottom]:data-starting-style:!translate-y-0",
+            "top-0 left-0 right-0 bottom-0 !inset-0 !h-[100dvh] !max-h-[100dvh] !min-h-0 w-full !max-w-none overflow-hidden overscroll-none rounded-none border-0 !shadow-none !bg-background text-foreground data-[side=bottom]:!translate-y-0 data-[side=bottom]:data-ending-style:!translate-y-0 data-[side=bottom]:data-starting-style:!translate-y-0 supports-[height:100dvh]:!h-[100dvh] supports-[height:100svh]:min-h-[100svh]",
           className
         )}
         {...props}
