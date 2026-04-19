@@ -30,7 +30,10 @@ import {
   savePushSubscriptionToServer,
   subscribeChatPush,
 } from "@/lib/push/client-subscribe-chat";
-import { CHAT_USERNAME_STORAGE_KEY } from "@/lib/chat/constants";
+import {
+  CHAT_USERNAME_STORAGE_KEY,
+  CHAT_VIEWPORT_RESIZE_EVENT,
+} from "@/lib/chat/constants";
 import { getSupabaseBrowserClient, type MessageRow } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { InvisibleCloseLayer } from "./invisible-close-layer";
@@ -260,12 +263,13 @@ export function Chat({ variant }: ChatProps) {
     null
   );
 
-  /** `force: true` = focus sur l’input (toujours). Sinon = resize viewport, seulement si stick au bas. */
+  /** `force: true` = focus / clavier (toujours). Sinon = seulement si stick au bas. */
   const scrollToBottom = useCallback(
-    (opts: { force: boolean }) => {
+    (opts: { force: boolean; delayMs?: number }) => {
       if (variant !== "page") return;
       if (!opts.force && !stickToBottomRef.current) return;
       if (opts.force) stickToBottomRef.current = true;
+      const delayMs = opts.delayMs ?? 240;
       if (scrollToBottomTimerRef.current) {
         clearTimeout(scrollToBottomTimerRef.current);
       }
@@ -278,13 +282,13 @@ export function Chat({ variant }: ChatProps) {
           block: "end",
           behavior: "smooth",
         });
-      }, 240);
+      }, delayMs);
     },
     [variant]
   );
 
   const handleTextareaFocus = useCallback(() => {
-    scrollToBottom({ force: true });
+    scrollToBottom({ force: true, delayMs: 300 });
   }, [scrollToBottom]);
 
   useEffect(() => {
@@ -464,7 +468,6 @@ export function Chat({ variant }: ChatProps) {
 
     const onViewportChange = () => {
       updateHeight();
-      scrollToBottom({ force: false });
     };
 
     vv.addEventListener("resize", onViewportChange);
@@ -488,8 +491,19 @@ export function Chat({ variant }: ChatProps) {
     composerHeightPx,
     messages.length,
     hasUsername,
-    scrollToBottom,
   ]);
+
+  /** Scroll bas à chaque changement de VisualViewport (émis par `ChatPageShell`). */
+  useEffect(() => {
+    if (variant !== "page") return;
+    const onShellViewport = () => {
+      scrollToBottom({ force: true });
+    };
+    window.addEventListener(CHAT_VIEWPORT_RESIZE_EVENT, onShellViewport);
+    return () => {
+      window.removeEventListener(CHAT_VIEWPORT_RESIZE_EVENT, onShellViewport);
+    };
+  }, [variant, scrollToBottom]);
 
   useEffect(() => {
     if (!hasUsername || typeof window === "undefined") return;
@@ -1389,10 +1403,10 @@ export function Chat({ variant }: ChatProps) {
           <footer
             ref={composerRef}
             className={cn(
-              "z-30 shrink-0 bg-white",
+              "shrink-0 bg-white",
               variant === "page"
-                ? "sticky bottom-0 left-0 right-0 w-full border-0 px-0 pt-0 shadow-none"
-                : "relative border-t border-border bg-background px-3 pt-3"
+                ? "sticky bottom-0 left-0 right-0 z-[100] w-full border-0 px-0 pt-0 shadow-none"
+                : "relative z-30 border-t border-border bg-background px-3 pt-3"
             )}
             style={
               variant === "page"
@@ -1476,7 +1490,7 @@ export function Chat({ variant }: ChatProps) {
             ) : null}
             <div
               className={cn(
-                "flex w-full items-center justify-center",
+                "relative z-[101] flex w-full items-center justify-center bg-white",
                 variant === "page" ? "px-4 pb-1" : "px-0"
               )}
             >
@@ -1484,7 +1498,7 @@ export function Chat({ variant }: ChatProps) {
                 className={cn(
                   "flex min-w-0 items-center gap-3",
                   variant === "page"
-                    ? "mx-auto w-full max-w-2xl rounded-full bg-muted/50 px-4 py-2.5 shadow-sm"
+                    ? "mx-auto w-full max-w-2xl rounded-full bg-zinc-100 px-4 py-2.5 shadow-sm"
                     : "w-full rounded-2xl border border-border/70 bg-muted/40 px-3 py-1.5"
                 )}
               >
