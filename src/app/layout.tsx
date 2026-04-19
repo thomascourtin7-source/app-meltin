@@ -60,11 +60,17 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * Génère la balise viewport (équivalent HTML) :
+ * `<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0, viewport-fit=cover" />`
+ * (Next.js émet `user-scalable=no`, équivalent iOS.)
+ */
 export const viewport: Viewport = {
   themeColor: "#2563eb",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 5,
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
 };
 

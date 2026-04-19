@@ -121,18 +121,27 @@
   * {
     @apply border-border outline-ring/50;
   }
-  /* Anti-balancement horizontal (mobile) : pas de contenu > 100% du viewport */
+  /* Anti-balancement horizontal + pas de pan horizontal (mobile) */
   html,
   body {
+    position: relative;
     width: 100%;
     max-width: 100%;
-    overflow-x: hidden;
+    overflow-x: hidden !important;
+    touch-action: pan-y;
   }
   body {
     @apply bg-background text-foreground;
   }
   html {
     @apply font-sans;
+  }
+
+  /* iOS : évite le zoom auto au focus (police inférieure à 16px) */
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
   }
 
   /*

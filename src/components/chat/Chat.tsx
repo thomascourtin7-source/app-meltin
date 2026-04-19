@@ -861,10 +861,16 @@ export function Chat({ variant }: ChatProps) {
       className={cn(
         "flex min-h-0 flex-col bg-background",
         variant === "mobile"
-          ? "relative isolate h-full min-h-[100dvh] max-h-[100dvh]"
+          ? "relative isolate z-0 h-full min-h-[100dvh] max-h-[100dvh]"
           : "h-full"
       )}
     >
+      {variant === "mobile" ? (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed bottom-0 left-0 -z-10 h-[50vh] w-full bg-background"
+        />
+      ) : null}
       <header
         className={cn(
           "flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3",
