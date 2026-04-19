@@ -46,12 +46,15 @@ async function getPlanningPushTargets(): Promise<
 export async function broadcastPlanningUpdate(payload: {
   title: string;
   body: string;
+  /** Chemin ou URL relative pour l’ouverture au clic (ex. /planning?date=tomorrow). */
+  openUrl?: string;
 }): Promise<{ sent: number; failed: number }> {
   configureWebPush();
   if (!process.env.VAPID_PRIVATE_KEY) {
     return { sent: 0, failed: 0 };
   }
 
+  const openUrl = payload.openUrl?.trim() || "/";
   const subs = await getPlanningPushTargets();
   let sent = 0;
   let failed = 0;
@@ -64,7 +67,7 @@ export async function broadcastPlanningUpdate(payload: {
           type: "planning-update",
           title: payload.title,
           body: payload.body,
-          openUrl: "/",
+          openUrl,
         })
       );
       sent++;

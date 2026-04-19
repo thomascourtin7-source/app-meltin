@@ -16,9 +16,10 @@ function isOriginAllowed(req: Request): boolean {
   }
 }
 
-const TITLE = "Planning demain";
-const BODY =
+const DEFAULT_TITLE = "Planning demain";
+const DEFAULT_BODY =
   "📅 Le planning de demain est disponible ! Vérifiez vos assignations.";
+const DEFAULT_OPEN = "/planning?date=tomorrow";
 
 /** Diffusion globale : tous les abonnés push (préparation terminée). */
 export async function POST(req: Request) {
@@ -26,9 +27,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Origin non autorisée." }, { status: 403 });
   }
 
+  let title = DEFAULT_TITLE;
+  let body = DEFAULT_BODY;
+  let openUrl = DEFAULT_OPEN;
+
+  const ct = req.headers.get("content-type");
+  if (ct?.includes("application/json")) {
+    try {
+      const raw: unknown = await req.json();
+      if (raw && typeof raw === "object") {
+        const j = raw as Record<string, unknown>;
+        if (typeof j.title === "string" && j.title.trim()) title = j.title.trim();
+        if (typeof j.body === "string" && j.body.trim()) body = j.body.trim();
+        if (typeof j.url === "string" && j.url.trim()) openUrl = j.url.trim();
+      }
+    } catch {
+      /* corps vide ou invalide → défauts */
+    }
+  }
+
   const result = await broadcastPlanningUpdate({
-    title: TITLE,
-    body: BODY,
+    title,
+    body,
+    openUrl,
   });
 
   return NextResponse.json({ ok: true, ...result });

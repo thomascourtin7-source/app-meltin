@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { ChatProfileSettings } from "@/components/configuration/chat-profile-settings";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
+import { clearPlanningFinalizedForServiceDate, getTomorrowPlanningDateKey } from "@/lib/planning/planning-finalized-storage";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -52,6 +53,7 @@ export function ConfigurationClient() {
             variant="default"
             size="lg"
             onClick={() => {
+              clearPlanningFinalizedForServiceDate(getTomorrowPlanningDateKey());
               setPreparingTomorrow(true);
               router.push("/planning?mode=prep&date=tomorrow");
             }}

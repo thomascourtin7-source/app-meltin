@@ -12,7 +12,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import {
   Calendar,
-  Check,
   Loader2,
   Plus,
   RefreshCw,
@@ -48,6 +47,7 @@ import {
   serviceUrgencyIdentityKey,
   stableServiceRowKey,
 } from "@/lib/planning/service-row-keys";
+import { isPlanningFinalizedForServiceDate } from "@/lib/planning/planning-finalized-storage";
 import { computeConflictRowKeys } from "@/lib/planning/time-conflicts";
 import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
@@ -499,11 +499,33 @@ function ServiceBlock({
   );
 }
 
+async function sendPushNotification(opts: {
+  title: string;
+  body: string;
+  url: string;
+}): Promise<void> {
+  const res = await fetch("/api/push/planning-daily-ready", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+  if (!res.ok) {
+    let msg = "Envoi impossible.";
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (typeof j?.error === "string") msg = j.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+}
+
 export function DailyServicesView() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { isPreparingTomorrow, setPreparingTomorrow } = usePlanningPreparation();
+  const { setPreparingTomorrow } = usePlanningPreparation();
 
   const configuredId = useLocalSpreadsheetId();
   const spreadsheetId =
@@ -518,21 +540,16 @@ export function DailyServicesView() {
   const [calendarPressed, setCalendarPressed] = useState(false);
 
   const [assigneesBump, setAssigneesBump] = useState(0);
-  const [planningDoneBusy, setPlanningDoneBusy] = useState(false);
-  const [planningDoneMsg, setPlanningDoneMsg] = useState<string | null>(null);
-  /** Message de succès après envoi (toast léger). */
-  const [planningSuccessToast, setPlanningSuccessToast] = useState<
+  const [isLoading, setIsLoading] = useState(false);
+  const planningValidatedBannerTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  /** Relecture localStorage « planning validé pour demain ». */
+  const [planningFinalizedBump, setPlanningFinalizedBump] = useState(0);
+  /** Bandeau vert après validation. */
+  const [planningValidatedBanner, setPlanningValidatedBanner] = useState<
     string | null
   >(null);
-  const planningToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
-  );
-  /** Débloque le bouton au pire après 3 s (file d’attente réseau bloquée). */
-  const planningSafetyUnlockRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
-  );
-  /** Affiche « Envoyé ! » brièvement après succès. */
-  const [planningJustSent, setPlanningJustSent] = useState(false);
   const [conflictRowKeys, setConflictRowKeys] = useState<Set<string>>(
     () => new Set()
   );
@@ -587,7 +604,8 @@ export function DailyServicesView() {
     spreadsheetId
   )}&date=${encodeURIComponent(normalizeCanonicalDateKey(selectedDate))}`;
 
-  const { data, error, isLoading, isValidating, mutate } = useSWR(
+  const { data, error, isLoading: planningDataLoading, isValidating, mutate } =
+    useSWR(
     swrKey,
     planningServicesFetcher,
     {
@@ -605,8 +623,17 @@ export function DailyServicesView() {
   const isTomorrowSelected = selectedKey === tomorrowYmd;
   const isCustomDateSelected = !isTodaySelected && !isTomorrowSelected;
 
-  /** `mode=prep` dans l’URL force le mode préparation (même si le contexte a été perdu). */
-  const urlPrepMode = searchParams.get("mode") === "prep";
+  /** Planning déjà validé pour la date « demain » (persisté → pas de mode rouge au refresh). */
+  const isTomorrowPlanningFinalized = useMemo(() => {
+    void planningFinalizedBump;
+    if (typeof window === "undefined") return false;
+    return isPlanningFinalizedForServiceDate(tomorrowYmd);
+  }, [tomorrowYmd, planningFinalizedBump]);
+
+  const isPrepMode =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("mode") === "prep"
+      : false;
 
   const selectDateAndRefresh = useCallback(
     (ymd: string) => {
@@ -627,13 +654,24 @@ export function DailyServicesView() {
     const tomorrowQ =
       searchParams.get("day") === "tomorrow" ||
       searchParams.get("date") === "tomorrow";
+    const tomorrowKey = normalizeCanonicalDateKey(
+      formatLocalYmd(addDaysLocal(new Date(), 1))
+    );
+
+    if (modePrep && isPlanningFinalizedForServiceDate(tomorrowKey)) {
+      try {
+        router.replace("/planning?date=tomorrow");
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+
     if (!modePrep && !tomorrowQ) return;
 
     if (modePrep) setPreparingTomorrow(true);
     if (tomorrowQ) {
-      const ymd = normalizeCanonicalDateKey(
-        formatLocalYmd(addDaysLocal(new Date(), 1))
-      );
+      const ymd = tomorrowKey;
       setSelectedDate(ymd);
       void mutate();
     }
@@ -642,101 +680,65 @@ export function DailyServicesView() {
     }
   }, [planningQueryKey, pathname, mutate, router, setPreparingTomorrow]);
 
+  /** Sans `mode=prep` dans l’URL, le contexte « préparation » doit être faux. */
+  useEffect(() => {
+    if (searchParams.get("mode") !== "prep") {
+      setPreparingTomorrow(false);
+    }
+  }, [searchParams, setPreparingTomorrow]);
+
+  /** Après validation + rechargement complet, réaffiche le bandeau vert une fois. */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (sessionStorage.getItem("meltin_planning_validated_flash") === "1") {
+        sessionStorage.removeItem("meltin_planning_validated_flash");
+        setPlanningValidatedBanner("Planning validé et équipe notifiée.");
+        if (planningValidatedBannerTimerRef.current) {
+          clearTimeout(planningValidatedBannerTimerRef.current);
+        }
+        planningValidatedBannerTimerRef.current = setTimeout(() => {
+          setPlanningValidatedBanner(null);
+          planningValidatedBannerTimerRef.current = null;
+        }, 5000);
+      }
+    } catch {
+      /* private mode */
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
-      if (planningToastTimerRef.current) {
-        clearTimeout(planningToastTimerRef.current);
-        planningToastTimerRef.current = null;
-      }
-      if (planningSafetyUnlockRef.current) {
-        clearTimeout(planningSafetyUnlockRef.current);
-        planningSafetyUnlockRef.current = null;
+      if (planningValidatedBannerTimerRef.current) {
+        clearTimeout(planningValidatedBannerTimerRef.current);
+        planningValidatedBannerTimerRef.current = null;
       }
     };
   }, []);
 
-  const onPlanningReadyNotify = useCallback(async () => {
-    if (planningSafetyUnlockRef.current) {
-      clearTimeout(planningSafetyUnlockRef.current);
-    }
-    planningSafetyUnlockRef.current = setTimeout(() => {
-      setPlanningDoneBusy(false);
-      planningSafetyUnlockRef.current = null;
-    }, 3000);
+  const handlePlanningFinished = () => {
+    setIsLoading(true);
 
-    setPlanningDoneMsg(null);
+    // Envoi en arrière-plan sans await pour ne pas bloquer l’UI
+    sendPushNotification({
+      title: "Planning demain",
+      body: "📅 Le planning de demain est disponible ! Vérifiez vos assignations.",
+      url: "/planning?date=tomorrow",
+    }).catch((err) => console.error("Erreur notif silenciée:", err));
 
+    setIsLoading(false);
     try {
-      setPlanningDoneBusy(true);
-
-      let res: Response;
-      try {
-        res = await fetch("/api/push/planning-daily-ready", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
-      } catch (networkErr) {
-        console.error(networkErr);
-        throw new Error(
-          networkErr instanceof Error
-            ? networkErr.message
-            : "Réseau indisponible — réessayez."
-        );
-      }
-
-      let data: unknown = {};
-      try {
-        data = await res.json();
-      } catch {
-        data = {};
-      }
-
-      if (!res.ok) {
-        const msg =
-          data &&
-          typeof data === "object" &&
-          "error" in data &&
-          typeof (data as { error: unknown }).error === "string"
-            ? (data as { error: string }).error
-            : "Envoi impossible.";
-        throw new Error(msg);
-      }
-
-      /* Succès : arrêt immédiat du chargement + sortie du mode préparation */
-      setPlanningDoneBusy(false);
-      setPreparingTomorrow(false);
-      setPlanningJustSent(true);
-      setPlanningDoneMsg(null);
-
-      try {
-        router.push("/planning");
-      } catch (navErr) {
-        console.error(navErr);
-      }
-
-      if (planningToastTimerRef.current) {
-        clearTimeout(planningToastTimerRef.current);
-      }
-      setPlanningSuccessToast("Notification envoyée à l’équipe.");
-      planningToastTimerRef.current = setTimeout(() => {
-        setPlanningSuccessToast(null);
-        planningToastTimerRef.current = null;
-      }, 4000);
-
-      setTimeout(() => setPlanningJustSent(false), 2000);
-    } catch (error) {
-      console.error(error);
-      setPlanningDoneMsg(
-        error instanceof Error ? error.message : "Échec de l’envoi."
-      );
-    } finally {
-      setPlanningDoneBusy(false);
-      if (planningSafetyUnlockRef.current) {
-        clearTimeout(planningSafetyUnlockRef.current);
-        planningSafetyUnlockRef.current = null;
-      }
+      localStorage.setItem("planning_finalized", "true");
+    } catch {
+      /* quota / private mode */
     }
-  }, [setPreparingTomorrow, router]);
+
+    // Sortie du mode préparation après délai fixe (succès ou échec de la notif)
+    setTimeout(() => {
+      window.location.href =
+        window.location.origin + "/planning?date=tomorrow";
+    }, 800);
+  };
 
   /** Déjà filtrées côté API par `?date=` ; garde-fou local si besoin. */
   const filtered = useMemo(() => {
@@ -746,12 +748,18 @@ export function DailyServicesView() {
     );
   }, [data?.rows, selectedKey]);
 
-  /** Conflits : uniquement jour « Demain » + préparation (contexte ou `?mode=prep`). */
-  const preparationModeActive =
-    isTomorrowSelected && (isPreparingTomorrow || urlPrepMode);
+  /**
+   * Conflits (rouge) : uniquement si `mode=prep` dans l’URL (isPrepMode) + demain + pas validé.
+   */
+  const prepModeActive = Boolean(
+    isPrepMode && isTomorrowSelected && !isTomorrowPlanningFinalized
+  );
+
+  /** Barre « Planning terminé » : demain + mode préparation dans l’URL. */
+  const showPrepModeBar = isTomorrowSelected && isPrepMode;
 
   useEffect(() => {
-    if (!preparationModeActive) {
+    if (!prepModeActive) {
       setConflictRowKeys(new Set());
       return;
     }
@@ -760,7 +768,7 @@ export function DailyServicesView() {
       row,
     }));
     setConflictRowKeys(computeConflictRowKeys(rowKeysAndRows, assignees));
-  }, [preparationModeActive, filtered, assignees, assigneesBump]);
+  }, [prepModeActive, filtered, assignees, assigneesBump]);
 
   const setAssigneesForRow = useCallback(
     (key: string, next: string[]) => {
@@ -789,9 +797,13 @@ export function DailyServicesView() {
         setAssigneesBump((b) => b + 1);
 
         const dateKey = normalizeCanonicalDateKey(selectedDate);
-        if (dateKey === tomorrowYmd) {
+        const isPrep =
+          new URLSearchParams(window.location.search).get("mode") === "prep";
+        /** Demain + `mode=prep` : pas de notifs individuelles pendant la préparation. */
+        if (dateKey === tomorrowYmd && isPrep) {
           return;
         }
+        /** Sans `mode=prep` : notifs pour chaque nouvel assigné ajouté sur la ligne. */
         for (const slug of safe) {
           if (prevNotify.has(slug)) continue;
           const label = assigneeSlugToNotifyLabel(slug);
@@ -933,7 +945,10 @@ export function DailyServicesView() {
       const prevTarget = matchSheetAssigneeToTeamLabel(prevRaw);
       if (prevTarget === target) continue;
 
-      if (dateKey !== tomorrowYmd) {
+      const isPrep =
+        new URLSearchParams(window.location.search).get("mode") === "prep";
+      const silentTomorrowPrep = dateKey === tomorrowYmd && isPrep;
+      if (!silentTomorrowPrep) {
         void fetch("/api/push/planning-assignee-alert", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -952,15 +967,32 @@ export function DailyServicesView() {
       [dateKey]: nextMap,
     };
     saveSheetAssigneeSnapshot(snapshots);
-  }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate, tomorrowYmd]);
+  }, [
+    data?.rows,
+    data?.fetchedAt,
+    spreadsheetId,
+    selectedDate,
+    tomorrowYmd,
+    searchParams,
+  ]);
 
   return (
     <div
       className={cn(
         "relative mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6",
-        preparationModeActive && "pb-28 sm:pb-24"
+        showPrepModeBar && "pb-28 sm:pb-24",
+        planningValidatedBanner && "pt-10 sm:pt-11"
       )}
     >
+      {planningValidatedBanner ? (
+        <div
+          role="status"
+          className="fixed top-14 inset-x-0 z-30 border-b border-emerald-600/30 bg-emerald-600 px-4 py-2.5 text-center text-sm font-medium text-white shadow-sm dark:border-emerald-500/40 dark:bg-emerald-700"
+        >
+          {planningValidatedBanner}
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
@@ -975,7 +1007,7 @@ export function DailyServicesView() {
           variant="outline"
           size="sm"
           onClick={() => mutate()}
-          disabled={isLoading || isValidating}
+          disabled={planningDataLoading || isValidating}
           className="gap-1.5 self-start sm:self-auto"
         >
           {isValidating ? (
@@ -1045,7 +1077,7 @@ export function DailyServicesView() {
         </div>
       </div>
 
-      {isLoading && !data ? (
+      {planningDataLoading && !data ? (
         <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed py-20 text-muted-foreground">
           <Loader2 className="size-5 animate-spin" aria-hidden />
           Chargement du planning…
@@ -1077,7 +1109,7 @@ export function DailyServicesView() {
                   assignees={assigneeList}
                   onAssigneesChange={setAssigneesForRow}
                   hasTimeConflict={conflictRowKeys.has(rowKey)}
-                  showConflictUi={preparationModeActive}
+                  showConflictUi={prepModeActive}
                 />
               );
             })}
@@ -1100,7 +1132,7 @@ export function DailyServicesView() {
         </>
       )}
 
-      {preparationModeActive ? (
+      {showPrepModeBar ? (
         <div
           className={cn(
             "fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-background/95 p-4 shadow-[0_-4px_24px_-4px_rgba(0,0,0,0.08)] backdrop-blur-sm",
@@ -1111,45 +1143,20 @@ export function DailyServicesView() {
             <Button
               type="button"
               size="lg"
-              disabled={planningDoneBusy || planningJustSent}
-              onClick={() => void onPlanningReadyNotify()}
+              disabled={isLoading}
+              onClick={handlePlanningFinished}
               className="inline-flex w-full gap-2 rounded-xl border shadow-sm sm:w-auto sm:min-w-[280px]"
               variant="default"
             >
-              {planningDoneBusy ? (
+              {isLoading ? (
                 <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />
               ) : null}
-              {planningJustSent ? "Envoyé !" : "✅ Planning terminé"}
+              ✅ Planning terminé
             </Button>
-            {planningDoneMsg ? (
-              <p
-                className={cn(
-                  "text-center text-sm sm:text-left",
-                  planningDoneMsg.includes("Échec") ||
-                    planningDoneMsg.includes("impossible")
-                    ? "text-destructive"
-                    : "text-muted-foreground"
-                )}
-                role="status"
-              >
-                {planningDoneMsg}
-              </p>
-            ) : (
-              <p className="text-center text-xs text-muted-foreground sm:text-left">
-                Notifie toute l’équipe que le planning de demain est prêt.
-              </p>
-            )}
+            <p className="text-center text-xs text-muted-foreground sm:text-left">
+              Notifie toute l’équipe que le planning de demain est prêt.
+            </p>
           </div>
-        </div>
-      ) : null}
-
-      {planningSuccessToast ? (
-        <div
-          role="status"
-          className="fixed bottom-[max(6rem,env(safe-area-inset-bottom)+4.5rem)] left-1/2 z-50 flex max-w-sm -translate-x-1/2 items-center gap-2 rounded-xl border border-emerald-600/25 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-950 shadow-lg dark:border-emerald-500/30 dark:bg-emerald-950/90 dark:text-emerald-50"
-        >
-          <Check className="size-4 shrink-0" aria-hidden />
-          {planningSuccessToast}
         </div>
       ) : null}
     </div>
