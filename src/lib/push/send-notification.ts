@@ -48,11 +48,19 @@ export async function broadcastPlanningUpdate(payload: {
   console.log("Tentative d'envoi push pour :", "planning-broadcast-all");
 
   if (!configureWebPush()) {
+    console.warn(
+      "[planning-broadcast-all] VAPID incomplet — 0 envoi (voir NEXT_PUBLIC_VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT)"
+    );
     return { sent: 0, failed: 0 };
   }
 
   const openUrl = payload.openUrl?.trim() || "/";
   const subs = await getPlanningPushTargets();
+  if (subs.length === 0) {
+    console.warn(
+      "[planning-broadcast-all] Aucun abonnement (table push_subscriptions / fichier local)"
+    );
+  }
   let sent = 0;
   let failed = 0;
 
@@ -83,11 +91,17 @@ export async function broadcastAlarmUncoveredPush(): Promise<{
   console.log("Tentative d'envoi push pour :", "planning-alarm-uncovered");
 
   if (!configureWebPush()) {
+    console.warn(
+      "[planning-alarm-uncovered] VAPID incomplet — 0 envoi"
+    );
     return { sent: 0, failed: 0 };
   }
 
   const openUrl = "/";
   const subs = await getPlanningPushTargets();
+  if (subs.length === 0) {
+    console.warn("[planning-alarm-uncovered] Aucun abonnement push");
+  }
   let sent = 0;
   let failed = 0;
 

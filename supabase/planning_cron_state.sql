@@ -1,4 +1,4 @@
--- État du planning (sync Google Sheet). Voir aussi supabase/sent_alarms.sql (anti-spam alarme).
+-- Ancienne table d’état (migration). L’app lit encore cette ligne une fois pour migrer vers planning_states.
 
 create table if not exists public.planning_cron_state (
   spreadsheet_id text primary key,
@@ -7,8 +7,6 @@ create table if not exists public.planning_cron_state (
 );
 
 comment on table public.planning_cron_state is
-  'Photo serveur : hash global, byDate, rowHashes (v4) pour /api/check-planning';
+  'Obsolète : préférer public.planning_states';
 
 alter table public.planning_cron_state enable row level security;
-
--- Aucun accès anon : lecture/écriture uniquement via service_role (routes API).

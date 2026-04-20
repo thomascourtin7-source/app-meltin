@@ -35,6 +35,13 @@ export async function notifyPlanningAssigneeSubscribers(
     (r) => normSender(String(r.user_name ?? "")) === want
   );
 
+  if (targets.length === 0) {
+    console.warn(
+      "[notifyPlanningAssigneeSubscribers] aucun abonné avec user_name correspondant à",
+      JSON.stringify(targetDisplayName)
+    );
+  }
+
   let sent = 0;
   let failed = 0;
 
