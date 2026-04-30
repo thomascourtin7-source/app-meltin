@@ -4,6 +4,7 @@ import autoTable from "jspdf-autotable";
 export type ServiceReportPdfData = {
   title: string;
   reportKind?: "arrival" | "departure" | "transit";
+  photoUrl?: string | null;
   serviceClient: string;
   serviceType: string;
   serviceDateIso: string;
@@ -49,6 +50,37 @@ async function tryFetchLogoDataUrl(): Promise<string | null> {
       fr.readAsDataURL(blob);
     });
     return dataUrl.startsWith("data:") ? dataUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+async function tryFetchImageDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onerror = () => reject(new Error("image read failed"));
+      fr.onload = () => resolve(String(fr.result || ""));
+      fr.readAsDataURL(blob);
+    });
+    return dataUrl.startsWith("data:") ? dataUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getImageSize(dataUrl: string): Promise<{ w: number; h: number } | null> {
+  try {
+    const img = new Image();
+    const p = new Promise<{ w: number; h: number }>((resolve, reject) => {
+      img.onload = () => resolve({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
+      img.onerror = () => reject(new Error("img load"));
+    });
+    img.src = dataUrl;
+    return await p;
   } catch {
     return null;
   }
@@ -177,10 +209,32 @@ export async function generateServiceReportPdf(
 
   const afterService = (doc as unknown as { lastAutoTable?: { finalY: number } })
     .lastAutoTable?.finalY;
-  const startY = typeof afterService === "number" ? afterService + 16 : 220;
+
+  let cursorY = typeof afterService === "number" ? afterService + 16 : 220;
+
+  if (data.photoUrl) {
+    const photoDataUrl = await tryFetchImageDataUrl(data.photoUrl);
+    if (photoDataUrl) {
+      const size = await getImageSize(photoDataUrl);
+      const maxW = pageWidth - marginX * 2;
+      const maxH = 240;
+      const w0 = size?.w ?? 1200;
+      const h0 = size?.h ?? 800;
+      const ratio = Math.min(maxW / w0, maxH / h0, 1);
+      const w = Math.max(120, w0 * ratio);
+      const h = Math.max(80, h0 * ratio);
+      const x = (pageWidth - w) / 2;
+      try {
+        doc.addImage(photoDataUrl, "JPEG", x, cursorY, w, h);
+        cursorY += h + 16;
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 
   autoTable(doc, {
-    startY,
+    startY: cursorY,
     head: [[`Service report (${kindLabel})`, ""]],
     body: reportDetails,
     theme: "grid",

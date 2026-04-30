@@ -71,6 +71,7 @@ type ServiceReportRow = {
   service_type: string;
   service_date: string;
   report_kind: string;
+  photo_url?: string | null;
   service_vol: string | null;
   service_rdv1: string | null;
   service_rdv2: string | null;
@@ -271,7 +272,13 @@ type ServiceBlockProps = {
   showConflictUi?: boolean;
   isReportCompleted: boolean;
   isPec: boolean;
+  hasPhoto: boolean;
   onTogglePec: (opts: { serviceId: string; next: boolean }) => Promise<void>;
+  onCapturePhoto: (opts: {
+    serviceId: string;
+    row: DailyServiceRow;
+    file: File;
+  }) => Promise<void>;
   onOpenReportForm: (opts: { serviceId: string }) => void;
   onDownloadReportPdf: (opts: { serviceId: string }) => Promise<void>;
 };
@@ -292,11 +299,14 @@ function ServiceBlock({
   showConflictUi = false,
   isReportCompleted,
   isPec,
+  hasPhoto,
   onTogglePec,
+  onCapturePhoto,
   onOpenReportForm,
   onDownloadReportPdf,
 }: ServiceBlockProps) {
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const updateSlot = (slot: number, value: string) => {
     const next = [...assignees];
@@ -488,6 +498,44 @@ function ServiceBlock({
           {!isReportCompleted && isPec ? " 🟠" : ""}
           {isReportCompleted ? " ✅" : ""}
         </h2>
+
+        <div className="mb-2 flex items-center gap-2">
+          <button
+            type="button"
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-1 text-xs font-medium text-foreground",
+              "active:scale-[0.98] transition-transform"
+            )}
+            onClick={() => fileRef.current?.click()}
+            aria-label={hasPhoto ? "Photo prise" : "Prendre une photo"}
+          >
+            <span aria-hidden>📷</span>
+            {hasPhoto ? <span aria-hidden>✅</span> : null}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              onCapturePhoto({ serviceId: reportServiceId, row, file: f }).catch(
+                (err) => {
+                  console.error(err);
+                  window.alert(
+                    err instanceof Error
+                      ? err.message
+                      : "Upload photo impossible."
+                  );
+                }
+              );
+              e.currentTarget.value = "";
+            }}
+          />
+        </div>
+
         <p className="mb-3 text-sm leading-relaxed text-slate-700 dark:text-slate-300">
           <span className="inline-flex items-center gap-3">
             <span className="font-semibold text-slate-800 dark:text-slate-200">
@@ -584,6 +632,7 @@ async function fetchReportExistence(opts: {
   hasReport: Record<string, boolean>;
   isPecByServiceId: Record<string, boolean>;
   isCompletedByServiceId: Record<string, boolean>;
+  hasPhotoByServiceId: Record<string, boolean>;
 }> {
   const res = await fetch("/api/service-reports/batch", {
     method: "POST",
@@ -605,6 +654,7 @@ async function fetchReportExistence(opts: {
     hasReport: Record<string, boolean>;
     isPecByServiceId: Record<string, boolean>;
     isCompletedByServiceId: Record<string, boolean>;
+    hasPhotoByServiceId: Record<string, boolean>;
   };
 }
 
@@ -628,6 +678,18 @@ async function sendPushNotification(opts: {
     }
     throw new Error(msg);
   }
+}
+
+function slugifyForStorageKey(input: string): string {
+  return (input || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\\\/|:\s]+/g, "-")
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 export function DailyServicesView() {
@@ -939,6 +1001,7 @@ export function DailyServicesView() {
 
   const isCompletedByServiceId = reportExistence?.isCompletedByServiceId ?? {};
   const isPecByServiceId = reportExistence?.isPecByServiceId ?? {};
+  const hasPhotoByServiceId = reportExistence?.hasPhotoByServiceId ?? {};
 
   const agentLabels = useMemo(() => {
     return PLANNING_ASSIGNEE_OPTIONS.filter(
@@ -949,7 +1012,7 @@ export function DailyServicesView() {
     ).map((o) => o.label);
   }, []);
 
-  type AgentStatus = "red" | "green" | "gray" | "black";
+  type AgentStatus = "red" | "yellow" | "green" | "gray" | "black";
 
   const agentStatusByLabel = useMemo(() => {
     const out: Record<string, AgentStatus> = {};
@@ -976,15 +1039,19 @@ export function DailyServicesView() {
       }
 
       let anyPec = false;
+      let anyPhoto = false;
       let anyNotCompleted = false;
       for (const sid of serviceIds) {
         const completed = Boolean(isCompletedByServiceId[sid]);
         const pec = Boolean(isPecByServiceId[sid]);
+        const photo = Boolean(hasPhotoByServiceId[sid]);
         if (!completed && pec) anyPec = true;
+        if (!completed && photo) anyPhoto = true;
         if (!completed) anyNotCompleted = true;
       }
 
       if (anyPec) out[label] = "red";
+      else if (anyPhoto) out[label] = "yellow";
       else if (anyNotCompleted) out[label] = "green";
       else out[label] = "gray";
     }
@@ -1002,6 +1069,8 @@ export function DailyServicesView() {
     switch (status) {
       case "red":
         return "bg-red-500";
+      case "yellow":
+        return "bg-amber-400";
       case "green":
         return "bg-emerald-500";
       case "gray":
@@ -1050,6 +1119,64 @@ export function DailyServicesView() {
     [mutateReports, reportExistence, spreadsheetId]
   );
 
+  const capturePhoto = useCallback(
+    async (opts: { serviceId: string; row: DailyServiceRow; file: File }) => {
+      const ts = Date.now();
+      const safeFileName = `photo-${ts}.png`;
+
+      const form = new FormData();
+      form.set("spreadsheetId", spreadsheetId);
+      form.set("serviceId", opts.serviceId);
+      form.set("fileName", safeFileName);
+      form.set("file", opts.file);
+
+      const res = await fetch("/api/service-photos/upload", {
+        method: "POST",
+        body: form,
+      });
+      const json = (await res.json()) as { publicUrl?: string; error?: string };
+      console.log("[photo-upload] response", json);
+      if (!res.ok || !json.publicUrl) {
+        throw new Error(json?.error || "Upload photo impossible.");
+      }
+
+      const optimistic = {
+        ...(reportExistence ?? {
+          hasReport: {},
+          isPecByServiceId: {},
+          isCompletedByServiceId: {},
+          hasPhotoByServiceId: {},
+        }),
+        hasPhotoByServiceId: {
+          ...(reportExistence?.hasPhotoByServiceId ?? {}),
+          [opts.serviceId]: true,
+        },
+      };
+      void mutateReports(optimistic, { revalidate: false });
+
+      const save = await fetch("/api/service-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spreadsheet_id: spreadsheetId,
+          service_id: opts.serviceId,
+          service_date: opts.row.dateIso,
+          service_client: opts.row.client,
+          service_type: opts.row.type,
+          report_kind: detectServiceReportKind(opts.row.type),
+          photo_url: json.publicUrl,
+        }),
+      });
+      const saveJson = (await save.json()) as { error?: string };
+      if (!save.ok) {
+        void mutateReports();
+        throw new Error(saveJson?.error || "Sauvegarde photo_url impossible.");
+      }
+      void mutateReports();
+    },
+    [detectServiceReportKind, mutateReports, reportExistence, spreadsheetId]
+  );
+
   const openReportForm = useCallback(
     (opts: { serviceId: string }) => {
       router.push(
@@ -1084,6 +1211,7 @@ export function DailyServicesView() {
       const doc = await generateServiceReportPdf({
         title: "Rapport de service",
         reportKind: kind,
+        photoUrl: r.photo_url ?? null,
         serviceClient: r.service_client,
         serviceType: r.service_type,
         serviceDateIso: r.service_date,
@@ -1459,8 +1587,14 @@ export function DailyServicesView() {
                     isCompletedByServiceId[serviceReportIdFromRow(row)]
                   )}
                   isPec={Boolean(isPecByServiceId[serviceReportIdFromRow(row)])}
+                  hasPhoto={Boolean(
+                    hasPhotoByServiceId[serviceReportIdFromRow(row)]
+                  )}
                   onTogglePec={async ({ serviceId, next }) =>
                     togglePec({ serviceId, next, row })
+                  }
+                  onCapturePhoto={async ({ serviceId, row: r, file }) =>
+                    capturePhoto({ serviceId, row: r, file })
                   }
                   onOpenReportForm={openReportForm}
                   onDownloadReportPdf={async (o) => {

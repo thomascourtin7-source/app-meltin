@@ -43,6 +43,7 @@ type ServiceReportRow = {
   transit_bags: string | null;
   is_pec: boolean | null;
   completed_at: string | null;
+  photo_url: string | null;
 };
 
 function supabaseOrError() {

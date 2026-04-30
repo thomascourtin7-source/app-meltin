@@ -43,7 +43,8 @@ alter table public.service_reports
   add column if not exists boarding_end_of_service text,
   add column if not exists transit_bags text,
   add column if not exists is_pec boolean not null default false,
-  add column if not exists completed_at timestamptz;
+  add column if not exists completed_at timestamptz,
+  add column if not exists photo_url text;
 
 create unique index if not exists service_reports_spreadsheet_service_uidx
   on public.service_reports (spreadsheet_id, service_id);

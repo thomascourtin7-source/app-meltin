@@ -80,6 +80,7 @@ type ServiceReportRow = {
   transit_bags: string | null;
   is_pec: boolean | null;
   completed_at: string | null;
+  photo_url: string | null;
 };
 
 const PLANNING_ASSIGNEES_STORAGE_KEY = "meltin_planning_assignees_v3";
@@ -325,6 +326,7 @@ export default function RapportServicePage() {
       const doc = await generateServiceReportPdf({
         title: "Rapport de service",
         reportKind,
+        photoUrl: saved.photo_url,
         serviceClient: saved.service_client,
         serviceType: saved.service_type,
         serviceDateIso: saved.service_date,
