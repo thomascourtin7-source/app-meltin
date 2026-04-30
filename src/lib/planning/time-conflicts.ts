@@ -118,6 +118,21 @@ export function getBusyIntervalForRow(row: DailyServiceRow): MinuteInterval | nu
   return { start, end };
 }
 
+/**
+ * Même intervalle que {@link getBusyIntervalForRow}, mais avec un battement ajouté
+ * à la fin (ex. 15 min de trajet). Permet de détecter les conflits même sans
+ * chevauchement strict si deux services sont trop rapprochés.
+ */
+export function getBusyIntervalForRowWithBuffer(
+  row: DailyServiceRow,
+  bufferMinutes: number
+): MinuteInterval | null {
+  const iv = getBusyIntervalForRow(row);
+  if (!iv) return null;
+  const end = Math.min(24 * 60, iv.end + Math.max(0, bufferMinutes));
+  return { start: iv.start, end };
+}
+
 /** Chevauchement : max(start1, start2) < min(end1, end2). */
 function intervalsOverlap(a: MinuteInterval, b: MinuteInterval): boolean {
   return Math.max(a.start, b.start) < Math.min(a.end, b.end);
@@ -148,7 +163,8 @@ export function computeConflictRowKeys(
   const pieces: Piece[] = [];
 
   for (const { rowKey, row } of rowKeysAndRows) {
-    const interval = getBusyIntervalForRow(row);
+    // Inclut un battement de 15 min pour signaler les enchaînements trop serrés.
+    const interval = getBusyIntervalForRowWithBuffer(row, 15);
     if (!interval) continue;
     const list = assigneesByRowKey[rowKey];
     if (!list?.length) continue;

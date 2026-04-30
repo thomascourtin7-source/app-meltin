@@ -1281,6 +1281,12 @@ export function DailyServicesView() {
         planningValidatedBanner && "pt-10 sm:pt-11"
       )}
     >
+      {showPrepModeBar ? (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200 dark:border-amber-400/30 dark:bg-amber-400/10">
+          <span className="font-semibold">Mode Préparation</span> : les agents ne
+          voient pas encore ces changements (aucune notification envoyée).
+        </div>
+      ) : null}
       {planningValidatedBanner ? (
         <div
           role="status"
@@ -1502,7 +1508,7 @@ export function DailyServicesView() {
               {isLoading ? (
                 <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />
               ) : null}
-              ✅ Planning terminé
+              Confirmer et envoyer le planning
             </Button>
             <p className="text-center text-xs text-muted-foreground sm:text-left">
               Notifie toute l’équipe que le planning de demain est prêt.

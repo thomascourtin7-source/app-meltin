@@ -7,6 +7,8 @@ import { ChatProfileSettings } from "@/components/configuration/chat-profile-set
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
 import { clearPlanningFinalizedForServiceDate, getTomorrowPlanningDateKey } from "@/lib/planning/planning-finalized-storage";
 import { Button } from "@/components/ui/button";
+import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
+import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import {
   Card,
   CardContent,
@@ -26,6 +28,11 @@ const PushNotificationCard = dynamic(
 export function ConfigurationClient() {
   const router = useRouter();
   const { setPreparingTomorrow } = usePlanningPreparation();
+  const configuredId = useLocalSpreadsheetId();
+  const spreadsheetId =
+    process.env.NEXT_PUBLIC_PLANNING_SPREADSHEET_ID?.trim() ||
+    configuredId ||
+    DEFAULT_PLANNING_SPREADSHEET_ID;
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-8 pb-16">
@@ -48,19 +55,35 @@ export function ConfigurationClient() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Button
-            type="button"
-            variant="default"
-            size="lg"
-            onClick={() => {
-              clearPlanningFinalizedForServiceDate(getTomorrowPlanningDateKey());
-              setPreparingTomorrow(true);
-              router.push("/planning?mode=prep&date=tomorrow");
-            }}
-            className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
-          >
-            Faire le planning de demain
-          </Button>
+          <div className="flex flex-col gap-3">
+            <Button
+              type="button"
+              variant="default"
+              size="lg"
+              onClick={() => {
+                clearPlanningFinalizedForServiceDate(getTomorrowPlanningDateKey());
+                setPreparingTomorrow(true);
+                router.push("/planning?mode=prep&date=tomorrow");
+              }}
+              className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
+            >
+              Faire le planning de demain
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() =>
+                router.push(
+                  `/planning-ia?spreadsheetId=${encodeURIComponent(spreadsheetId)}`
+                )
+              }
+              className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
+            >
+              Faire le planning de demain IA 🤖
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
