@@ -628,12 +628,7 @@ function ServiceBlock({
 async function fetchReportExistence(opts: {
   spreadsheetId: string;
   serviceIds: string[];
-}): Promise<{
-  hasReport: Record<string, boolean>;
-  isPecByServiceId: Record<string, boolean>;
-  isCompletedByServiceId: Record<string, boolean>;
-  hasPhotoByServiceId: Record<string, boolean>;
-}> {
+}): Promise<ReportsData> {
   const res = await fetch("/api/service-reports/batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -650,13 +645,15 @@ async function fetchReportExistence(opts: {
         : "Erreur service reports.";
     throw new Error(msg);
   }
-  return data as {
-    hasReport: Record<string, boolean>;
-    isPecByServiceId: Record<string, boolean>;
-    isCompletedByServiceId: Record<string, boolean>;
-    hasPhotoByServiceId: Record<string, boolean>;
-  };
+  return data as ReportsData;
 }
+
+type ReportsData = {
+  hasReport: Record<string, boolean>;
+  isPecByServiceId: Record<string, boolean>;
+  isCompletedByServiceId: Record<string, boolean>;
+  hasPhotoByServiceId: Record<string, boolean>;
+};
 
 async function sendPushNotification(opts: {
   title: string;
@@ -976,7 +973,7 @@ export function DailyServicesView() {
     data: reportExistence,
     error: reportExistenceError,
     mutate: mutateReports,
-  } = useSWR(
+  } = useSWR<ReportsData>(
     reportKey,
     () => fetchReportExistence({ spreadsheetId, serviceIds: serviceIdsForReports }),
     {
@@ -1088,6 +1085,7 @@ export function DailyServicesView() {
           hasReport: {},
           isPecByServiceId: {},
           isCompletedByServiceId: {},
+          hasPhotoByServiceId: {},
         }),
         isPecByServiceId: {
           ...(reportExistence?.isPecByServiceId ?? {}),
