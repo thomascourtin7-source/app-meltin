@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -897,9 +898,11 @@ export function DailyServicesView() {
     });
   }, [assignees, filtered, meName, meOnly]);
 
+  // Important: on charge les statuts (PEC / completed) pour TOUTE la journée affichée,
+  // même si le filtre "Me" est actif (sinon les statuts agents seraient incomplets).
   const serviceIdsForReports = useMemo(() => {
-    return visibleRows.map((r) => serviceReportIdFromRow(r));
-  }, [visibleRows]);
+    return filtered.map((r) => serviceReportIdFromRow(r));
+  }, [filtered]);
 
   const reportKey = useMemo(() => {
     if (!spreadsheetId) return null;
@@ -936,6 +939,78 @@ export function DailyServicesView() {
 
   const isCompletedByServiceId = reportExistence?.isCompletedByServiceId ?? {};
   const isPecByServiceId = reportExistence?.isPecByServiceId ?? {};
+
+  const agentLabels = useMemo(() => {
+    return PLANNING_ASSIGNEE_OPTIONS.filter(
+      (o) =>
+        o.value !== "__none__" &&
+        o.value !== PLANNING_URGENT_ASSIGNEE_SLUG &&
+        o.value !== "subcontracted"
+    ).map((o) => o.label);
+  }, []);
+
+  type AgentStatus = "red" | "green" | "gray" | "black";
+
+  const agentStatusByLabel = useMemo(() => {
+    const out: Record<string, AgentStatus> = {};
+    for (const label of agentLabels) out[label] = "black";
+
+    const servicesByAgent = new Map<string, string[]>();
+    for (const row of filtered) {
+      const rowKey = stableServiceRowKey(row);
+      const list = normalizeAssigneeListFromStored(assignees[rowKey]);
+      const serviceId = serviceReportIdFromRow(row);
+      for (const slug of list) {
+        const label = assigneeSlugToNotifyLabel(slug);
+        if (!label) continue;
+        if (!servicesByAgent.has(label)) servicesByAgent.set(label, []);
+        servicesByAgent.get(label)!.push(serviceId);
+      }
+    }
+
+    for (const label of agentLabels) {
+      const serviceIds = servicesByAgent.get(label) ?? [];
+      if (serviceIds.length === 0) {
+        out[label] = "black";
+        continue;
+      }
+
+      let anyPec = false;
+      let anyNotCompleted = false;
+      for (const sid of serviceIds) {
+        const completed = Boolean(isCompletedByServiceId[sid]);
+        const pec = Boolean(isPecByServiceId[sid]);
+        if (!completed && pec) anyPec = true;
+        if (!completed) anyNotCompleted = true;
+      }
+
+      if (anyPec) out[label] = "red";
+      else if (anyNotCompleted) out[label] = "green";
+      else out[label] = "gray";
+    }
+
+    return out;
+  }, [
+    agentLabels,
+    assignees,
+    filtered,
+    isCompletedByServiceId,
+    isPecByServiceId,
+  ]);
+
+  function statusDotClass(status: AgentStatus): string {
+    switch (status) {
+      case "red":
+        return "bg-red-500";
+      case "green":
+        return "bg-emerald-500";
+      case "gray":
+        return "bg-slate-300 dark:bg-slate-600";
+      case "black":
+      default:
+        return "bg-black dark:bg-neutral-200";
+    }
+  }
 
   const togglePec = useCallback(
     async (opts: { serviceId: string; next: boolean; row: DailyServiceRow }) => {
@@ -1220,25 +1295,28 @@ export function DailyServicesView() {
           <h1 className="text-2xl font-semibold tracking-tight">
             Planning du jour
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Données Google Sheets · actualisation automatique toutes les{" "}
-            {POLL_MS / 60_000} minutes.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {agentLabels.map((label) => {
+              const status = agentStatusByLabel[label] ?? "black";
+              return (
+                <Badge
+                  key={label}
+                  variant="outline"
+                  className="h-6 gap-2 rounded-full px-2.5 py-1 text-xs"
+                >
+                  <span
+                    className={cn(
+                      "inline-block size-2 rounded-full",
+                      statusDotClass(status)
+                    )}
+                    aria-hidden
+                  />
+                  <span className="truncate max-w-[9rem]">{label}</span>
+                </Badge>
+              );
+            })}
+          </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => mutate()}
-          disabled={planningDataLoading || isValidating}
-          className="gap-1.5 self-start sm:self-auto"
-        >
-          {isValidating ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-          ) : (
-            <RefreshCw className="size-4" aria-hidden />
-          )}
-          Actualiser
-        </Button>
       </div>
 
       <div className="flex w-full max-w-md flex-col gap-2">
