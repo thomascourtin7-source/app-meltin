@@ -1321,7 +1321,7 @@ export function DailyServicesView() {
 
       <div className="flex w-full max-w-md flex-col gap-2">
         <Label id="planning-day-label">Jour affiché</Label>
-        <div className="flex flex-row flex-wrap items-stretch gap-2">
+        <div className="flex flex-row flex-wrap items-stretch gap-3">
           <Button
             type="button"
             variant="ghost"
@@ -1339,7 +1339,7 @@ export function DailyServicesView() {
             Demain
           </Button>
           {/* input[type=date] au-dessus de l’icône : ouverture native fiable sur iOS (pas seulement onClick → input caché). */}
-          <div className="relative z-10 flex h-11 w-11 shrink-0 items-center justify-center sm:h-9 sm:w-9">
+          <div className="relative z-10 flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg sm:h-9 sm:w-9">
             <input
               ref={datePickerRef}
               id="planning-date-picker-input"
@@ -1380,10 +1380,18 @@ export function DailyServicesView() {
             variant="ghost"
             className={cn(
               dateNavButtonClass(Boolean(meOnly)),
-              "h-11 sm:h-9",
+              "relative z-20 h-11 px-4 sm:h-9 sm:px-3",
               !meName.trim() && "opacity-50"
             )}
-            onClick={() => setMeOnly((v) => !v)}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setMeOnly((v) => !v);
+            }}
             disabled={!meName.trim()}
             aria-pressed={meOnly}
             title={
