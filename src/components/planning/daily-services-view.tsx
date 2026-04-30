@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import {
   Calendar,
   Loader2,
@@ -52,8 +52,47 @@ import { computeConflictRowKeys } from "@/lib/planning/time-conflicts";
 import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
+import {
+  defaultReportFilename,
+  generateServiceReportPdf,
+} from "@/lib/reports/service-report-pdf";
+import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
 
 const POLL_MS = 5 * 60 * 1000;
+
+type ServiceReportRow = {
+  service_client: string;
+  service_type: string;
+  service_date: string;
+  report_kind: string;
+  service_vol: string | null;
+  service_rdv1: string | null;
+  service_rdv2: string | null;
+  service_dest_prov: string | null;
+  service_tel: string | null;
+  service_driver_info: string | null;
+  assignee_name: string | null;
+  deplanning: string | null;
+  pax: number | null;
+  service_started_at: string | null;
+  meeting_time: string | null;
+  travel_class: string | null;
+  immigration_speed: string | null;
+  immigration_security: boolean | null;
+  immigration_security_speed: string | null;
+  checkin_bags: number | null;
+  customs_control: boolean | null;
+  tax_refund: boolean | null;
+  tax_refund_speed: string | null;
+  tax_refund_by: string | null;
+  checkin: boolean | null;
+  vip_lounge: boolean | null;
+  boarding_end_of_service: string | null;
+  transit_bags: string | null;
+  end_of_service: string | null;
+  place_end_of_service: string | null;
+  comments: string | null;
+};
 
 const DEFAULT_ASSIGNEE = DEFAULT_PLANNING_ASSIGNEE_SLUG;
 
@@ -219,10 +258,14 @@ async function planningServicesFetcher(
 type ServiceBlockProps = {
   row: DailyServiceRow;
   rowKey: string;
+  reportServiceId: string;
   assignees: string[];
   onAssigneesChange: (key: string, next: string[]) => void;
   hasTimeConflict?: boolean;
   showConflictUi?: boolean;
+  hasReport: boolean;
+  onOpenReportForm: (opts: { serviceId: string }) => void;
+  onDownloadReportPdf: (opts: { serviceId: string }) => Promise<void>;
 };
 
 /** Police : meilleur rendu des emojis sur iOS / Android. */
@@ -234,10 +277,14 @@ const URGENT_ASSIGNEE = PLANNING_URGENT_ASSIGNEE_SLUG;
 function ServiceBlock({
   row,
   rowKey,
+  reportServiceId,
   assignees,
   onAssigneesChange,
   hasTimeConflict = false,
   showConflictUi = false,
+  hasReport,
+  onOpenReportForm,
+  onDownloadReportPdf,
 }: ServiceBlockProps) {
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
 
@@ -428,6 +475,7 @@ function ServiceBlock({
       <div className="space-y-0">
         <h2 className="mb-3 text-xl font-bold leading-snug tracking-tight text-foreground">
           <PlanningPhoneRichText text={row.client.trim() || "—"} />
+          {hasReport ? " ✅" : ""}
         </h2>
         <p className="mb-3 text-sm leading-relaxed text-slate-700 dark:text-slate-300">
           <span className="font-semibold text-slate-800 dark:text-slate-200">
@@ -461,8 +509,59 @@ function ServiceBlock({
           ) : null}
         </div>
       </div>
+
+      <div className="mt-5 border-t border-border/40 pt-4">
+        {hasReport ? (
+          <Button
+            type="button"
+            className="w-full bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600/90 dark:hover:bg-emerald-600"
+            onClick={() => {
+              onDownloadReportPdf({ serviceId: reportServiceId }).catch((e) => {
+                console.error(e);
+                window.alert(
+                  e instanceof Error ? e.message : "Téléchargement impossible."
+                );
+              });
+            }}
+          >
+            Télécharger le PDF
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={() => onOpenReportForm({ serviceId: reportServiceId })}
+          >
+            Faire le rapport
+          </Button>
+        )}
+      </div>
     </div>
   );
+}
+
+async function fetchReportExistence(opts: {
+  spreadsheetId: string;
+  serviceIds: string[];
+}): Promise<{ hasReport: Record<string, boolean> }> {
+  const res = await fetch("/api/service-reports/batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+  const data: unknown = await res.json();
+  if (!res.ok) {
+    const msg =
+      data &&
+      typeof data === "object" &&
+      "error" in data &&
+      typeof (data as { error: unknown }).error === "string"
+        ? (data as { error: string }).error
+        : "Erreur service reports.";
+    throw new Error(msg);
+  }
+  return data as { hasReport: Record<string, boolean> };
 }
 
 async function sendPushNotification(opts: {
@@ -492,6 +591,7 @@ export function DailyServicesView() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { setPreparingTomorrow } = usePlanningPreparation();
+  const { mutate: globalMutate } = useSWRConfig();
 
   const configuredId = useLocalSpreadsheetId();
   const spreadsheetId =
@@ -713,6 +813,120 @@ export function DailyServicesView() {
       (r) => normalizeCanonicalDateKey(r.dateIso) === selectedKey
     );
   }, [data?.rows, selectedKey]);
+
+  const serviceIdsForReports = useMemo(() => {
+    return filtered.map((r) => serviceReportIdFromRow(r));
+  }, [filtered]);
+
+  const reportKey = useMemo(() => {
+    if (!spreadsheetId) return null;
+    if (serviceIdsForReports.length === 0) return null;
+    return ["serviceReports", spreadsheetId, selectedKey, serviceIdsForReports.join("||")] as const;
+  }, [spreadsheetId, selectedKey, serviceIdsForReports]);
+
+  const {
+    data: reportExistence,
+    error: reportExistenceError,
+    mutate: mutateReports,
+  } = useSWR(
+    reportKey,
+    () => fetchReportExistence({ spreadsheetId, serviceIds: serviceIdsForReports }),
+    {
+      revalidateOnFocus: false,
+    }
+  );
+
+  /** Après retour du rapport : force le re-fetch des statuts PDF. */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (sessionStorage.getItem("meltin_service_report_saved_flash") === "1") {
+        sessionStorage.removeItem("meltin_service_report_saved_flash");
+        if (reportKey) {
+          void globalMutate(reportKey);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [globalMutate, reportKey]);
+
+  const hasReportMap = reportExistence?.hasReport ?? {};
+
+  const openReportForm = useCallback(
+    (opts: { serviceId: string }) => {
+      router.push(
+        `/rapport/${encodeURIComponent(opts.serviceId)}?spreadsheetId=${encodeURIComponent(
+          spreadsheetId
+        )}&date=${encodeURIComponent(selectedKey)}`
+      );
+    },
+    [router, spreadsheetId, selectedKey]
+  );
+
+  const downloadReportPdf = useCallback(
+    async (opts: { serviceId: string }) => {
+      const res = await fetch(
+        `/api/service-reports?spreadsheetId=${encodeURIComponent(
+          spreadsheetId
+        )}&serviceId=${encodeURIComponent(opts.serviceId)}`
+      );
+      const json = (await res.json()) as {
+        report: ServiceReportRow | null;
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(json?.error || "Impossible de charger le rapport.");
+      }
+      const r = json.report;
+      if (!r) throw new Error("Rapport introuvable.");
+      const kind =
+        r.report_kind === "departure" || r.report_kind === "transit"
+          ? r.report_kind
+          : "arrival";
+      const doc = await generateServiceReportPdf({
+        title: "Rapport de service",
+        reportKind: kind,
+        serviceClient: r.service_client,
+        serviceType: r.service_type,
+        serviceDateIso: r.service_date,
+        serviceVol: r.service_vol,
+        serviceRdv1: r.service_rdv1,
+        serviceRdv2: r.service_rdv2,
+        serviceDestProv: r.service_dest_prov,
+        serviceTel: r.service_tel,
+        serviceDriverInfo: r.service_driver_info,
+        assigneeName: r.assignee_name,
+        deplanning: r.deplanning,
+        pax: r.pax,
+        serviceStartedAt: r.service_started_at,
+        meetingTime: r.meeting_time,
+        travelClass: r.travel_class,
+        immigrationSpeed: r.immigration_speed,
+        immigrationSecurity: r.immigration_security,
+        immigrationSecuritySpeed: r.immigration_security_speed,
+        checkinBags: r.checkin_bags,
+        customsControl: r.customs_control,
+        taxRefund: r.tax_refund,
+        taxRefundSpeed: r.tax_refund_speed,
+        taxRefundBy: r.tax_refund_by,
+        checkin: r.checkin,
+        vipLounge: r.vip_lounge,
+        boardingEndOfService: r.boarding_end_of_service,
+        transitBags: r.transit_bags,
+        endOfService: r.end_of_service,
+        placeEndOfService: r.place_end_of_service,
+        comments: r.comments,
+      });
+      doc.save(
+        defaultReportFilename({
+          serviceClient: r.service_client,
+          serviceDateIso: r.service_date,
+        })
+      );
+    },
+    [spreadsheetId]
+  );
 
   /**
    * Conflits (rouge) : uniquement si `mode=prep` dans l’URL (isPrepMode) + demain + pas validé.
@@ -981,6 +1195,16 @@ export function DailyServicesView() {
         </p>
       ) : (
         <>
+          {reportExistenceError ? (
+            <div
+              className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+              role="alert"
+            >
+              {reportExistenceError instanceof Error
+                ? reportExistenceError.message
+                : "Erreur chargement des rapports."}
+            </div>
+          ) : null}
           <div className="w-full">
             {filtered.map((row, index) => {
               const rowKey = stableServiceRowKey(row);
@@ -992,10 +1216,17 @@ export function DailyServicesView() {
                   key={`${rowKey}#${index}`}
                   row={row}
                   rowKey={rowKey}
+                  reportServiceId={serviceReportIdFromRow(row)}
                   assignees={assigneeList}
                   onAssigneesChange={setAssigneesForRow}
                   hasTimeConflict={conflictRowKeys.has(rowKey)}
                   showConflictUi={prepModeActive}
+                  hasReport={Boolean(hasReportMap[serviceReportIdFromRow(row)])}
+                  onOpenReportForm={openReportForm}
+                  onDownloadReportPdf={async (o) => {
+                    await downloadReportPdf(o);
+                    void mutateReports();
+                  }}
                 />
               );
             })}
