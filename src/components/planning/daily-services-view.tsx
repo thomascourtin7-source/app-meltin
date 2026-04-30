@@ -53,10 +53,15 @@ import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
 import {
+  MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT,
+  MELTIN_TEAM_REGISTER_NAME_KEY,
+} from "@/components/planning/register-team-button";
+import {
   defaultReportFilename,
   generateServiceReportPdf,
 } from "@/lib/reports/service-report-pdf";
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
+import { detectServiceReportKind } from "@/lib/planning/service-kind";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -263,7 +268,9 @@ type ServiceBlockProps = {
   onAssigneesChange: (key: string, next: string[]) => void;
   hasTimeConflict?: boolean;
   showConflictUi?: boolean;
-  hasReport: boolean;
+  isReportCompleted: boolean;
+  isPec: boolean;
+  onTogglePec: (opts: { serviceId: string; next: boolean }) => Promise<void>;
   onOpenReportForm: (opts: { serviceId: string }) => void;
   onDownloadReportPdf: (opts: { serviceId: string }) => Promise<void>;
 };
@@ -282,7 +289,9 @@ function ServiceBlock({
   onAssigneesChange,
   hasTimeConflict = false,
   showConflictUi = false,
-  hasReport,
+  isReportCompleted,
+  isPec,
+  onTogglePec,
   onOpenReportForm,
   onDownloadReportPdf,
 }: ServiceBlockProps) {
@@ -475,13 +484,39 @@ function ServiceBlock({
       <div className="space-y-0">
         <h2 className="mb-3 text-xl font-bold leading-snug tracking-tight text-foreground">
           <PlanningPhoneRichText text={row.client.trim() || "—"} />
-          {hasReport ? " ✅" : ""}
+          {!isReportCompleted && isPec ? " 🟠" : ""}
+          {isReportCompleted ? " ✅" : ""}
         </h2>
         <p className="mb-3 text-sm leading-relaxed text-slate-700 dark:text-slate-300">
-          <span className="font-semibold text-slate-800 dark:text-slate-200">
-            Type :{" "}
+          <span className="inline-flex items-center gap-3">
+            <span className="font-semibold text-slate-800 dark:text-slate-200">
+              Type :{" "}
+            </span>
+            <PlanningPhoneRichText text={typeLine || "—"} />
+            {!isReportCompleted ? (
+              <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-orange-500"
+                  checked={Boolean(isPec)}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    onTogglePec({ serviceId: reportServiceId, next }).catch(
+                      (err) => {
+                        console.error(err);
+                        window.alert(
+                          err instanceof Error
+                            ? err.message
+                            : "Mise à jour PEC impossible."
+                        );
+                      }
+                    );
+                  }}
+                />
+                PEC
+              </label>
+            ) : null}
           </span>
-          <PlanningPhoneRichText text={typeLine || "—"} />
         </p>
         <p className="mb-3 text-sm font-medium leading-relaxed text-slate-800 dark:text-slate-200">
           <PlanningPhoneRichText text={formatVolRdvLine(row)} />
@@ -511,7 +546,7 @@ function ServiceBlock({
       </div>
 
       <div className="mt-5 border-t border-border/40 pt-4">
-        {hasReport ? (
+        {isReportCompleted ? (
           <Button
             type="button"
             className="w-full bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600/90 dark:hover:bg-emerald-600"
@@ -544,7 +579,11 @@ function ServiceBlock({
 async function fetchReportExistence(opts: {
   spreadsheetId: string;
   serviceIds: string[];
-}): Promise<{ hasReport: Record<string, boolean> }> {
+}): Promise<{
+  hasReport: Record<string, boolean>;
+  isPecByServiceId: Record<string, boolean>;
+  isCompletedByServiceId: Record<string, boolean>;
+}> {
   const res = await fetch("/api/service-reports/batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -561,7 +600,11 @@ async function fetchReportExistence(opts: {
         : "Erreur service reports.";
     throw new Error(msg);
   }
-  return data as { hasReport: Record<string, boolean> };
+  return data as {
+    hasReport: Record<string, boolean>;
+    isPecByServiceId: Record<string, boolean>;
+    isCompletedByServiceId: Record<string, boolean>;
+  };
 }
 
 async function sendPushNotification(opts: {
@@ -604,6 +647,8 @@ export function DailyServicesView() {
   );
   const datePickerRef = useRef<HTMLInputElement>(null);
   const [calendarPressed, setCalendarPressed] = useState(false);
+  const [meOnly, setMeOnly] = useState(false);
+  const [meName, setMeName] = useState<string>("");
 
   const [assigneesBump, setAssigneesBump] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
@@ -665,6 +710,30 @@ export function DailyServicesView() {
     }
     return next;
   }, [spreadsheetId, assigneesBump]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const read = () =>
+      window.localStorage.getItem(MELTIN_TEAM_REGISTER_NAME_KEY)?.trim() ?? "";
+    setMeName(read());
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== MELTIN_TEAM_REGISTER_NAME_KEY) return;
+      setMeName(read());
+    };
+    const onCustom = () => setMeName(read());
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT, onCustom);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT, onCustom);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!meName.trim() && meOnly) setMeOnly(false);
+  }, [meName, meOnly]);
 
   const swrKey = `/api/planning-services?spreadsheetId=${encodeURIComponent(
     spreadsheetId
@@ -814,9 +883,23 @@ export function DailyServicesView() {
     );
   }, [data?.rows, selectedKey]);
 
+  const visibleRows = useMemo(() => {
+    const name = meName.trim();
+    if (!meOnly || !name) return filtered;
+    return filtered.filter((row) => {
+      const rowKey = stableServiceRowKey(row);
+      const list = normalizeAssigneeListFromStored(assignees[rowKey]);
+      for (const slug of list) {
+        const label = assigneeSlugToNotifyLabel(slug);
+        if (label && label === name) return true;
+      }
+      return false;
+    });
+  }, [assignees, filtered, meName, meOnly]);
+
   const serviceIdsForReports = useMemo(() => {
-    return filtered.map((r) => serviceReportIdFromRow(r));
-  }, [filtered]);
+    return visibleRows.map((r) => serviceReportIdFromRow(r));
+  }, [visibleRows]);
 
   const reportKey = useMemo(() => {
     if (!spreadsheetId) return null;
@@ -851,7 +934,46 @@ export function DailyServicesView() {
     }
   }, [globalMutate, reportKey]);
 
-  const hasReportMap = reportExistence?.hasReport ?? {};
+  const isCompletedByServiceId = reportExistence?.isCompletedByServiceId ?? {};
+  const isPecByServiceId = reportExistence?.isPecByServiceId ?? {};
+
+  const togglePec = useCallback(
+    async (opts: { serviceId: string; next: boolean; row: DailyServiceRow }) => {
+      const optimistic = {
+        ...(reportExistence ?? {
+          hasReport: {},
+          isPecByServiceId: {},
+          isCompletedByServiceId: {},
+        }),
+        isPecByServiceId: {
+          ...(reportExistence?.isPecByServiceId ?? {}),
+          [opts.serviceId]: opts.next,
+        },
+      };
+      void mutateReports(optimistic, { revalidate: false });
+
+      const res = await fetch("/api/service-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spreadsheet_id: spreadsheetId,
+          service_id: opts.serviceId,
+          service_date: opts.row.dateIso,
+          service_client: opts.row.client,
+          service_type: opts.row.type,
+          report_kind: detectServiceReportKind(opts.row.type),
+          is_pec: opts.next,
+        }),
+      });
+      const json = (await res.json()) as { report?: unknown; error?: string };
+      if (!res.ok) {
+        void mutateReports();
+        throw new Error(json?.error || "Sauvegarde PEC impossible.");
+      }
+      void mutateReports();
+    },
+    [mutateReports, reportExistence, spreadsheetId]
+  );
 
   const openReportForm = useCallback(
     (opts: { serviceId: string }) => {
@@ -943,12 +1065,12 @@ export function DailyServicesView() {
       setConflictRowKeys(new Set());
       return;
     }
-    const rowKeysAndRows = filtered.map((row) => ({
+    const rowKeysAndRows = visibleRows.map((row) => ({
       rowKey: stableServiceRowKey(row),
       row,
     }));
     setConflictRowKeys(computeConflictRowKeys(rowKeysAndRows, assignees));
-  }, [prepModeActive, filtered, assignees, assigneesBump]);
+  }, [prepModeActive, visibleRows, assignees, assigneesBump]);
 
   const setAssigneesForRow = useCallback(
     (key: string, next: string[]) => {
@@ -1174,6 +1296,26 @@ export function DailyServicesView() {
               <Calendar className="size-4" />
             </div>
           </div>
+
+          <Button
+            type="button"
+            variant="ghost"
+            className={cn(
+              dateNavButtonClass(Boolean(meOnly)),
+              "h-11 sm:h-9",
+              !meName.trim() && "opacity-50"
+            )}
+            onClick={() => setMeOnly((v) => !v)}
+            disabled={!meName.trim()}
+            aria-pressed={meOnly}
+            title={
+              meName.trim()
+                ? `Afficher uniquement ${meName.trim()}`
+                : "Définissez votre nom via “S'enregistrer”"
+            }
+          >
+            Me
+          </Button>
         </div>
       </div>
 
@@ -1189,9 +1331,9 @@ export function DailyServicesView() {
         >
           {error instanceof Error ? error.message : "Erreur inconnue."}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : visibleRows.length === 0 ? (
         <p className="rounded-xl border border-dashed px-4 py-12 text-center text-muted-foreground">
-          Aucun planning pour cette journée
+          {meOnly ? "Aucun service assigné à vous" : "Aucun planning pour cette journée"}
         </p>
       ) : (
         <>
@@ -1206,7 +1348,7 @@ export function DailyServicesView() {
             </div>
           ) : null}
           <div className="w-full">
-            {filtered.map((row, index) => {
+            {visibleRows.map((row, index) => {
               const rowKey = stableServiceRowKey(row);
               const assigneeList = normalizeAssigneeListFromStored(
                 assignees[rowKey]
@@ -1221,7 +1363,13 @@ export function DailyServicesView() {
                   onAssigneesChange={setAssigneesForRow}
                   hasTimeConflict={conflictRowKeys.has(rowKey)}
                   showConflictUi={prepModeActive}
-                  hasReport={Boolean(hasReportMap[serviceReportIdFromRow(row)])}
+                  isReportCompleted={Boolean(
+                    isCompletedByServiceId[serviceReportIdFromRow(row)]
+                  )}
+                  isPec={Boolean(isPecByServiceId[serviceReportIdFromRow(row)])}
+                  onTogglePec={async ({ serviceId, next }) =>
+                    togglePec({ serviceId, next, row })
+                  }
                   onOpenReportForm={openReportForm}
                   onDownloadReportPdf={async (o) => {
                     await downloadReportPdf(o);

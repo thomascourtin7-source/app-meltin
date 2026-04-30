@@ -3,46 +3,13 @@ import { NextResponse } from "next/server";
 import { resolveRequestUrl } from "@/lib/http/resolve-request-url";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
-type ServiceReportRow = {
+type ServiceRow = {
   id: string;
   created_at: string;
   updated_at: string;
   spreadsheet_id: string;
   service_id: string;
-  service_date: string;
-  service_client: string;
-  service_type: string;
-  service_tel: string | null;
-  service_vol: string | null;
-  service_rdv1: string | null;
-  service_rdv2: string | null;
-  service_dest_prov: string | null;
-  service_driver_info: string | null;
-  assignee_name: string | null;
-  report_kind: string;
-  deplanning: string | null;
-  pax: number | null;
-  service_started_at: string | null;
-  travel_class: string | null;
-  immigration_speed: string | null;
-  checkin_bags: number | null;
-  customs_control: boolean | null;
-  end_of_service: string | null;
-  place_end_of_service: string | null;
-  comments: string | null;
-
-  meeting_time: string | null;
-  tax_refund: boolean | null;
-  tax_refund_speed: string | null;
-  tax_refund_by: string | null;
-  checkin: boolean | null;
-  immigration_security: boolean | null;
-  immigration_security_speed: string | null;
-  vip_lounge: boolean | null;
-  boarding_end_of_service: string | null;
-  transit_bags: string | null;
-  is_pec: boolean | null;
-  completed_at: string | null;
+  is_pec: boolean;
 };
 
 function supabaseOrError() {
@@ -74,7 +41,7 @@ export async function GET(request: Request) {
   }
 
   const { data, error: qErr } = await supabase
-    .from("service_reports")
+    .from("services")
     .select("*")
     .eq("spreadsheet_id", spreadsheetId)
     .eq("service_id", serviceId)
@@ -84,7 +51,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: qErr.message }, { status: 500 });
   }
 
-  return NextResponse.json({ report: (data as ServiceReportRow | null) ?? null });
+  return NextResponse.json({ service: (data as ServiceRow | null) ?? null });
 }
 
 export async function POST(request: Request) {
@@ -102,32 +69,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Body JSON invalide." }, { status: 400 });
   }
 
-  const b = body as Partial<ServiceReportRow> & {
-    spreadsheet_id?: unknown;
-    service_id?: unknown;
-  };
-
   const spreadsheetId =
-    typeof b.spreadsheet_id === "string" ? b.spreadsheet_id.trim() : "";
+    typeof (body as { spreadsheet_id?: unknown }).spreadsheet_id === "string"
+      ? ((body as { spreadsheet_id: string }).spreadsheet_id || "").trim()
+      : "";
   const serviceId =
-    typeof b.service_id === "string" ? b.service_id.trim() : "";
+    typeof (body as { service_id?: unknown }).service_id === "string"
+      ? ((body as { service_id: string }).service_id || "").trim()
+      : "";
+  const isPecRaw = (body as { is_pec?: unknown }).is_pec;
+  const isPec = typeof isPecRaw === "boolean" ? isPecRaw : null;
 
-  if (!spreadsheetId || !serviceId) {
+  if (!spreadsheetId || !serviceId || isPec === null) {
     return NextResponse.json(
-      { error: "Champs requis manquants (spreadsheet_id, service_id)." },
+      { error: "Champs requis manquants (spreadsheet_id, service_id, is_pec)." },
       { status: 400 }
     );
   }
 
   const payload = {
-    ...b,
     spreadsheet_id: spreadsheetId,
     service_id: serviceId,
+    is_pec: isPec,
     updated_at: new Date().toISOString(),
   };
 
   const { data, error: upErr } = await supabase
-    .from("service_reports")
+    .from("services")
     .upsert(payload, { onConflict: "spreadsheet_id,service_id" })
     .select("*")
     .single();
@@ -136,6 +104,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: upErr.message }, { status: 500 });
   }
 
-  return NextResponse.json({ report: data as ServiceReportRow });
+  return NextResponse.json({ service: data as ServiceRow });
 }
 

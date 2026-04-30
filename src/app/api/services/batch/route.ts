@@ -28,12 +28,14 @@ export async function POST(request: Request) {
       : "";
   const serviceIdsRaw = (body as { serviceIds?: unknown }).serviceIds;
   const serviceIds = Array.isArray(serviceIdsRaw)
-    ? [...new Set(
-        serviceIdsRaw
-          .filter((x): x is string => typeof x === "string")
-          .map((x) => x.trim())
-          .filter(Boolean)
-      )]
+    ? [
+        ...new Set(
+          serviceIdsRaw
+            .filter((x): x is string => typeof x === "string")
+            .map((x) => x.trim())
+            .filter(Boolean)
+        ),
+      ]
     : [];
 
   if (!spreadsheetId || serviceIds.length === 0) {
@@ -44,8 +46,8 @@ export async function POST(request: Request) {
   }
 
   const { data, error } = await supabase
-    .from("service_reports")
-    .select("service_id,is_pec,completed_at")
+    .from("services")
+    .select("service_id,is_pec")
     .eq("spreadsheet_id", spreadsheetId)
     .in("service_id", serviceIds);
 
@@ -53,27 +55,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const existing = new Set<string>();
   const isPecByServiceId: Record<string, boolean> = {};
-  const isCompletedByServiceId: Record<string, boolean> = {};
   for (const id of serviceIds) isPecByServiceId[id] = false;
-  for (const id of serviceIds) isCompletedByServiceId[id] = false;
-
   for (const row of data ?? []) {
     const sid = (row as { service_id?: unknown }).service_id;
     const isPec = (row as { is_pec?: unknown }).is_pec;
-    const completedAt = (row as { completed_at?: unknown }).completed_at;
-    if (typeof sid !== "string") continue;
-    existing.add(sid);
-    if (typeof isPec === "boolean") isPecByServiceId[sid] = isPec;
-    if (typeof completedAt === "string" && completedAt.trim()) {
-      isCompletedByServiceId[sid] = true;
+    if (typeof sid === "string" && typeof isPec === "boolean") {
+      isPecByServiceId[sid] = isPec;
     }
   }
 
-  const hasReport: Record<string, boolean> = {};
-  for (const id of serviceIds) hasReport[id] = existing.has(id);
-
-  return NextResponse.json({ hasReport, isPecByServiceId, isCompletedByServiceId });
+  return NextResponse.json({ isPecByServiceId });
 }
 

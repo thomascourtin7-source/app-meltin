@@ -10,6 +10,8 @@ import { PLANNING_TEAM_REGISTER_OPTIONS } from "@/lib/planning/planning-team";
 import { cn } from "@/lib/utils";
 
 export const MELTIN_TEAM_REGISTER_NAME_KEY = "meltin_team_register_name";
+export const MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT =
+  "meltin_team_register_name_changed";
 
 function readStoredName(): string {
   if (typeof window === "undefined") return "";
@@ -47,6 +49,11 @@ export function RegisterTeamButton() {
       if (typeof window !== "undefined") {
         window.localStorage.setItem(MELTIN_TEAM_REGISTER_NAME_KEY, label);
         setName(label);
+        window.dispatchEvent(
+          new CustomEvent(MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT, {
+            detail: { name: label },
+          })
+        );
       }
       await ensureServiceWorkerRegistered();
       const r = await subscribeChatPush(label);

@@ -78,6 +78,8 @@ type ServiceReportRow = {
   vip_lounge: boolean | null;
   boarding_end_of_service: string | null;
   transit_bags: string | null;
+  is_pec: boolean | null;
+  completed_at: string | null;
 };
 
 const PLANNING_ASSIGNEES_STORAGE_KEY = "meltin_planning_assignees_v3";
@@ -277,6 +279,7 @@ export default function RapportServicePage() {
         service_driver_info: serviceRow.driverInfo || null,
         assignee_name: primaryAssignee,
         report_kind: reportKind,
+        completed_at: new Date().toISOString(),
 
         deplanning: deplanning || null,
         pax,
