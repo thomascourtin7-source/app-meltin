@@ -1928,6 +1928,7 @@ export function DailyServicesView() {
             if (prevNotify.has(slug)) continue;
             const label = assigneeSlugToNotifyLabel(slug);
             if (!label) continue;
+            const actorName = readPlanningAuthSession()?.displayName?.trim() ?? "";
             void fetch("/api/push/planning-assignee-alert", {
               method: "POST",
               headers: {
@@ -1940,6 +1941,7 @@ export function DailyServicesView() {
                 stableRowKey: key,
                 assigneeName: label,
                 planningDay,
+                actorName,
               }),
             }).catch(() => {});
           }

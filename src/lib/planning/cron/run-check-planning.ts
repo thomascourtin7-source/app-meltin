@@ -23,6 +23,8 @@ const ZONE = "Europe/Paris";
 
 const LOG_PREFIX = "[check-planning]";
 
+const REMINDER_WINDOW_MS = 6 * 60 * 1000; // fenêtre pour rattraper un cron pas à la seconde
+
 type SnapshotV4 = {
   v: 4;
   globalHash: string;
@@ -32,6 +34,27 @@ type SnapshotV4 = {
   identitiesByDate: Record<string, string[]>;
   /** dateIso → stableKey → hash SHA-256 du contenu ligne */
   rowHashes: Record<string, Record<string, string>>;
+};
+
+type RowSummaryV1 = {
+  client: string;
+  vol: string;
+  rdv1: string;
+  rdv2: string;
+  type: string;
+  destProv: string;
+  tel: string;
+  driverInfo: string;
+};
+
+type SnapshotV5 = {
+  v: 5;
+  globalHash: string;
+  byDate: Record<string, Record<string, string>>;
+  identitiesByDate: Record<string, string[]>;
+  rowHashes: Record<string, Record<string, string>>;
+  /** dateIso → stableKey → résumé des champs pour messages de notification. */
+  rowSummaries: Record<string, Record<string, RowSummaryV1>>;
 };
 
 function sha256Hex(s: string): string {
@@ -99,8 +122,33 @@ function rowContentHash(row: DailyServiceRow): string {
     normalizeCanonicalDateKey(row.dateIso),
     String(row.client ?? "").trim(),
     String(row.vol ?? "").trim(),
+    String(row.rdv1 ?? "").trim(),
+    String(row.rdv2 ?? "").trim(),
+    String(row.tel ?? "").trim(),
+    String(row.driverInfo ?? "").trim(),
   ].join("\x1f");
   return sha256Hex(line);
+}
+
+function buildRowSummaries(
+  rows: DailyServiceRow[]
+): Record<string, Record<string, RowSummaryV1>> {
+  const out: Record<string, Record<string, RowSummaryV1>> = {};
+  for (const row of rows) {
+    const dk = normalizeCanonicalDateKey(row.dateIso);
+    if (!out[dk]) out[dk] = {};
+    out[dk][stableServiceRowKey(row)] = {
+      client: String(row.client ?? "").trim(),
+      vol: String(row.vol ?? "").trim(),
+      rdv1: String(row.rdv1 ?? "").trim(),
+      rdv2: String(row.rdv2 ?? "").trim(),
+      type: String(row.type ?? "").trim(),
+      destProv: String(row.destProv ?? "").trim(),
+      tel: String(row.tel ?? "").trim(),
+      driverInfo: String(row.driverInfo ?? "").trim(),
+    };
+  }
+  return out;
 }
 
 function buildRowHashes(
@@ -132,6 +180,10 @@ function dayBucketIso(dateIso: string): "today" | "tomorrow" | "other" {
   return "other";
 }
 
+function prefixIfTomorrow(dateIso: string): string {
+  return dayBucketIso(dateIso) === "tomorrow" ? "DEMAIN : " : "";
+}
+
 function assigneePushTitle(serviceDateYmd: string): string {
   const b = dayBucketIso(serviceDateYmd);
   if (b === "today") return "📅 Aujourd'hui : Planning mis à jour";
@@ -161,45 +213,90 @@ function sheetRowAlarmCandidateRaw(assigneeRaw: string): boolean {
   return labelFromSheetRaw(raw) === null;
 }
 
+function hasAlarmEmoji(row: DailyServiceRow): boolean {
+  return String(row.sheetAssignee ?? "").includes("🚨");
+}
+
+function normalizeServiceType(raw: string): "arrival" | "transit" | "departure" {
+  const t = (raw || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (t.includes("depart")) return "departure";
+  if (t.includes("transit")) return "transit";
+  return "arrival";
+}
+
+function parseRdvToDateTime(dateIso: string, rdvRaw: string): DateTime | null {
+  const s = (rdvRaw || "").trim();
+  if (!s) return null;
+  // formats tolérés: "06:30", "6:30", "06h30", "6h30"
+  const m = /^(\d{1,2})\s*(?:[:hH])\s*(\d{2})/.exec(s);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return DateTime.fromISO(normalizeCanonicalDateKey(dateIso), { zone: ZONE }).set({
+    hour: hh,
+    minute: mm,
+    second: 0,
+    millisecond: 0,
+  });
+}
+
 type ParsedSnapshot = {
-  snapshot: SnapshotV4;
+  snapshot: SnapshotV4 | SnapshotV5;
   isLegacyV3: boolean;
+  isLegacyV4: boolean;
 };
 
 function parseSnapshot(raw: unknown): ParsedSnapshot | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
-  if (o.v !== 3 && o.v !== 4) return null;
+  if (o.v !== 3 && o.v !== 4 && o.v !== 5) return null;
   if (typeof o.globalHash !== "string") return null;
   if (!o.byDate || typeof o.byDate !== "object") return null;
   if (!o.identitiesByDate || typeof o.identitiesByDate !== "object") return null;
   const isLegacyV3 = o.v === 3;
+  const isLegacyV4 = o.v === 4;
   const rowHashes =
-    o.v === 4 &&
+    (o.v === 4 || o.v === 5) &&
     o.rowHashes &&
     typeof o.rowHashes === "object" &&
     o.rowHashes !== null
       ? (o.rowHashes as Record<string, Record<string, string>>)
       : {};
+  const rowSummaries =
+    o.v === 5 &&
+    o.rowSummaries &&
+    typeof o.rowSummaries === "object" &&
+    o.rowSummaries !== null
+      ? (o.rowSummaries as Record<string, Record<string, RowSummaryV1>>)
+      : {};
   return {
     isLegacyV3,
+    isLegacyV4,
     snapshot: {
-      v: 4,
+      v: 5,
       globalHash: o.globalHash,
       byDate: o.byDate as Record<string, Record<string, string>>,
       identitiesByDate: o.identitiesByDate as Record<string, string[]>,
       rowHashes,
+      rowSummaries,
     },
   };
 }
 
-function buildSnapshotV4(
+function buildSnapshotV5(
   byDate: Record<string, Record<string, string>>,
   identitiesByDate: Record<string, string[]>,
   rowHashes: Record<string, Record<string, string>>,
+  rowSummaries: Record<string, Record<string, RowSummaryV1>>,
   globalHash: string
-): SnapshotV4 {
-  return { v: 4, globalHash, byDate, identitiesByDate, rowHashes };
+): SnapshotV5 {
+  return { v: 5, globalHash, byDate, identitiesByDate, rowHashes, rowSummaries };
 }
 
 /** Log demandé pour Vercel : cible + type de changement. */
@@ -262,7 +359,7 @@ async function loadPreviousPlanningState(
 async function persistPlanningState(
   admin: SupabaseClient,
   spreadsheetId: string,
-  snap: SnapshotV4,
+  snap: SnapshotV4 | SnapshotV5,
   reason: string
 ): Promise<boolean> {
   const { error } = await admin.from("planning_states").upsert(
@@ -325,6 +422,48 @@ async function markAlarmSentToday(
   );
 }
 
+async function canSendReminderToday(
+  spreadsheetId: string,
+  identityKey: string,
+  reminderKind: string
+): Promise<boolean> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return false;
+  const day = parisTodayYmd();
+  const { data, error } = await admin
+    .from("sent_planning_reminders")
+    .select("spreadsheet_id")
+    .eq("spreadsheet_id", spreadsheetId)
+    .eq("service_identity_key", identityKey)
+    .eq("reminder_kind", reminderKind)
+    .eq("sent_on", day)
+    .maybeSingle();
+  if (error) {
+    console.warn(`${LOG_PREFIX} sent_planning_reminders lookup`, error.message);
+    return false;
+  }
+  return !data;
+}
+
+async function markReminderSentToday(
+  spreadsheetId: string,
+  identityKey: string,
+  reminderKind: string
+): Promise<void> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+  await admin.from("sent_planning_reminders").upsert(
+    {
+      spreadsheet_id: spreadsheetId,
+      service_identity_key: identityKey,
+      reminder_kind: reminderKind,
+      sent_on: parisTodayYmd(),
+      notified_at: new Date().toISOString(),
+    },
+    { onConflict: "spreadsheet_id,service_identity_key,reminder_kind,sent_on" }
+  );
+}
+
 export type PlanningCronResult = {
   ok: boolean;
   error?: string;
@@ -375,6 +514,7 @@ export async function executePlanningCronCheck(
   const byDate = buildByDate(rows);
   const identitiesByDate = buildIdentitiesByDate(rows);
   const rowHashes = buildRowHashes(rows);
+  const rowSummaries = buildRowSummaries(rows);
   const globalHash = sha256Hex(
     `${hashGlobal(byDate)}\n${hashRowHashesTree(rowHashes)}`
   );
@@ -384,7 +524,13 @@ export async function executePlanningCronCheck(
     spreadsheetId
   );
   const prev = parsed?.snapshot;
-  const nextSnap = buildSnapshotV4(byDate, identitiesByDate, rowHashes, globalHash);
+  const nextSnap = buildSnapshotV5(
+    byDate,
+    identitiesByDate,
+    rowHashes,
+    rowSummaries,
+    globalHash
+  );
 
   if (!prev?.globalHash) {
     await persistPlanningState(admin, spreadsheetId, nextSnap, "bootstrap");
@@ -405,6 +551,22 @@ export async function executePlanningCronCheck(
       "migration-v3→v4"
     );
     console.log(`${LOG_PREFIX} migration snapshot v3 → v4 sans notifications`);
+    return {
+      ok: true,
+      migratedSnapshot: true,
+      globalHashChanged: true,
+      sent: emptySent,
+    };
+  }
+
+  if (parsed?.isLegacyV4) {
+    await persistPlanningState(
+      admin,
+      spreadsheetId,
+      nextSnap,
+      "migration-v4→v5"
+    );
+    console.log(`${LOG_PREFIX} migration snapshot v4 → v5 sans notifications`);
     return {
       ok: true,
       migratedSnapshot: true,
@@ -442,6 +604,36 @@ export async function executePlanningCronCheck(
     ...Object.keys(prev.byDate ?? {}),
     ...Object.keys(byDate),
   ]);
+
+  const todayY = parisTodayYmd();
+  const tomorrowY = parisTomorrowYmd();
+
+  /** Nouveau service : aujourd’hui uniquement → diffusion à tous avec détails. */
+  {
+    const dk = todayY;
+    const prevHashes = (prev.rowHashes?.[dk] ?? {}) as Record<string, string>;
+    const nextHashes = (rowHashes?.[dk] ?? {}) as Record<string, string>;
+    const nextSumm = (rowSummaries?.[dk] ?? {}) as Record<string, RowSummaryV1>;
+    for (const stableKey of Object.keys(nextHashes)) {
+      if (stableKey in prevHashes) continue;
+      const s = nextSumm[stableKey];
+      if (!s) continue;
+      const rdv = (s.rdv1 || s.rdv2 || "—").trim() || "—";
+      const vol = (s.vol || "—").trim() || "—";
+      const client = (s.client || "—").trim() || "—";
+      logChangeDetected("tous les abonnés", "nouveau-service-aujourd-hui", {
+        dateService: dk,
+        stableKey: stableKey.slice(0, 80),
+      });
+      const g = await broadcastPlanningUpdate({
+        title: "🚨 Nouveau service ajouté",
+        body: `🚨 Nouveau service ajouté : ${vol} - ${client} à ${rdv}`,
+        openUrl: "/planning?date=today",
+      });
+      sent.general += g.sent;
+      anySpecific = true;
+    }
+  }
 
   /**
    * Vol retiré : état précédent (DB) vs actuel (sheet).
@@ -501,7 +693,24 @@ export async function executePlanningCronCheck(
 
       const r = await notifyPlanningAssigneeSubscribers(target, {
         title: assigneePushTitle(dateKey),
-        body: "Votre planning a été modifié. Cliquez pour voir.",
+        body: (() => {
+          const snap = prev as SnapshotV5;
+          const s = rowSummaries?.[dateKey]?.[stableKey] ?? snap.rowSummaries?.[dateKey]?.[stableKey];
+          if (!s) return "👤 Tu as été assigné à un service. Vérifie ton planning.";
+          const client = (s.client || "—").trim() || "—";
+          const vol = (s.vol || "—").trim() || "—";
+          const rdv = (s.rdv1 || s.rdv2 || "").trim();
+          const p = prefixIfTomorrow(dateKey);
+          return rdv
+            ? `📅 ${p}Tu as été assigné au service ${client} - ${vol} (${rdv})`
+            : `📅 ${p}Tu as été assigné au service ${client} - ${vol}`;
+        })(),
+        openUrl:
+          dayBucketIso(dateKey) === "today"
+            ? "/planning?date=today"
+            : dayBucketIso(dateKey) === "tomorrow"
+              ? "/planning?date=tomorrow"
+              : `/planning?date=${encodeURIComponent(dateKey)}`,
       });
       if (r.sent === 0) {
         console.warn(
@@ -512,8 +721,6 @@ export async function executePlanningCronCheck(
       anySpecific = true;
     }
   }
-
-  const todayY = parisTodayYmd();
 
   for (const row of rows) {
     if (normalizeCanonicalDateKey(row.dateIso) !== todayY) continue;
@@ -543,6 +750,131 @@ export async function executePlanningCronCheck(
     sent.alarm += push.sent;
     anySpecific = true;
     await markAlarmSentToday(spreadsheetId, id);
+  }
+
+  /** Rappels automatiques (aujourd’hui uniquement) : services avec emoji 🚨. */
+  {
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const now = DateTime.now().setZone(ZONE);
+      for (const row of rows) {
+        if (normalizeCanonicalDateKey(row.dateIso) !== todayY) continue;
+        if (!hasAlarmEmoji(row)) continue;
+
+        const rdvDt = parseRdvToDateTime(row.dateIso, row.rdv1);
+        if (!rdvDt) continue;
+
+        const kind = normalizeServiceType(row.type);
+        const leadMin = kind === "departure" ? 30 : 60;
+        const trigger = rdvDt.minus({ minutes: leadMin });
+        const deltaMs = now.toMillis() - trigger.toMillis();
+        if (deltaMs < 0 || deltaMs > REMINDER_WINDOW_MS) continue;
+
+        const identityKey = serviceUrgencyIdentityKey(row);
+        const reminderKind = `rdv1_${kind}_${leadMin}m`;
+        const allowed = await canSendReminderToday(
+          spreadsheetId,
+          identityKey,
+          reminderKind
+        );
+        if (!allowed) continue;
+
+        const client = row.client.trim() || "—";
+        const rdv = row.rdv1.trim() || "—";
+        const t =
+          kind === "departure"
+            ? "DÉPART"
+            : kind === "transit"
+              ? "TRANSIT"
+              : "ARRIVÉE";
+
+        logChangeDetected(identityKey.slice(0, 48), "rappel-rdv1", {
+          type: t,
+          leadMin,
+          rdv,
+        });
+
+        const push = await broadcastPlanningUpdate({
+          title: "⏰ RAPPEL",
+          body: `⏰ RAPPEL : ${t} ${client} - RDV à ${rdv} !`,
+          openUrl: "/planning?date=today",
+        });
+        sent.general += push.sent;
+        anySpecific = true;
+        await markReminderSentToday(spreadsheetId, identityKey, reminderKind);
+      }
+    }
+  }
+
+  /** Modification de service : ciblée sur l’agent assigné (hors changement d’assignation) pour aujourd’hui / demain. */
+  for (const dateKey of dateKeys) {
+    if (dateKey !== todayY && dateKey !== tomorrowY) continue;
+    const prevHashes = (prev.rowHashes?.[dateKey] ?? {}) as Record<string, string>;
+    const nextHashes = (rowHashes?.[dateKey] ?? {}) as Record<string, string>;
+    const prevMap = prev.byDate?.[dateKey] ?? {};
+    const nextMap = byDate[dateKey] ?? {};
+    const prevSumm =
+      (prev as SnapshotV5).rowSummaries?.[dateKey] ?? {};
+    const nextSumm = rowSummaries?.[dateKey] ?? {};
+
+    for (const stableKey of Object.keys(nextHashes)) {
+      if (!(stableKey in prevHashes)) continue; // nouveau service déjà traité
+      const prevHash = prevHashes[stableKey];
+      const nextHash = nextHashes[stableKey];
+      if (prevHash === nextHash) continue;
+
+      const prevAssRaw = (prevMap[stableKey] ?? "").trim();
+      const nextAssRaw = (nextMap[stableKey] ?? "").trim();
+      const prevAss = labelFromSheetRaw(prevAssRaw);
+      const nextAss = labelFromSheetRaw(nextAssRaw);
+
+      // Changement d'assignation : déjà géré ailleurs (push assignee) + message dédié.
+      if (prevAss !== nextAss) continue;
+      if (!nextAss) continue;
+
+      const a = prevSumm[stableKey] as RowSummaryV1 | undefined;
+      const b = nextSumm[stableKey] as RowSummaryV1 | undefined;
+      if (!a || !b) continue;
+
+      const client = (b.client || "—").trim() || "—";
+      const vol = (b.vol || "—").trim() || "—";
+
+      let body = "";
+      if ((a.rdv1 || a.rdv2) !== (b.rdv1 || b.rdv2)) {
+        const oldH = (a.rdv1 || a.rdv2 || "—").trim() || "—";
+        const newH = (b.rdv1 || b.rdv2 || "—").trim() || "—";
+        body = `🕒 ${prefixIfTomorrow(dateKey)}Horaire modifié pour ${client} : ${oldH} ➡️ ${newH}`;
+      } else if (a.vol !== b.vol) {
+        body = `✈️ ${prefixIfTomorrow(dateKey)}Vol modifié pour ${client} : ${(a.vol || "—").trim() || "—"} ➡️ ${vol}`;
+      } else if (a.driverInfo !== b.driverInfo) {
+        body = `📝 ${prefixIfTomorrow(dateKey)}Infos modifiées pour ${client} (${vol})`;
+      } else if (a.destProv !== b.destProv) {
+        body = `📍 ${prefixIfTomorrow(dateKey)}Dest/Prov modifiée pour ${client} : ${(a.destProv || "—").trim() || "—"} ➡️ ${(b.destProv || "—").trim() || "—"}`;
+      } else if (a.type !== b.type) {
+        body = `🧾 ${prefixIfTomorrow(dateKey)}Type modifié pour ${client} : ${(a.type || "—").trim() || "—"} ➡️ ${(b.type || "—").trim() || "—"}`;
+      } else {
+        body = `🛠️ ${prefixIfTomorrow(dateKey)}Service modifié : ${client} - ${vol}`;
+      }
+
+      logChangeDetected(nextAss, "planning-service-modifie", {
+        dateService: dateKey,
+        stableKey: stableKey.slice(0, 80),
+      });
+
+      const r = await notifyPlanningAssigneeSubscribers(
+        nextAss,
+        {
+          title: "🛠️ Service mis à jour",
+          body,
+          openUrl:
+            dayBucketIso(dateKey) === "today"
+              ? "/planning?date=today"
+              : "/planning?date=tomorrow",
+        }
+      );
+      sent.assignee += r.sent;
+      anySpecific = true;
+    }
   }
 
   if (!anySpecific) {

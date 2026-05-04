@@ -28,8 +28,31 @@ function isOriginAllowed(req: Request): boolean {
   }
 }
 
-const BODY =
-  "Votre planning a été modifié. Cliquez pour voir.";
+function bodyForAssigneePush(planningDay: PlanningDay): string {
+  if (planningDay === "tomorrow") {
+    return "📅 DEMAIN : Tu as été assigné à un service. Ouvre le planning.";
+  }
+  if (planningDay === "today") {
+    return "👤 Tu as été assigné à un service. Ouvre le planning.";
+  }
+  return "👤 Tu as été assigné à un service. Ouvre le planning.";
+}
+
+const TOMORROW_DEBOUNCE_MS = 5000;
+type PendingKey = string;
+const pending = new Map<
+  PendingKey,
+  {
+    t: ReturnType<typeof setTimeout>;
+    spreadsheetId: string;
+    dateKey: string;
+    stableRowKey: string;
+    assigneeName: string;
+    planningDay: PlanningDay;
+    actorName: string;
+    enqueuedAt: number;
+  }
+>();
 
 type PlanningDay = "today" | "tomorrow" | "other";
 
@@ -68,6 +91,8 @@ export async function POST(req: Request) {
     typeof b.stableRowKey === "string" ? b.stableRowKey.trim() : "";
   const assigneeName =
     typeof b.assigneeName === "string" ? b.assigneeName.trim() : "";
+  const actorName =
+    typeof b.actorName === "string" ? b.actorName.trim() : "";
   const rawDay = b.planningDay;
   const planningDay: PlanningDay =
     rawDay === "today" || rawDay === "tomorrow" || rawDay === "other"
@@ -93,10 +118,58 @@ export async function POST(req: Request) {
   }
   dedupe.set(dedupeKey, now);
 
-  const result = await notifyPlanningAssigneeSubscribers(assigneeName, {
-    title: titleForAssigneePush(planningDay),
-    body: BODY,
-  });
+  const openUrl = `/planning?date=${
+    planningDay === "today" ? "today" : planningDay === "tomorrow" ? "tomorrow" : dateKey
+  }`;
+
+  // Anti-spam : pour demain uniquement, on debounce 5s par cible (meilleure effort).
+  if (planningDay === "tomorrow") {
+    const key: PendingKey = `${spreadsheetId}\x1f${dateKey}\x1f${assigneeName.toLowerCase()}`;
+    const existing = pending.get(key);
+    if (existing) {
+      clearTimeout(existing.t);
+      pending.delete(key);
+    }
+    const enqueuedAt = Date.now();
+    const t = setTimeout(() => {
+      pending.delete(key);
+      void notifyPlanningAssigneeSubscribers(
+        assigneeName,
+        {
+          title: titleForAssigneePush(planningDay),
+          body: bodyForAssigneePush(planningDay),
+          openUrl,
+        },
+        actorName ? { excludeDisplayName: actorName } : undefined
+      );
+    }, TOMORROW_DEBOUNCE_MS);
+    pending.set(key, {
+      t,
+      spreadsheetId,
+      dateKey,
+      stableRowKey,
+      assigneeName,
+      planningDay,
+      actorName,
+      enqueuedAt,
+    });
+    return NextResponse.json({
+      ok: true,
+      skipped: false,
+      queued: true,
+      debounceMs: TOMORROW_DEBOUNCE_MS,
+    });
+  }
+
+  const result = await notifyPlanningAssigneeSubscribers(
+    assigneeName,
+    {
+      title: titleForAssigneePush(planningDay),
+      body: bodyForAssigneePush(planningDay),
+      openUrl,
+    },
+    actorName ? { excludeDisplayName: actorName } : undefined
+  );
 
   return NextResponse.json({ ok: true, skipped: false, ...result });
 }

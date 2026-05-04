@@ -15,7 +15,8 @@ function normSender(s: string): string {
  */
 export async function notifyPlanningAssigneeSubscribers(
   targetDisplayName: string,
-  payload: { title: string; body: string }
+  payload: { title: string; body: string; openUrl?: string },
+  opts?: { excludeDisplayName?: string }
 ): Promise<{ sent: number; failed: number }> {
   console.log("Tentative d'envoi push pour :", "planning-assignee-targeted");
 
@@ -24,6 +25,7 @@ export async function notifyPlanningAssigneeSubscribers(
 
   const want = normSender(targetDisplayName);
   if (!want) return { sent: 0, failed: 0 };
+  const exclude = normSender(opts?.excludeDisplayName ?? "");
 
   const { data: rows, error } = await admin
     .from("push_subscriptions")
@@ -32,7 +34,12 @@ export async function notifyPlanningAssigneeSubscribers(
   if (error || !rows?.length) return { sent: 0, failed: 0 };
 
   const targets = rows.filter(
-    (r) => normSender(String(r.user_name ?? "")) === want
+    (r) => {
+      const u = normSender(String(r.user_name ?? ""));
+      if (u !== want) return false;
+      if (exclude && u === exclude) return false;
+      return true;
+    }
   );
 
   if (targets.length === 0) {
@@ -44,6 +51,7 @@ export async function notifyPlanningAssigneeSubscribers(
 
   let sent = 0;
   let failed = 0;
+  const openUrl = payload.openUrl?.trim() || "/";
 
   for (const row of targets) {
     const result = await sendPushNotification(
@@ -56,7 +64,7 @@ export async function notifyPlanningAssigneeSubscribers(
       },
       payload.title,
       payload.body,
-      "/",
+      openUrl,
       { variant: "planning" }
     );
     if (result.ok) sent++;
