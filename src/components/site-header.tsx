@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { CalendarDays, Settings2 } from "lucide-react";
 
+import { HeaderPlanningUser } from "@/components/auth/header-planning-user";
 import { ChatNavButton } from "@/components/chat/chat-nav-button";
-import { RegisterTeamButton } from "@/components/planning/register-team-button";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -20,7 +20,7 @@ export function SiteHeader() {
           <span className="truncate text-base sm:text-lg">Meltin Planning</span>
         </Link>
         <div className="flex items-center gap-2">
-          <RegisterTeamButton />
+          <HeaderPlanningUser />
           <ChatNavButton />
           <Link
             href="/configuration"

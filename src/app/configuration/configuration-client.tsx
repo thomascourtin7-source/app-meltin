@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
 import { ChatProfileSettings } from "@/components/configuration/chat-profile-settings";
+import { clearPlanningAuthSession } from "@/lib/auth/planning-auth-session";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
 import { clearPlanningFinalizedForServiceDate, getTomorrowPlanningDateKey } from "@/lib/planning/planning-finalized-storage";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,29 @@ export function ConfigurationClient() {
       </div>
 
       <ChatProfileSettings />
+
+      <Card className="rounded-xl border border-destructive/25 shadow-sm">
+        <CardHeader>
+          <CardTitle>Session</CardTitle>
+          <CardDescription>
+            Déconnexion de cet appareil : vous devrez saisir à nouveau votre mot de
+            passe.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button
+            type="button"
+            variant="destructive"
+            className="w-full sm:w-auto"
+            onClick={() => {
+              clearPlanningAuthSession();
+              router.push("/login");
+            }}
+          >
+            Se déconnecter
+          </Button>
+        </CardContent>
+      </Card>
 
       <Card className="rounded-xl border shadow-sm">
         <CardHeader>
