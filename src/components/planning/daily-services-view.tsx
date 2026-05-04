@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import useSWR, { useSWRConfig } from "swr";
+import useSWR, { type KeyedMutator, useSWRConfig } from "swr";
 import {
   Calendar,
   Copy,
@@ -73,6 +73,13 @@ import {
   readPlanningAuthSession,
 } from "@/lib/auth/planning-auth-session";
 import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
+import {
+  PLANNING_ASSIGNEES_BROADCAST_EVENT,
+  PLANNING_ASSIGNEES_STORAGE_KEY,
+  broadcastPlanningAssigneesChanged,
+  setPlanningAssigneesRealtimeChannel,
+} from "@/lib/planning/planning-assignees-realtime";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -112,8 +119,6 @@ type ServiceReportRow = {
 };
 
 const DEFAULT_ASSIGNEE = DEFAULT_PLANNING_ASSIGNEE_SLUG;
-
-const PLANNING_ASSIGNEES_STORAGE_KEY = "meltin_planning_assignees_v3";
 
 /** Ancienne clé (chaîne unique par ligne) → migrée une fois vers v3. */
 const PLANNING_ASSIGNEES_STORAGE_KEY_LEGACY_V2 = "meltin_planning_assignees_v2";
@@ -1018,6 +1023,12 @@ export function DailyServicesView() {
   const { setPreparingTomorrow } = usePlanningPreparation();
   const { mutate: globalMutate } = useSWRConfig();
 
+  const mutatePlanningRef = useRef<KeyedMutator<PlanningServicesPayload> | undefined>(
+    undefined
+  );
+  const mutateReportsRef = useRef<KeyedMutator<ReportsData> | undefined>(undefined);
+  const selectedKeyRef = useRef("");
+
   const configuredId = useLocalSpreadsheetId();
   const spreadsheetId =
     process.env.NEXT_PUBLIC_PLANNING_SPREADSHEET_ID?.trim() ||
@@ -1148,8 +1159,10 @@ export function DailyServicesView() {
       revalidateOnFocus: true,
     }
   );
+  mutatePlanningRef.current = mutate;
 
   const selectedKey = normalizeCanonicalDateKey(selectedDate);
+  selectedKeyRef.current = selectedKey;
   const todayYmd = normalizeCanonicalDateKey(formatLocalYmd(new Date()));
   const tomorrowYmd = normalizeCanonicalDateKey(
     formatLocalYmd(addDaysLocal(new Date(), 1))
@@ -1356,6 +1369,130 @@ export function DailyServicesView() {
       revalidateOnFocus: false,
     }
   );
+  mutateReportsRef.current = mutateReports;
+
+  /** Sync assignations : autre onglet (même machine) via localStorage. */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== PLANNING_ASSIGNEES_STORAGE_KEY) return;
+      startTransition(() => setAssigneesBump((b) => b + 1));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  /** Supabase Realtime : rapports, état planning, broadcast assignations. */
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+
+    const debounceMs = 280;
+    let reportsTimer: ReturnType<typeof setTimeout> | null = null;
+    let planningTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleReports = () => {
+      if (reportsTimer) clearTimeout(reportsTimer);
+      reportsTimer = setTimeout(() => {
+        reportsTimer = null;
+        void mutateReportsRef.current?.(undefined, { revalidate: true });
+      }, debounceMs);
+    };
+
+    const schedulePlanning = () => {
+      if (planningTimer) clearTimeout(planningTimer);
+      planningTimer = setTimeout(() => {
+        planningTimer = null;
+        void mutatePlanningRef.current?.(undefined, { revalidate: true });
+      }, debounceMs);
+    };
+
+    function rowSpreadsheetId(r: unknown): string {
+      if (!r || typeof r !== "object") return "";
+      const v = (r as { spreadsheet_id?: unknown }).spreadsheet_id;
+      return typeof v === "string" ? v : "";
+    }
+
+    function rowServiceDateYmd(r: unknown): string {
+      if (!r || typeof r !== "object") return "";
+      const v = (r as { service_date?: unknown }).service_date;
+      if (typeof v !== "string") return "";
+      return normalizeCanonicalDateKey(v.slice(0, 10));
+    }
+
+    function serviceReportAffectsCurrentView(payload: {
+      new?: unknown;
+      old?: unknown;
+    }): boolean {
+      const sid =
+        rowSpreadsheetId(payload.new) || rowSpreadsheetId(payload.old);
+      if (sid !== spreadsheetId) return false;
+      const d =
+        rowServiceDateYmd(payload.new) || rowServiceDateYmd(payload.old);
+      if (!d) return true;
+      return d === selectedKeyRef.current;
+    }
+
+    function planningStateAffectsView(payload: {
+      new?: unknown;
+      old?: unknown;
+    }): boolean {
+      const sid =
+        rowSpreadsheetId(payload.new) || rowSpreadsheetId(payload.old);
+      return sid === spreadsheetId;
+    }
+
+    const ch = supabase
+      .channel(`planning-live-${encodeURIComponent(spreadsheetId)}`, {
+        config: { broadcast: { ack: false, self: false } },
+      })
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "service_reports",
+          filter: `spreadsheet_id=eq.${spreadsheetId}`,
+        },
+        (payload) => {
+          if (serviceReportAffectsCurrentView(payload)) scheduleReports();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "planning_states",
+          filter: `spreadsheet_id=eq.${spreadsheetId}`,
+        },
+        (payload) => {
+          if (planningStateAffectsView(payload)) schedulePlanning();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "agents_auth" },
+        () => {
+          /* Publications activées ; pas d’impact direct sur les pastilles. */
+        }
+      )
+      .on("broadcast", { event: PLANNING_ASSIGNEES_BROADCAST_EVENT }, () => {
+        startTransition(() => setAssigneesBump((b) => b + 1));
+      })
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          setPlanningAssigneesRealtimeChannel(ch, spreadsheetId);
+        }
+      });
+
+    return () => {
+      setPlanningAssigneesRealtimeChannel(null, null);
+      if (reportsTimer) clearTimeout(reportsTimer);
+      if (planningTimer) clearTimeout(planningTimer);
+      void supabase.removeChannel(ch);
+    };
+  }, [spreadsheetId]);
 
   /** Après retour du rapport : force le re-fetch des statuts PDF. */
   useEffect(() => {
@@ -1772,6 +1909,7 @@ export function DailyServicesView() {
             JSON.stringify(all)
           );
           setAssigneesBump((b) => b + 1);
+          broadcastPlanningAssigneesChanged(spreadsheetId);
 
           const dateKey = normalizeCanonicalDateKey(selectedDate);
           const planningDay = planningDayBucket(
