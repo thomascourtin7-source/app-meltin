@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { requirePlanningAdminBearer } from "@/lib/auth/planning-admin-server";
 import { notifyPlanningAssigneeSubscribers } from "@/lib/push/notify-planning-assignee";
 
 const DEDUPE_MS = 5 * 60 * 1000;
@@ -44,6 +45,9 @@ export async function POST(req: Request) {
   if (!isOriginAllowed(req)) {
     return NextResponse.json({ error: "Origin non autorisée." }, { status: 403 });
   }
+
+  const admin = await requirePlanningAdminBearer(req);
+  if (!admin.ok) return admin.response;
 
   let body: unknown;
   try {

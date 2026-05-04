@@ -77,6 +77,18 @@ export async function POST(request: Request) {
   const displayName = displayNameForPlanningAuthSlug(slug) ?? dbName;
   const sessionToken = randomUUID();
 
+  const { error: tokErr } = await supabase
+    .from("agents_auth")
+    .update({ session_token: sessionToken })
+    .eq("name", dbName);
+
+  if (tokErr) {
+    return NextResponse.json(
+      { error: tokErr.message },
+      { status: 500 }
+    );
+  }
+
   return NextResponse.json({
     slug,
     displayName,

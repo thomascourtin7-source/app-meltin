@@ -50,6 +50,7 @@ export async function POST(request: Request) {
   const { error: insErr } = await supabase.from("agents_auth").insert({
     name: displayName,
     password: passwordHash,
+    session_token: sessionToken,
   });
 
   if (insErr) {

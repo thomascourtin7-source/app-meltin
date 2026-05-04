@@ -59,6 +59,26 @@ export function persistPlanningAuthSession(session: PlanningAuthSession): void {
 
 export function clearPlanningAuthSession(): void {
   if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(MELTIN_PLANNING_AUTH_SESSION_KEY);
+    if (raw) {
+      const v = JSON.parse(raw) as unknown;
+      const token =
+        v &&
+        typeof v === "object" &&
+        typeof (v as { token?: unknown }).token === "string"
+          ? (v as { token: string }).token.trim()
+          : "";
+      if (token) {
+        void fetch("/api/planning-auth/logout", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
+    }
+  } catch {
+    /* ignore */
+  }
   window.localStorage.removeItem(MELTIN_PLANNING_AUTH_SESSION_KEY);
   window.localStorage.removeItem(MELTIN_TEAM_REGISTER_NAME_KEY);
   window.localStorage.removeItem(CHAT_USERNAME_STORAGE_KEY);

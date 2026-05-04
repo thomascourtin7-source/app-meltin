@@ -40,6 +40,7 @@ import {
   PLANNING_ASSIGNEE_OPTIONS,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
   PLANNING_URGENT_ASSIGNEE_SLUG,
+  assigneeDisplayLabel,
   assigneeSlugFromNotifyLabel,
   assigneeSlugToNotifyLabel,
   isUrgentAssignee,
@@ -67,6 +68,8 @@ import {
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
 import { formatLocalTimeHHMMSS } from "@/lib/reports/report-time";
 import { detectServiceReportKind } from "@/lib/planning/service-kind";
+import { readPlanningAuthSession } from "@/lib/auth/planning-auth-session";
+import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -314,6 +317,8 @@ type ServiceBlockProps = {
   onOpenReportForm: (opts: { serviceId: string }) => Promise<void>;
   onDownloadReportPdf: (opts: { serviceId: string }) => Promise<void>;
   onDeleteReport: (opts: { serviceId: string }) => Promise<void>;
+  /** Hors administrateurs : assignations visibles mais non modifiables. */
+  planningReadOnly: boolean;
 };
 
 /** Police : meilleur rendu des emojis sur iOS / Android. */
@@ -339,6 +344,7 @@ function ServiceBlock({
   onOpenReportForm,
   onDownloadReportPdf,
   onDeleteReport,
+  planningReadOnly,
 }: ServiceBlockProps) {
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
   const fileRef = useRef<HTMLInputElement>(null);
@@ -402,13 +408,14 @@ function ServiceBlock({
   }, [assignees, hasNamedAssignee, meName]);
 
   const ensureSelfAssignedIfUnassigned = useCallback(() => {
+    if (planningReadOnly) return;
     if (hasNamedAssignee) return;
     const me = meName.trim();
     if (!me) return;
     const slug = assigneeSlugFromNotifyLabel(me);
     if (!slug) return;
     onAssigneesChange(rowKey, [slug]);
-  }, [hasNamedAssignee, meName, onAssigneesChange, rowKey]);
+  }, [hasNamedAssignee, meName, onAssigneesChange, planningReadOnly, rowKey]);
 
   const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lockedHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -543,10 +550,18 @@ function ServiceBlock({
           </Button>
         </div>
 
-        <div className="flex items-stretch gap-2">
+        <div
+          className={cn(
+            "flex items-stretch gap-2",
+            planningReadOnly && "flex-col sm:flex-row"
+          )}
+        >
           <Button
             type="button"
-            className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600/90 dark:hover:bg-emerald-600"
+            className={cn(
+              "bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600/90 dark:hover:bg-emerald-600",
+              planningReadOnly ? "w-full" : "flex-1"
+            )}
             onClick={() => {
               onDownloadReportPdf({ serviceId: reportServiceId }).catch((e) => {
                 console.error(e);
@@ -558,26 +573,28 @@ function ServiceBlock({
           >
             Télécharger le PDF
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="w-12 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/10"
-            aria-label="Supprimer le rapport"
-            onClick={() => {
-              const ok = window.confirm(
-                "Voulez-vous supprimer ce rapport et recommencer ?"
-              );
-              if (!ok) return;
-              onDeleteReport({ serviceId: reportServiceId }).catch((e) => {
-                console.error(e);
-                window.alert(
-                  e instanceof Error ? e.message : "Suppression impossible."
+          {!planningReadOnly ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-12 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/10"
+              aria-label="Supprimer le rapport"
+              onClick={() => {
+                const ok = window.confirm(
+                  "Voulez-vous supprimer ce rapport et recommencer ?"
                 );
-              });
-            }}
-          >
-            🗑️
-          </Button>
+                if (!ok) return;
+                onDeleteReport({ serviceId: reportServiceId }).catch((e) => {
+                  console.error(e);
+                  window.alert(
+                    e instanceof Error ? e.message : "Suppression impossible."
+                  );
+                });
+              }}
+            >
+              🗑️
+            </Button>
+          ) : null}
         </div>
         {copyToast}
       </div>
@@ -610,37 +627,21 @@ function ServiceBlock({
           Assignation
         </span>
         <div className="flex flex-col gap-2 sm:gap-2.5">
-          {assignees.map((assignee, slot) => {
-            const triggerDisplayText =
-              assignee === PLANNING_URGENT_ASSIGNEE_SLUG
-                ? PLANNING_URGENT_ASSIGNEE_DISPLAY
-                : PLANNING_ASSIGNEE_OPTIONS.find((opt) => opt.value === assignee)
-                    ?.label || assignee;
-            const showRemoveLine = slot > 0;
-            const canAddMore =
-              slot === 0 &&
-              assignees.length < MAX_PLANNING_ASSIGNEES_PER_SERVICE;
-            const highlightAssignee = isAssigneeHighlighted(assignee);
-
-            return (
-              <div
-                key={slot}
-                className="flex flex-row flex-nowrap items-center gap-2"
-              >
-                <div className="min-w-0 w-full max-w-[200px] flex-1 sm:max-w-[200px]">
-                  <Select
-                    value={assignee}
-                    onValueChange={(v) =>
-                      updateSlot(slot, v ?? DEFAULT_ASSIGNEE)
-                    }
+          {planningReadOnly
+            ? assignees.map((assignee, slot) => {
+                const triggerDisplayText = assigneeDisplayLabel(assignee);
+                const highlightAssignee = isAssigneeHighlighted(assignee);
+                return (
+                  <div
+                    key={slot}
+                    className="flex flex-row flex-nowrap items-center gap-2"
                   >
-                    <SelectTrigger
-                      size="sm"
+                    <div
                       className={cn(
-                        "h-8 w-full justify-start gap-2 border border-border/50 bg-muted/40 text-sm shadow-none",
+                        "flex min-h-8 w-full max-w-[200px] flex-1 items-center gap-2 rounded-md border border-border/50 bg-muted/40 px-2 py-1.5 text-sm shadow-none sm:max-w-[200px]",
                         ASSIGNEE_SELECT_EMOJI_FONT,
                         assignee === PLANNING_URGENT_ASSIGNEE_SLUG &&
-                          "[&_[data-slot=select-value]]:overflow-visible [&_[data-slot=select-value]]:[line-clamp:unset]"
+                          "justify-center text-center text-lg leading-none tracking-tight"
                       )}
                       aria-label={`Assigné à : ${triggerDisplayText}`}
                     >
@@ -653,105 +654,180 @@ function ServiceBlock({
                           aria-hidden
                         />
                       ) : null}
-                      {/* Pas de <SelectValue /> : Base UI afficherait la value brute (emoji_alert). */}
                       <span
-                        data-slot="select-value"
                         className={cn(
-                          "select-value flex min-h-0 flex-1",
+                          "min-w-0 flex-1",
                           assignee === PLANNING_URGENT_ASSIGNEE_SLUG
-                            ? "select-value--urgent items-center justify-center overflow-visible text-center text-lg leading-none tracking-tight whitespace-nowrap [line-clamp:unset]"
-                            : "min-w-0 truncate text-left",
+                            ? "text-center"
+                            : "truncate text-left",
                           highlightAssignee && ASSIGN_GREEN
                         )}
                       >
-                        {assignee === PLANNING_URGENT_ASSIGNEE_SLUG
-                          ? PLANNING_URGENT_ASSIGNEE_DISPLAY
-                          : PLANNING_ASSIGNEE_OPTIONS.find(
-                              (opt) => opt.value === assignee
-                            )?.label || assignee}
+                        {assigneeDisplayLabel(assignee)}
                       </span>
-                    </SelectTrigger>
-                    <SelectContent
-                      className={cn(
-                        "z-50 max-h-72",
-                        ASSIGNEE_SELECT_EMOJI_FONT
-                      )}
-                    >
-                      {PLANNING_ASSIGNEE_OPTIONS.map((opt) => (
-                        <SelectItem
-                          key={opt.value}
-                          value={opt.value}
-                          className={
-                            opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
-                              ? "py-2.5 text-base leading-none focus:bg-muted focus-visible:bg-muted"
-                              : undefined
-                          }
+                    </div>
+                    {slot === 0 ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 self-center rounded-lg border-border/60 shadow-none touch-manipulation hover:bg-muted/80"
+                        style={{ touchAction: "manipulation" }}
+                        title="Copier les détails"
+                        aria-label="Copier les détails du service"
+                        onClick={() => {
+                          void handleCopyServiceDetails();
+                        }}
+                      >
+                        <Copy className="size-4" aria-hidden />
+                      </Button>
+                    ) : null}
+                  </div>
+                );
+              })
+            : assignees.map((assignee, slot) => {
+                const triggerDisplayText =
+                  assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+                    ? PLANNING_URGENT_ASSIGNEE_DISPLAY
+                    : PLANNING_ASSIGNEE_OPTIONS.find(
+                        (opt) => opt.value === assignee
+                      )?.label || assignee;
+                const showRemoveLine = slot > 0;
+                const canAddMore =
+                  slot === 0 &&
+                  assignees.length < MAX_PLANNING_ASSIGNEES_PER_SERVICE;
+                const highlightAssignee = isAssigneeHighlighted(assignee);
+
+                return (
+                  <div
+                    key={slot}
+                    className="flex flex-row flex-nowrap items-center gap-2"
+                  >
+                    <div className="min-w-0 w-full max-w-[200px] flex-1 sm:max-w-[200px]">
+                      <Select
+                        value={assignee}
+                        onValueChange={(v) =>
+                          updateSlot(slot, v ?? DEFAULT_ASSIGNEE)
+                        }
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          className={cn(
+                            "h-8 w-full justify-start gap-2 border border-border/50 bg-muted/40 text-sm shadow-none",
+                            ASSIGNEE_SELECT_EMOJI_FONT,
+                            assignee === PLANNING_URGENT_ASSIGNEE_SLUG &&
+                              "[&_[data-slot=select-value]]:overflow-visible [&_[data-slot=select-value]]:[line-clamp:unset]"
+                          )}
+                          aria-label={`Assigné à : ${triggerDisplayText}`}
                         >
+                          {highlightAssignee ? (
+                            <UserCircle
+                              className={cn(
+                                "size-4 shrink-0",
+                                "text-emerald-900 dark:text-emerald-400"
+                              )}
+                              aria-hidden
+                            />
+                          ) : null}
+                          {/* Pas de <SelectValue /> : Base UI afficherait la value brute (emoji_alert). */}
                           <span
-                            className={
-                              opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
-                                ? "inline-block text-lg tracking-tight"
-                                : undefined
-                            }
+                            data-slot="select-value"
+                            className={cn(
+                              "select-value flex min-h-0 flex-1",
+                              assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+                                ? "select-value--urgent items-center justify-center overflow-visible text-center text-lg leading-none tracking-tight whitespace-nowrap [line-clamp:unset]"
+                                : "min-w-0 truncate text-left",
+                              highlightAssignee && ASSIGN_GREEN
+                            )}
                           >
-                            {opt.label}
+                            {assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+                              ? PLANNING_URGENT_ASSIGNEE_DISPLAY
+                              : PLANNING_ASSIGNEE_OPTIONS.find(
+                                  (opt) => opt.value === assignee
+                                )?.label || assignee}
                           </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {canAddMore ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 self-center rounded-lg border-dashed shadow-none touch-manipulation"
-                    style={{ touchAction: "manipulation" }}
-                    onClick={addRow}
-                    aria-label="Ajouter un assigné"
-                  >
-                    <Plus className="size-4" aria-hidden />
-                  </Button>
-                ) : null}
-                {slot === 0 ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 self-center rounded-lg border-border/60 shadow-none touch-manipulation hover:bg-muted/80"
-                    style={{ touchAction: "manipulation" }}
-                    title="Copier les détails"
-                    aria-label="Copier les détails du service"
-                    onClick={() => {
-                      void handleCopyServiceDetails();
-                    }}
-                  >
-                    <Copy className="size-4" aria-hidden />
-                  </Button>
-                ) : null}
-                {showRemoveLine ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className={cn(
-                      "h-8 w-8 shrink-0 self-center rounded-md border-destructive/25 text-destructive shadow-none",
-                      "touch-manipulation transition-[color,background-color,transform,box-shadow]",
-                      "hover:border-destructive/50 hover:bg-destructive/10 hover:text-destructive",
-                      "active:scale-[0.96] active:bg-destructive/20",
-                      "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    )}
-                    style={{ touchAction: "manipulation" }}
-                    onClick={() => removeRow(slot)}
-                    aria-label="Supprimer cette ligne d’assignation"
-                  >
-                    <X className="size-4 shrink-0" aria-hidden />
-                  </Button>
-                ) : null}
-              </div>
-            );
-          })}
+                        </SelectTrigger>
+                        <SelectContent
+                          className={cn(
+                            "z-50 max-h-72",
+                            ASSIGNEE_SELECT_EMOJI_FONT
+                          )}
+                        >
+                          {PLANNING_ASSIGNEE_OPTIONS.map((opt) => (
+                            <SelectItem
+                              key={opt.value}
+                              value={opt.value}
+                              className={
+                                opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
+                                  ? "py-2.5 text-base leading-none focus:bg-muted focus-visible:bg-muted"
+                                  : undefined
+                              }
+                            >
+                              <span
+                                className={
+                                  opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
+                                    ? "inline-block text-lg tracking-tight"
+                                    : undefined
+                                }
+                              >
+                                {opt.label}
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {canAddMore ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 self-center rounded-lg border-dashed shadow-none touch-manipulation"
+                        style={{ touchAction: "manipulation" }}
+                        onClick={addRow}
+                        aria-label="Ajouter un assigné"
+                      >
+                        <Plus className="size-4" aria-hidden />
+                      </Button>
+                    ) : null}
+                    {slot === 0 ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 self-center rounded-lg border-border/60 shadow-none touch-manipulation hover:bg-muted/80"
+                        style={{ touchAction: "manipulation" }}
+                        title="Copier les détails"
+                        aria-label="Copier les détails du service"
+                        onClick={() => {
+                          void handleCopyServiceDetails();
+                        }}
+                      >
+                        <Copy className="size-4" aria-hidden />
+                      </Button>
+                    ) : null}
+                    {showRemoveLine ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className={cn(
+                          "h-8 w-8 shrink-0 self-center rounded-md border-destructive/25 text-destructive shadow-none",
+                          "touch-manipulation transition-[color,background-color,transform,box-shadow]",
+                          "hover:border-destructive/50 hover:bg-destructive/10 hover:text-destructive",
+                          "active:scale-[0.96] active:bg-destructive/20",
+                          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        )}
+                        style={{ touchAction: "manipulation" }}
+                        onClick={() => removeRow(slot)}
+                        aria-label="Supprimer cette ligne d’assignation"
+                      >
+                        <X className="size-4 shrink-0" aria-hidden />
+                      </Button>
+                    ) : null}
+                  </div>
+                );
+              })}
         </div>
       </div>
 
@@ -1015,6 +1091,7 @@ export function DailyServicesView() {
   const [calendarPressed, setCalendarPressed] = useState(false);
   const [meOnly, setMeOnly] = useState(false);
   const [meName, setMeName] = useState<string>("");
+  const isPlanningAdmin = usePlanningAdminClient();
 
   const [assigneesBump, setAssigneesBump] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
@@ -1188,6 +1265,17 @@ export function DailyServicesView() {
     }
   }, [searchParams, setPreparingTomorrow]);
 
+  /** Mode préparation réservé aux administrateurs (URL nettoyée si accès direct). */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (searchParams.get("mode") !== "prep") return;
+    if (isPlanningAdmin) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("mode");
+    const q = params.toString();
+    router.replace(q ? `${pathname}?${q}` : pathname);
+  }, [isPlanningAdmin, pathname, router, searchParams]);
+
   /** Après validation + rechargement complet, réaffiche le bandeau vert une fois. */
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1218,27 +1306,52 @@ export function DailyServicesView() {
   }, []);
 
   const handlePlanningFinished = () => {
-    setIsLoading(true);
+    void (async () => {
+      const token = readPlanningAuthSession()?.token;
+      if (!token) {
+        window.alert(
+          "Reconnectez-vous pour valider le planning (session requise)."
+        );
+        return;
+      }
+      const verify = await fetch("/api/planning-assignees/verify-admin", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!verify.ok) {
+        let msg = "Action réservée aux administrateurs.";
+        try {
+          const j = (await verify.json()) as { error?: string };
+          if (typeof j?.error === "string") msg = j.error;
+        } catch {
+          /* ignore */
+        }
+        window.alert(msg);
+        return;
+      }
 
-    // Envoi en arrière-plan sans await pour ne pas bloquer l’UI
-    sendPushNotification({
-      title: "Planning demain",
-      body: "📅 Le planning de demain est disponible ! Vérifiez vos assignations.",
-      url: "/planning?date=tomorrow",
-    }).catch((err) => console.error("Erreur notif silenciée:", err));
+      setIsLoading(true);
 
-    setIsLoading(false);
-    try {
-      localStorage.setItem("planning_finalized", "true");
-    } catch {
-      /* quota / private mode */
-    }
+      // Envoi en arrière-plan sans await pour ne pas bloquer l’UI
+      sendPushNotification({
+        title: "Planning demain",
+        body: "📅 Le planning de demain est disponible ! Vérifiez vos assignations.",
+        url: "/planning?date=tomorrow",
+      }).catch((err) => console.error("Erreur notif silenciée:", err));
 
-    // Sortie du mode préparation après délai fixe (succès ou échec de la notif)
-    setTimeout(() => {
-      window.location.href =
-        window.location.origin + "/planning?date=tomorrow";
-    }, 800);
+      setIsLoading(false);
+      try {
+        localStorage.setItem("planning_finalized", "true");
+      } catch {
+        /* quota / private mode */
+      }
+
+      // Sortie du mode préparation après délai fixe (succès ou échec de la notif)
+      setTimeout(() => {
+        window.location.href =
+          window.location.origin + "/planning?date=tomorrow";
+      }, 800);
+    })();
   };
 
   /** Déjà filtrées côté API par `?date=` ; garde-fou local si besoin. */
@@ -1637,8 +1750,9 @@ export function DailyServicesView() {
     isPrepMode && isTomorrowSelected && !isTomorrowPlanningFinalized
   );
 
-  /** Barre « Planning terminé » : demain + mode préparation dans l’URL. */
-  const showPrepModeBar = isTomorrowSelected && isPrepMode;
+  /** Barre « Planning terminé » : demain + mode préparation dans l’URL (admins). */
+  const showPrepModeBar =
+    isTomorrowSelected && isPrepMode && isPlanningAdmin;
 
   useEffect(() => {
     if (!prepModeActive) {
@@ -1654,62 +1768,90 @@ export function DailyServicesView() {
 
   const setAssigneesForRow = useCallback(
     (key: string, next: string[]) => {
-      let safe = next
-        .slice(0, MAX_PLANNING_ASSIGNEES_PER_SERVICE)
-        .map((x) => normalizeAssigneeStoredValue(x));
-      if (safe.length === 0) safe = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
-      if (typeof window === "undefined") return;
-      try {
-        const all = loadAssigneeStore();
-        const prevRaw = all[spreadsheetId]?.[key];
-        const prevArr = normalizeAssigneeListFromStored(prevRaw);
-        const prevNotify = new Set(
-          prevArr.filter(
-            (s) =>
-              s !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(s)
-          )
-        );
-
-        const cur = { ...(all[spreadsheetId] ?? {}), [key]: safe };
-        all[spreadsheetId] = cur;
-        window.localStorage.setItem(
-          PLANNING_ASSIGNEES_STORAGE_KEY,
-          JSON.stringify(all)
-        );
-        setAssigneesBump((b) => b + 1);
-
-        const dateKey = normalizeCanonicalDateKey(selectedDate);
-        const planningDay = planningDayBucket(
-          dateKey,
-          todayYmd,
-          tomorrowYmd
-        );
-        const isPrep =
-          new URLSearchParams(window.location.search).get("mode") === "prep";
-        /** Demain + `mode=prep` : pas de notifs individuelles pendant la préparation. */
-        if (dateKey === tomorrowYmd && isPrep) {
+      void (async () => {
+        const token = readPlanningAuthSession()?.token;
+        if (!token) {
+          window.alert(
+            "Reconnectez-vous pour modifier les assignations (session requise)."
+          );
           return;
         }
-        /** Sans `mode=prep` : notifs pour chaque nouvel assigné ajouté sur la ligne. */
-        for (const slug of safe) {
-          if (prevNotify.has(slug)) continue;
-          const label = assigneeSlugToNotifyLabel(slug);
-          if (!label) continue;
-          void fetch("/api/push/planning-assignee-alert", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              spreadsheetId,
-              dateKey,
-              stableRowKey: key,
-              assigneeName: label,
-              planningDay,
-            }),
-          }).catch(() => {});
+        const verify = await fetch("/api/planning-assignees/verify-admin", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!verify.ok) {
+          let msg = "Action réservée aux administrateurs.";
+          try {
+            const j = (await verify.json()) as { error?: string };
+            if (typeof j?.error === "string") msg = j.error;
+          } catch {
+            /* ignore */
+          }
+          window.alert(msg);
+          return;
         }
-      } catch {
-        /* quota / private mode */
-      }
+
+        let safe = next
+          .slice(0, MAX_PLANNING_ASSIGNEES_PER_SERVICE)
+          .map((x) => normalizeAssigneeStoredValue(x));
+        if (safe.length === 0) safe = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+        if (typeof window === "undefined") return;
+        try {
+          const all = loadAssigneeStore();
+          const prevRaw = all[spreadsheetId]?.[key];
+          const prevArr = normalizeAssigneeListFromStored(prevRaw);
+          const prevNotify = new Set(
+            prevArr.filter(
+              (s) =>
+                s !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(s)
+            )
+          );
+
+          const cur = { ...(all[spreadsheetId] ?? {}), [key]: safe };
+          all[spreadsheetId] = cur;
+          window.localStorage.setItem(
+            PLANNING_ASSIGNEES_STORAGE_KEY,
+            JSON.stringify(all)
+          );
+          setAssigneesBump((b) => b + 1);
+
+          const dateKey = normalizeCanonicalDateKey(selectedDate);
+          const planningDay = planningDayBucket(
+            dateKey,
+            todayYmd,
+            tomorrowYmd
+          );
+          const isPrep =
+            new URLSearchParams(window.location.search).get("mode") === "prep";
+          /** Demain + `mode=prep` : pas de notifs individuelles pendant la préparation. */
+          if (dateKey === tomorrowYmd && isPrep) {
+            return;
+          }
+          /** Sans `mode=prep` : notifs pour chaque nouvel assigné ajouté sur la ligne. */
+          for (const slug of safe) {
+            if (prevNotify.has(slug)) continue;
+            const label = assigneeSlugToNotifyLabel(slug);
+            if (!label) continue;
+            void fetch("/api/push/planning-assignee-alert", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                spreadsheetId,
+                dateKey,
+                stableRowKey: key,
+                assigneeName: label,
+                planningDay,
+              }),
+            }).catch(() => {});
+          }
+        } catch {
+          /* quota / private mode */
+        }
+      })();
     },
     [spreadsheetId, selectedDate, tomorrowYmd, todayYmd]
   );
@@ -1768,7 +1910,7 @@ export function DailyServicesView() {
     };
     saveSnapshotStore(snapshots);
 
-    if (changed) {
+    if (changed && isPlanningAdmin) {
       store[spreadsheetId] = sheetAssign;
       window.localStorage.setItem(
         PLANNING_ASSIGNEES_STORAGE_KEY,
@@ -1776,7 +1918,7 @@ export function DailyServicesView() {
       );
       startTransition(() => setAssigneesBump((b) => b + 1));
     }
-  }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate]);
+  }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate, isPlanningAdmin]);
 
   return (
     <div
@@ -1980,6 +2122,7 @@ export function DailyServicesView() {
                     void mutateReports();
                   }}
                   onDeleteReport={deleteReport}
+                  planningReadOnly={!isPlanningAdmin}
                 />
               );
             })}

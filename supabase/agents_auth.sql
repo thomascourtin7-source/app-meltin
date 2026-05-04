@@ -2,7 +2,8 @@
 -- `password` : hash bcrypt (jamais en clair).
 create table if not exists public.agents_auth (
   name text primary key,
-  password text not null
+  password text not null,
+  session_token text
 );
 
 alter table public.agents_auth enable row level security;

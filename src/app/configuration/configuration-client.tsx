@@ -9,6 +9,7 @@ import { usePlanningPreparation } from "@/components/planning/planning-preparati
 import { clearPlanningFinalizedForServiceDate, getTomorrowPlanningDateKey } from "@/lib/planning/planning-finalized-storage";
 import { Button } from "@/components/ui/button";
 import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
+import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import {
   Card,
@@ -28,6 +29,7 @@ const PushNotificationCard = dynamic(
 
 export function ConfigurationClient() {
   const router = useRouter();
+  const isPlanningAdmin = usePlanningAdminClient();
   const { setPreparingTomorrow } = usePlanningPreparation();
   const configuredId = useLocalSpreadsheetId();
   const spreadsheetId =
@@ -73,41 +75,45 @@ export function ConfigurationClient() {
         <CardHeader>
           <CardTitle>Préparation opérationnelle</CardTitle>
           <CardDescription>
-            Ouvrez le planning sur la journée « Demain » pour préparer les
-            assignations sans notifier l’équipe. Quand tout est prêt, validez
-            depuis l’écran du planning.
+            {isPlanningAdmin
+              ? "Ouvrez le planning sur la journée « Demain » pour préparer les assignations sans notifier l’équipe. Quand tout est prêt, validez depuis l’écran du planning."
+              : "La préparation du planning de demain (manuel ou IA) est réservée aux administrateurs."}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col gap-3">
-            <Button
-              type="button"
-              variant="default"
-              size="lg"
-              onClick={() => {
-                clearPlanningFinalizedForServiceDate(getTomorrowPlanningDateKey());
-                setPreparingTomorrow(true);
-                router.push("/planning?mode=prep&date=tomorrow");
-              }}
-              className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
-            >
-              Faire le planning de demain
-            </Button>
+          {isPlanningAdmin ? (
+            <div className="flex flex-col gap-3">
+              <Button
+                type="button"
+                variant="default"
+                size="lg"
+                onClick={() => {
+                  clearPlanningFinalizedForServiceDate(
+                    getTomorrowPlanningDateKey()
+                  );
+                  setPreparingTomorrow(true);
+                  router.push("/planning?mode=prep&date=tomorrow");
+                }}
+                className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
+              >
+                Faire le planning de demain
+              </Button>
 
-            <Button
-              type="button"
-              variant="outline"
-              size="lg"
-              onClick={() =>
-                router.push(
-                  `/planning-ia?spreadsheetId=${encodeURIComponent(spreadsheetId)}`
-                )
-              }
-              className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
-            >
-              Faire le planning de demain IA 🤖
-            </Button>
-          </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                onClick={() =>
+                  router.push(
+                    `/planning-ia?spreadsheetId=${encodeURIComponent(spreadsheetId)}`
+                  )
+                }
+                className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
+              >
+                Faire le planning de demain IA 🤖
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

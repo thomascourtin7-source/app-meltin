@@ -1,6 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+
+import { readPlanningAuthSession } from "@/lib/auth/planning-auth-session";
+import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -102,6 +105,7 @@ export function PlanningIaClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const configuredId = useLocalSpreadsheetId();
+  const isPlanningAdmin = usePlanningAdminClient();
 
   const spreadsheetIdFromUrl = (searchParams.get("spreadsheetId") || "").trim();
   const spreadsheetId =
@@ -137,11 +141,36 @@ export function PlanningIaClient() {
 
   async function onGenerate(): Promise<void> {
     setError(null);
+    if (!isPlanningAdmin) {
+      setError("Cette action est réservée aux administrateurs.");
+      return;
+    }
     if (!spreadsheetId) {
       setError("SpreadsheetId manquant (Configuration).");
       return;
     }
     if (selectedAgents.length === 0) return;
+
+    const token = readPlanningAuthSession()?.token;
+    if (!token) {
+      setError("Reconnectez-vous (session requise).");
+      return;
+    }
+    const verify = await fetch("/api/planning-assignees/verify-admin", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!verify.ok) {
+      let msg = "Action réservée aux administrateurs.";
+      try {
+        const j = (await verify.json()) as { error?: string };
+        if (typeof j?.error === "string") msg = j.error;
+      } catch {
+        /* ignore */
+      }
+      setError(msg);
+      return;
+    }
 
     setBusy(true);
     try {
@@ -193,6 +222,30 @@ export function PlanningIaClient() {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (!isPlanningAdmin) {
+    return (
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-8 pb-16">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Planning de demain (IA)
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Cette page est réservée aux administrateurs.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => router.push("/configuration")}
+          >
+            Retour
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (
