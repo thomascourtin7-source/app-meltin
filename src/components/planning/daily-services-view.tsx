@@ -40,7 +40,6 @@ import {
   PLANNING_ASSIGNEE_OPTIONS,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
   PLANNING_URGENT_ASSIGNEE_SLUG,
-  assigneeDisplayLabel,
   assigneeSlugFromNotifyLabel,
   assigneeSlugToNotifyLabel,
   isUrgentAssignee,
@@ -68,7 +67,11 @@ import {
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
 import { formatLocalTimeHHMMSS } from "@/lib/reports/report-time";
 import { detectServiceReportKind } from "@/lib/planning/service-kind";
-import { readPlanningAuthSession } from "@/lib/auth/planning-auth-session";
+import {
+  MELTIN_AUTH_SESSION_CHANGED_EVENT,
+  MELTIN_PLANNING_AUTH_SESSION_KEY,
+  readPlanningAuthSession,
+} from "@/lib/auth/planning-auth-session";
 import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
 
 const POLL_MS = 5 * 60 * 1000;
@@ -397,6 +400,7 @@ function ServiceBlock({
     [assignees]
   );
 
+  /** Photo / PEC : tout le monde suit cette règle — assigné(s) réel(s) uniquement ; si aucun, ouvert à tous. */
   const canAction = useMemo(() => {
     if (!hasNamedAssignee) return true;
     const me = meName.trim();
@@ -550,18 +554,10 @@ function ServiceBlock({
           </Button>
         </div>
 
-        <div
-          className={cn(
-            "flex items-stretch gap-2",
-            planningReadOnly && "flex-col sm:flex-row"
-          )}
-        >
+        <div className="flex items-stretch gap-2">
           <Button
             type="button"
-            className={cn(
-              "bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600/90 dark:hover:bg-emerald-600",
-              planningReadOnly ? "w-full" : "flex-1"
-            )}
+            className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600/90 dark:hover:bg-emerald-600"
             onClick={() => {
               onDownloadReportPdf({ serviceId: reportServiceId }).catch((e) => {
                 console.error(e);
@@ -627,21 +623,40 @@ function ServiceBlock({
           Assignation
         </span>
         <div className="flex flex-col gap-2 sm:gap-2.5">
-          {planningReadOnly
-            ? assignees.map((assignee, slot) => {
-                const triggerDisplayText = assigneeDisplayLabel(assignee);
-                const highlightAssignee = isAssigneeHighlighted(assignee);
-                return (
-                  <div
-                    key={slot}
-                    className="flex flex-row flex-nowrap items-center gap-2"
+          {assignees.map((assignee, slot) => {
+            const triggerDisplayText =
+              assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+                ? PLANNING_URGENT_ASSIGNEE_DISPLAY
+                : PLANNING_ASSIGNEE_OPTIONS.find((opt) => opt.value === assignee)
+                    ?.label || assignee;
+            const showRemoveLine = slot > 0 && !planningReadOnly;
+            const canAddMore =
+              !planningReadOnly &&
+              slot === 0 &&
+              assignees.length < MAX_PLANNING_ASSIGNEES_PER_SERVICE;
+            const highlightAssignee = isAssigneeHighlighted(assignee);
+
+            return (
+              <div
+                key={slot}
+                className="flex flex-row flex-nowrap items-center gap-2"
+              >
+                <div className="min-w-0 w-full max-w-[200px] flex-1 sm:max-w-[200px]">
+                  <Select
+                    value={assignee}
+                    onValueChange={(v) =>
+                      updateSlot(slot, v ?? DEFAULT_ASSIGNEE)
+                    }
+                    disabled={planningReadOnly}
                   >
-                    <div
+                    <SelectTrigger
+                      size="sm"
+                      disabled={planningReadOnly}
                       className={cn(
-                        "flex min-h-8 w-full max-w-[200px] flex-1 items-center gap-2 rounded-md border border-border/50 bg-muted/40 px-2 py-1.5 text-sm shadow-none sm:max-w-[200px]",
+                        "h-8 w-full justify-start gap-2 border border-border/50 bg-muted/40 text-sm shadow-none",
                         ASSIGNEE_SELECT_EMOJI_FONT,
                         assignee === PLANNING_URGENT_ASSIGNEE_SLUG &&
-                          "justify-center text-center text-lg leading-none tracking-tight"
+                          "[&_[data-slot=select-value]]:overflow-visible [&_[data-slot=select-value]]:[line-clamp:unset]"
                       )}
                       aria-label={`Assigné à : ${triggerDisplayText}`}
                     >
@@ -654,180 +669,105 @@ function ServiceBlock({
                           aria-hidden
                         />
                       ) : null}
+                      {/* Pas de <SelectValue /> : Base UI afficherait la value brute (emoji_alert). */}
                       <span
+                        data-slot="select-value"
                         className={cn(
-                          "min-w-0 flex-1",
+                          "select-value flex min-h-0 flex-1",
                           assignee === PLANNING_URGENT_ASSIGNEE_SLUG
-                            ? "text-center"
-                            : "truncate text-left",
+                            ? "select-value--urgent items-center justify-center overflow-visible text-center text-lg leading-none tracking-tight whitespace-nowrap [line-clamp:unset]"
+                            : "min-w-0 truncate text-left",
                           highlightAssignee && ASSIGN_GREEN
                         )}
                       >
-                        {assigneeDisplayLabel(assignee)}
+                        {assignee === PLANNING_URGENT_ASSIGNEE_SLUG
+                          ? PLANNING_URGENT_ASSIGNEE_DISPLAY
+                          : PLANNING_ASSIGNEE_OPTIONS.find(
+                              (opt) => opt.value === assignee
+                            )?.label || assignee}
                       </span>
-                    </div>
-                    {slot === 0 ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-8 w-8 shrink-0 self-center rounded-lg border-border/60 shadow-none touch-manipulation hover:bg-muted/80"
-                        style={{ touchAction: "manipulation" }}
-                        title="Copier les détails"
-                        aria-label="Copier les détails du service"
-                        onClick={() => {
-                          void handleCopyServiceDetails();
-                        }}
-                      >
-                        <Copy className="size-4" aria-hidden />
-                      </Button>
-                    ) : null}
-                  </div>
-                );
-              })
-            : assignees.map((assignee, slot) => {
-                const triggerDisplayText =
-                  assignee === PLANNING_URGENT_ASSIGNEE_SLUG
-                    ? PLANNING_URGENT_ASSIGNEE_DISPLAY
-                    : PLANNING_ASSIGNEE_OPTIONS.find(
-                        (opt) => opt.value === assignee
-                      )?.label || assignee;
-                const showRemoveLine = slot > 0;
-                const canAddMore =
-                  slot === 0 &&
-                  assignees.length < MAX_PLANNING_ASSIGNEES_PER_SERVICE;
-                const highlightAssignee = isAssigneeHighlighted(assignee);
-
-                return (
-                  <div
-                    key={slot}
-                    className="flex flex-row flex-nowrap items-center gap-2"
-                  >
-                    <div className="min-w-0 w-full max-w-[200px] flex-1 sm:max-w-[200px]">
-                      <Select
-                        value={assignee}
-                        onValueChange={(v) =>
-                          updateSlot(slot, v ?? DEFAULT_ASSIGNEE)
-                        }
-                      >
-                        <SelectTrigger
-                          size="sm"
-                          className={cn(
-                            "h-8 w-full justify-start gap-2 border border-border/50 bg-muted/40 text-sm shadow-none",
-                            ASSIGNEE_SELECT_EMOJI_FONT,
-                            assignee === PLANNING_URGENT_ASSIGNEE_SLUG &&
-                              "[&_[data-slot=select-value]]:overflow-visible [&_[data-slot=select-value]]:[line-clamp:unset]"
-                          )}
-                          aria-label={`Assigné à : ${triggerDisplayText}`}
+                    </SelectTrigger>
+                    <SelectContent
+                      className={cn(
+                        "z-50 max-h-72",
+                        ASSIGNEE_SELECT_EMOJI_FONT
+                      )}
+                    >
+                      {PLANNING_ASSIGNEE_OPTIONS.map((opt) => (
+                        <SelectItem
+                          key={opt.value}
+                          value={opt.value}
+                          className={
+                            opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
+                              ? "py-2.5 text-base leading-none focus:bg-muted focus-visible:bg-muted"
+                              : undefined
+                          }
                         >
-                          {highlightAssignee ? (
-                            <UserCircle
-                              className={cn(
-                                "size-4 shrink-0",
-                                "text-emerald-900 dark:text-emerald-400"
-                              )}
-                              aria-hidden
-                            />
-                          ) : null}
-                          {/* Pas de <SelectValue /> : Base UI afficherait la value brute (emoji_alert). */}
                           <span
-                            data-slot="select-value"
-                            className={cn(
-                              "select-value flex min-h-0 flex-1",
-                              assignee === PLANNING_URGENT_ASSIGNEE_SLUG
-                                ? "select-value--urgent items-center justify-center overflow-visible text-center text-lg leading-none tracking-tight whitespace-nowrap [line-clamp:unset]"
-                                : "min-w-0 truncate text-left",
-                              highlightAssignee && ASSIGN_GREEN
-                            )}
+                            className={
+                              opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
+                                ? "inline-block text-lg tracking-tight"
+                                : undefined
+                            }
                           >
-                            {assignee === PLANNING_URGENT_ASSIGNEE_SLUG
-                              ? PLANNING_URGENT_ASSIGNEE_DISPLAY
-                              : PLANNING_ASSIGNEE_OPTIONS.find(
-                                  (opt) => opt.value === assignee
-                                )?.label || assignee}
+                            {opt.label}
                           </span>
-                        </SelectTrigger>
-                        <SelectContent
-                          className={cn(
-                            "z-50 max-h-72",
-                            ASSIGNEE_SELECT_EMOJI_FONT
-                          )}
-                        >
-                          {PLANNING_ASSIGNEE_OPTIONS.map((opt) => (
-                            <SelectItem
-                              key={opt.value}
-                              value={opt.value}
-                              className={
-                                opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
-                                  ? "py-2.5 text-base leading-none focus:bg-muted focus-visible:bg-muted"
-                                  : undefined
-                              }
-                            >
-                              <span
-                                className={
-                                  opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
-                                    ? "inline-block text-lg tracking-tight"
-                                    : undefined
-                                }
-                              >
-                                {opt.label}
-                              </span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {canAddMore ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-8 w-8 shrink-0 self-center rounded-lg border-dashed shadow-none touch-manipulation"
-                        style={{ touchAction: "manipulation" }}
-                        onClick={addRow}
-                        aria-label="Ajouter un assigné"
-                      >
-                        <Plus className="size-4" aria-hidden />
-                      </Button>
-                    ) : null}
-                    {slot === 0 ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-8 w-8 shrink-0 self-center rounded-lg border-border/60 shadow-none touch-manipulation hover:bg-muted/80"
-                        style={{ touchAction: "manipulation" }}
-                        title="Copier les détails"
-                        aria-label="Copier les détails du service"
-                        onClick={() => {
-                          void handleCopyServiceDetails();
-                        }}
-                      >
-                        <Copy className="size-4" aria-hidden />
-                      </Button>
-                    ) : null}
-                    {showRemoveLine ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className={cn(
-                          "h-8 w-8 shrink-0 self-center rounded-md border-destructive/25 text-destructive shadow-none",
-                          "touch-manipulation transition-[color,background-color,transform,box-shadow]",
-                          "hover:border-destructive/50 hover:bg-destructive/10 hover:text-destructive",
-                          "active:scale-[0.96] active:bg-destructive/20",
-                          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                        )}
-                        style={{ touchAction: "manipulation" }}
-                        onClick={() => removeRow(slot)}
-                        aria-label="Supprimer cette ligne d’assignation"
-                      >
-                        <X className="size-4 shrink-0" aria-hidden />
-                      </Button>
-                    ) : null}
-                  </div>
-                );
-              })}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {canAddMore ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 self-center rounded-lg border-dashed shadow-none touch-manipulation"
+                    style={{ touchAction: "manipulation" }}
+                    onClick={addRow}
+                    aria-label="Ajouter un assigné"
+                  >
+                    <Plus className="size-4" aria-hidden />
+                  </Button>
+                ) : null}
+                {slot === 0 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 self-center rounded-lg border-border/60 shadow-none touch-manipulation hover:bg-muted/80"
+                    style={{ touchAction: "manipulation" }}
+                    title="Copier les détails"
+                    aria-label="Copier les détails du service"
+                    onClick={() => {
+                      void handleCopyServiceDetails();
+                    }}
+                  >
+                    <Copy className="size-4" aria-hidden />
+                  </Button>
+                ) : null}
+                {showRemoveLine ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className={cn(
+                      "h-8 w-8 shrink-0 self-center rounded-md border-destructive/25 text-destructive shadow-none",
+                      "touch-manipulation transition-[color,background-color,transform,box-shadow]",
+                      "hover:border-destructive/50 hover:bg-destructive/10 hover:text-destructive",
+                      "active:scale-[0.96] active:bg-destructive/20",
+                      "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    )}
+                    style={{ touchAction: "manipulation" }}
+                    onClick={() => removeRow(slot)}
+                    aria-label="Supprimer cette ligne d’assignation"
+                  >
+                    <X className="size-4 shrink-0" aria-hidden />
+                  </Button>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -1156,21 +1096,38 @@ export function DailyServicesView() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const read = () =>
-      window.localStorage.getItem(MELTIN_TEAM_REGISTER_NAME_KEY)?.trim() ?? "";
+    const read = () => {
+      const session = readPlanningAuthSession();
+      const fromSession = session?.displayName?.trim() ?? "";
+      if (fromSession) return fromSession;
+      return (
+        window.localStorage.getItem(MELTIN_TEAM_REGISTER_NAME_KEY)?.trim() ?? ""
+      );
+    };
     setMeName(read());
 
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== MELTIN_TEAM_REGISTER_NAME_KEY) return;
+      if (
+        e.key !== MELTIN_TEAM_REGISTER_NAME_KEY &&
+        e.key !== MELTIN_PLANNING_AUTH_SESSION_KEY
+      ) {
+        return;
+      }
       setMeName(read());
     };
     const onCustom = () => setMeName(read());
+    const onAuth = () => setMeName(read());
 
     window.addEventListener("storage", onStorage);
     window.addEventListener(MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT, onCustom);
+    window.addEventListener(MELTIN_AUTH_SESSION_CHANGED_EVENT, onAuth);
     return () => {
       window.removeEventListener("storage", onStorage);
-      window.removeEventListener(MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT, onCustom);
+      window.removeEventListener(
+        MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT,
+        onCustom
+      );
+      window.removeEventListener(MELTIN_AUTH_SESSION_CHANGED_EVENT, onAuth);
     };
   }, []);
 
@@ -1370,7 +1327,7 @@ export function DailyServicesView() {
       const list = normalizeAssigneeListFromStored(assignees[rowKey]);
       for (const slug of list) {
         const label = assigneeSlugToNotifyLabel(slug);
-        if (label && label === name) return true;
+        if (label && planningDisplayNameEquals(label, name)) return true;
       }
       return false;
     });

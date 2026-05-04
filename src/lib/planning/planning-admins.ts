@@ -1,7 +1,7 @@
 import { planningDisplayNameEquals } from "@/lib/planning/planning-team";
 
 /** Administrateurs autorisés à modifier les assignations et le planning « demain ». */
-export const ADMINS = ["Javed", "Karthik", "Thomas"] as const;
+export const ADMINS = ["Thomas", "Javed", "Karthik"] as const;
 
 export function isPlanningAdminDisplayName(name: string): boolean {
   const t = name.trim();

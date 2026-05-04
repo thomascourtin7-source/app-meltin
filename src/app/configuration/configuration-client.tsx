@@ -81,39 +81,51 @@ export function ConfigurationClient() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {isPlanningAdmin ? (
-            <div className="flex flex-col gap-3">
-              <Button
-                type="button"
-                variant="default"
-                size="lg"
-                onClick={() => {
-                  clearPlanningFinalizedForServiceDate(
-                    getTomorrowPlanningDateKey()
-                  );
-                  setPreparingTomorrow(true);
-                  router.push("/planning?mode=prep&date=tomorrow");
-                }}
-                className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
-              >
-                Faire le planning de demain
-              </Button>
+          <div className="flex flex-col gap-3">
+            <Button
+              type="button"
+              variant="default"
+              size="lg"
+              disabled={!isPlanningAdmin}
+              title={
+                !isPlanningAdmin
+                  ? "Réservé aux administrateurs (Thomas, Javed, Karthik)."
+                  : undefined
+              }
+              onClick={() => {
+                if (!isPlanningAdmin) return;
+                clearPlanningFinalizedForServiceDate(
+                  getTomorrowPlanningDateKey()
+                );
+                setPreparingTomorrow(true);
+                router.push("/planning?mode=prep&date=tomorrow");
+              }}
+              className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
+            >
+              Faire le planning de demain
+            </Button>
 
-              <Button
-                type="button"
-                variant="outline"
-                size="lg"
-                onClick={() =>
-                  router.push(
-                    `/planning-ia?spreadsheetId=${encodeURIComponent(spreadsheetId)}`
-                  )
-                }
-                className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
-              >
-                Faire le planning de demain IA 🤖
-              </Button>
-            </div>
-          ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              disabled={!isPlanningAdmin}
+              title={
+                !isPlanningAdmin
+                  ? "Réservé aux administrateurs (Thomas, Javed, Karthik)."
+                  : undefined
+              }
+              onClick={() => {
+                if (!isPlanningAdmin) return;
+                router.push(
+                  `/planning-ia?spreadsheetId=${encodeURIComponent(spreadsheetId)}`
+                );
+              }}
+              className="h-auto w-full rounded-xl border shadow-sm px-6 py-5 text-base font-semibold"
+            >
+              Faire le planning de demain IA 🤖
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

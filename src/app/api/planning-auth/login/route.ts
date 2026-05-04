@@ -77,14 +77,38 @@ export async function POST(request: Request) {
   const displayName = displayNameForPlanningAuthSlug(slug) ?? dbName;
   const sessionToken = randomUUID();
 
-  const { error: tokErr } = await supabase
+  const rowName =
+    row && typeof (row as { name?: unknown }).name === "string"
+      ? (row as { name: string }).name.trim()
+      : nameRaw.trim();
+
+  let upd = await supabase
     .from("agents_auth")
     .update({ session_token: sessionToken })
-    .eq("name", dbName);
+    .eq("name", rowName)
+    .select("name");
 
-  if (tokErr) {
+  if (upd.error) {
+    return NextResponse.json({ error: upd.error.message }, { status: 500 });
+  }
+
+  if (!upd.data?.length && rowName !== nameRaw.trim()) {
+    upd = await supabase
+      .from("agents_auth")
+      .update({ session_token: sessionToken })
+      .eq("name", nameRaw.trim())
+      .select("name");
+    if (upd.error) {
+      return NextResponse.json({ error: upd.error.message }, { status: 500 });
+    }
+  }
+
+  if (!upd.data?.length) {
     return NextResponse.json(
-      { error: tokErr.message },
+      {
+        error:
+          "Impossible d’enregistrer la session (aucune ligne mise à jour). Vérifiez la colonne session_token sur agents_auth.",
+      },
       { status: 500 }
     );
   }
