@@ -7,6 +7,8 @@ import { ChatProfileSettings } from "@/components/configuration/chat-profile-set
 import { clearPlanningAuthSession } from "@/lib/auth/planning-auth-session";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
 import { clearPlanningFinalizedForServiceDate, getTomorrowPlanningDateKey } from "@/lib/planning/planning-finalized-storage";
+import { Trophy } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
 import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
@@ -128,6 +130,29 @@ export function ConfigurationClient() {
           </div>
         </CardContent>
       </Card>
+
+      {isPlanningAdmin ? (
+        <Card className="rounded-xl border shadow-sm">
+          <CardHeader>
+            <CardTitle>Statistiques</CardTitle>
+            <CardDescription>
+              Tableau des scores par agent (rapports complétés, répartition des
+              journées).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              type="button"
+              variant="outline"
+              className="inline-flex w-full items-center justify-center gap-2 sm:w-auto"
+              onClick={() => router.push("/stats")}
+            >
+              <Trophy className="size-4 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden />
+              Voir le tableau des scores
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <PushNotificationCard />
     </div>
