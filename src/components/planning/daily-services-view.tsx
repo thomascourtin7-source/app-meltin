@@ -12,6 +12,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import {
   Calendar,
+  Copy,
   Loader2,
   Plus,
   RefreshCw,
@@ -62,6 +63,7 @@ import {
   generateServiceReportPdf,
 } from "@/lib/reports/service-report-pdf";
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
+import { formatLocalTimeHHMMSS } from "@/lib/reports/report-time";
 import { detectServiceReportKind } from "@/lib/planning/service-kind";
 
 const POLL_MS = 5 * 60 * 1000;
@@ -220,6 +222,32 @@ function formatVolRdvLine(row: DailyServiceRow): string {
   return `Vol : ${vol} | RDV : ${rdvPart}`;
 }
 
+function formatRdvForClipboard(row: DailyServiceRow): string {
+  const r1 = row.rdv1.trim();
+  const r2 = row.rdv2.trim();
+  if (r1 && r2) return `${r1} – ${r2}`;
+  if (r1) return r1;
+  if (r2) return r2;
+  return "—";
+}
+
+/** Texte partageable (presse-papiers) pour un service du planning. */
+function buildServiceDetailsClipboardText(row: DailyServiceRow): string {
+  const type = row.type.trim() || "—";
+  const client = row.client.trim() || "—";
+  const vol = row.vol.trim() || "—";
+  const rdv = formatRdvForClipboard(row);
+  const dest = row.destProv.trim() || "—";
+  const tel = row.tel.trim() || "—";
+  return [
+    `SERVICE ${type} - ${client}`,
+    `✈️ Vol : ${vol}`,
+    `⏰ RDV : ${rdv}`,
+    `📍 Dest/Prov : ${dest}`,
+    `📱 Tél : ${tel}`,
+  ].join("\n");
+}
+
 /** Nom à mettre en avant (vert) : assigné réel, hors urgence et hors « Non assigné ». */
 function isAssigneeHighlighted(slug: string): boolean {
   return (
@@ -279,8 +307,9 @@ type ServiceBlockProps = {
     row: DailyServiceRow;
     file: File;
   }) => Promise<void>;
-  onOpenReportForm: (opts: { serviceId: string }) => void;
+  onOpenReportForm: (opts: { serviceId: string }) => Promise<void>;
   onDownloadReportPdf: (opts: { serviceId: string }) => Promise<void>;
+  onDeleteReport: (opts: { serviceId: string }) => Promise<void>;
 };
 
 /** Police : meilleur rendu des emojis sur iOS / Android. */
@@ -304,6 +333,7 @@ function ServiceBlock({
   onCapturePhoto,
   onOpenReportForm,
   onDownloadReportPdf,
+  onDeleteReport,
 }: ServiceBlockProps) {
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
   const fileRef = useRef<HTMLInputElement>(null);
@@ -337,10 +367,172 @@ function ServiceBlock({
   const ASSIGN_GREEN =
     "font-bold text-emerald-900 dark:text-emerald-400";
 
+  const primaryAssigneeLabel = useMemo(() => {
+    for (const slug of assignees) {
+      const label = assigneeSlugToNotifyLabel(slug);
+      if (label) return label;
+    }
+    return null;
+  }, [assignees]);
+
+  const reportKind = useMemo(
+    () => detectServiceReportKind(row.type),
+    [row.type]
+  );
+  const showPhotoCapture = reportKind !== "departure";
+
+  const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [copyToastVisible, setCopyToastVisible] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (copyToastTimerRef.current) {
+        clearTimeout(copyToastTimerRef.current);
+        copyToastTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const showCopyToast = useCallback(() => {
+    setCopyToastVisible(true);
+    if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+    copyToastTimerRef.current = setTimeout(() => {
+      setCopyToastVisible(false);
+      copyToastTimerRef.current = null;
+    }, 2500);
+  }, []);
+
+  const handleCopyServiceDetails = useCallback(async () => {
+    const text = buildServiceDetailsClipboardText(row);
+    try {
+      await navigator.clipboard.writeText(text);
+      showCopyToast();
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        showCopyToast();
+      } catch {
+        window.alert("Copie impossible. Vérifiez les permissions du navigateur.");
+      }
+    }
+  }, [row, showCopyToast]);
+
+  const copyToast =
+    copyToastVisible ? (
+      <div
+        role="status"
+        aria-live="polite"
+        className="pointer-events-none absolute bottom-3 right-3 z-20 rounded-lg bg-foreground px-3 py-2 text-xs font-medium text-background shadow-lg"
+      >
+        Détails copiés !
+      </div>
+    ) : null;
+
+  if (isReportCompleted) {
+    return (
+      <div
+        className={cn(
+          "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-card px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+          isUrgent
+            ? "border-red-300/60 bg-red-50/90 dark:border-red-900/50 dark:bg-red-950/35"
+            : "border-border/50",
+          hasTimeConflict &&
+            showConflictUi &&
+            "bg-red-50 dark:bg-red-950/25"
+        )}
+      >
+        {hasTimeConflict && showConflictUi ? (
+          <div
+            className="mb-3 flex items-center gap-1.5 text-xs font-medium text-red-800 dark:text-red-200"
+            role="status"
+          >
+            <span aria-hidden>⚠️</span>
+            <span>Conflit horaire</span>
+          </div>
+        ) : null}
+
+        <div className="mb-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
+            Assigné
+          </div>
+          <div className="mt-1 text-sm font-semibold text-foreground">
+            {primaryAssigneeLabel ?? "—"}
+          </div>
+        </div>
+
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-2">
+          <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-foreground">
+            <PlanningPhoneRichText text={row.client.trim() || "—"} /> ✅
+          </h2>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-9 w-9 shrink-0 touch-manipulation border-border/60 shadow-none hover:bg-muted/80"
+            style={{ touchAction: "manipulation" }}
+            title="Copier les détails"
+            aria-label="Copier les détails du service"
+            onClick={() => {
+              void handleCopyServiceDetails();
+            }}
+          >
+            <Copy className="size-4" aria-hidden />
+          </Button>
+        </div>
+
+        <div className="flex items-stretch gap-2">
+          <Button
+            type="button"
+            className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600/90 dark:hover:bg-emerald-600"
+            onClick={() => {
+              onDownloadReportPdf({ serviceId: reportServiceId }).catch((e) => {
+                console.error(e);
+                window.alert(
+                  e instanceof Error ? e.message : "Téléchargement impossible."
+                );
+              });
+            }}
+          >
+            Télécharger le PDF
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-12 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/10"
+            aria-label="Supprimer le rapport"
+            onClick={() => {
+              const ok = window.confirm(
+                "Voulez-vous supprimer ce rapport et recommencer ?"
+              );
+              if (!ok) return;
+              onDeleteReport({ serviceId: reportServiceId }).catch((e) => {
+                console.error(e);
+                window.alert(
+                  e instanceof Error ? e.message : "Suppression impossible."
+                );
+              });
+            }}
+          >
+            🗑️
+          </Button>
+        </div>
+        {copyToast}
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
-        "mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-card px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+        "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-card px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
         isUrgent
           ? "border-red-300/60 bg-red-50/90 dark:border-red-900/50 dark:bg-red-950/35"
           : "border-border/50",
@@ -467,6 +659,22 @@ function ServiceBlock({
                     <Plus className="size-4" aria-hidden />
                   </Button>
                 ) : null}
+                {slot === 0 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 self-center rounded-lg border-border/60 shadow-none touch-manipulation hover:bg-muted/80"
+                    style={{ touchAction: "manipulation" }}
+                    title="Copier les détails"
+                    aria-label="Copier les détails du service"
+                    onClick={() => {
+                      void handleCopyServiceDetails();
+                    }}
+                  >
+                    <Copy className="size-4" aria-hidden />
+                  </Button>
+                ) : null}
                 {showRemoveLine ? (
                   <Button
                     type="button"
@@ -495,46 +703,47 @@ function ServiceBlock({
       <div className="space-y-0">
         <h2 className="mb-3 text-xl font-bold leading-snug tracking-tight text-foreground">
           <PlanningPhoneRichText text={row.client.trim() || "—"} />
-          {!isReportCompleted && isPec ? " 🟠" : ""}
-          {isReportCompleted ? " ✅" : ""}
+          {isPec ? " 🟠" : ""}
         </h2>
 
-        <div className="mb-2 flex items-center gap-2">
-          <button
-            type="button"
-            className={cn(
-              "inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-1 text-xs font-medium text-foreground",
-              "active:scale-[0.98] transition-transform"
-            )}
-            onClick={() => fileRef.current?.click()}
-            aria-label={hasPhoto ? "Photo prise" : "Prendre une photo"}
-          >
-            <span aria-hidden>📷</span>
-            {hasPhoto ? <span aria-hidden>✅</span> : null}
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (!f) return;
-              onCapturePhoto({ serviceId: reportServiceId, row, file: f }).catch(
-                (err) => {
-                  console.error(err);
-                  window.alert(
-                    err instanceof Error
-                      ? err.message
-                      : "Upload photo impossible."
-                  );
-                }
-              );
-              e.currentTarget.value = "";
-            }}
-          />
-        </div>
+        {showPhotoCapture ? (
+          <div className="mb-2 flex items-center gap-2">
+            <button
+              type="button"
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-1 text-xs font-medium text-foreground",
+                "active:scale-[0.98] transition-transform"
+              )}
+              onClick={() => fileRef.current?.click()}
+              aria-label={hasPhoto ? "Photo prise" : "Prendre une photo"}
+            >
+              <span aria-hidden>📷</span>
+              {hasPhoto ? <span aria-hidden>✅</span> : null}
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                onCapturePhoto({ serviceId: reportServiceId, row, file: f }).catch(
+                  (err) => {
+                    console.error(err);
+                    window.alert(
+                      err instanceof Error
+                        ? err.message
+                        : "Upload photo impossible."
+                    );
+                  }
+                );
+                e.currentTarget.value = "";
+              }}
+            />
+          </div>
+        ) : null}
 
         <p className="mb-3 text-sm leading-relaxed text-slate-700 dark:text-slate-300">
           <span className="inline-flex items-center gap-3">
@@ -542,29 +751,27 @@ function ServiceBlock({
               Type :{" "}
             </span>
             <PlanningPhoneRichText text={typeLine || "—"} />
-            {!isReportCompleted ? (
-              <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-orange-500"
-                  checked={Boolean(isPec)}
-                  onChange={(e) => {
-                    const next = e.target.checked;
-                    onTogglePec({ serviceId: reportServiceId, next }).catch(
-                      (err) => {
-                        console.error(err);
-                        window.alert(
-                          err instanceof Error
-                            ? err.message
-                            : "Mise à jour PEC impossible."
-                        );
-                      }
-                    );
-                  }}
-                />
-                PEC
-              </label>
-            ) : null}
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-orange-500"
+                checked={Boolean(isPec)}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  onTogglePec({ serviceId: reportServiceId, next }).catch(
+                    (err) => {
+                      console.error(err);
+                      window.alert(
+                        err instanceof Error
+                          ? err.message
+                          : "Mise à jour PEC impossible."
+                      );
+                    }
+                  );
+                }}
+              />
+              PEC
+            </label>
           </span>
         </p>
         <p className="mb-3 text-sm font-medium leading-relaxed text-slate-800 dark:text-slate-200">
@@ -595,32 +802,23 @@ function ServiceBlock({
       </div>
 
       <div className="mt-5 border-t border-border/40 pt-4">
-        {isReportCompleted ? (
-          <Button
-            type="button"
-            className="w-full bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600/90 dark:hover:bg-emerald-600"
-            onClick={() => {
-              onDownloadReportPdf({ serviceId: reportServiceId }).catch((e) => {
-                console.error(e);
-                window.alert(
-                  e instanceof Error ? e.message : "Téléchargement impossible."
-                );
-              });
-            }}
-          >
-            Télécharger le PDF
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full"
-            onClick={() => onOpenReportForm({ serviceId: reportServiceId })}
-          >
-            Faire le rapport
-          </Button>
-        )}
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full"
+          onClick={() => {
+            void onOpenReportForm({ serviceId: reportServiceId }).catch((e) => {
+              console.error(e);
+              window.alert(
+                e instanceof Error ? e.message : "Ouverture du rapport impossible."
+              );
+            });
+          }}
+        >
+          Faire le rapport
+        </Button>
       </div>
+      {copyToast}
     </div>
   );
 }
@@ -1016,10 +1214,18 @@ export function DailyServicesView() {
     for (const label of agentLabels) out[label] = "black";
 
     const servicesByAgent = new Map<string, string[]>();
+    const reportKindByServiceId = new Map<
+      string,
+      ReturnType<typeof detectServiceReportKind>
+    >();
     for (const row of filtered) {
       const rowKey = stableServiceRowKey(row);
       const list = normalizeAssigneeListFromStored(assignees[rowKey]);
       const serviceId = serviceReportIdFromRow(row);
+      reportKindByServiceId.set(
+        serviceId,
+        detectServiceReportKind(row.type)
+      );
       for (const slug of list) {
         const label = assigneeSlugToNotifyLabel(slug);
         if (!label) continue;
@@ -1042,8 +1248,10 @@ export function DailyServicesView() {
         const completed = Boolean(isCompletedByServiceId[sid]);
         const pec = Boolean(isPecByServiceId[sid]);
         const photo = Boolean(hasPhotoByServiceId[sid]);
+        const kind = reportKindByServiceId.get(sid) ?? "arrival";
         if (!completed && pec) anyPec = true;
-        if (!completed && photo) anyPhoto = true;
+        /** Départs : pas de jaune « photo » (pas de photo planning) ; arrivée / transit : inchangé. */
+        if (!completed && photo && kind !== "departure") anyPhoto = true;
         if (!completed) anyNotCompleted = true;
       }
 
@@ -1060,6 +1268,7 @@ export function DailyServicesView() {
     filtered,
     isCompletedByServiceId,
     isPecByServiceId,
+    hasPhotoByServiceId,
   ]);
 
   function statusDotClass(status: AgentStatus): string {
@@ -1080,6 +1289,7 @@ export function DailyServicesView() {
 
   const togglePec = useCallback(
     async (opts: { serviceId: string; next: boolean; row: DailyServiceRow }) => {
+      const kind = detectServiceReportKind(opts.row.type);
       const optimistic = {
         ...(reportExistence ?? {
           hasReport: {},
@@ -1094,18 +1304,23 @@ export function DailyServicesView() {
       };
       void mutateReports(optimistic, { revalidate: false });
 
+      const body: Record<string, unknown> = {
+        spreadsheet_id: spreadsheetId,
+        service_id: opts.serviceId,
+        service_date: opts.row.dateIso,
+        service_client: opts.row.client,
+        service_type: opts.row.type,
+        report_kind: kind,
+        is_pec: opts.next,
+      };
+      if (kind === "departure") {
+        body.meeting_time = opts.next ? formatLocalTimeHHMMSS() : null;
+      }
+
       const res = await fetch("/api/service-reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          spreadsheet_id: spreadsheetId,
-          service_id: opts.serviceId,
-          service_date: opts.row.dateIso,
-          service_client: opts.row.client,
-          service_type: opts.row.type,
-          report_kind: detectServiceReportKind(opts.row.type),
-          is_pec: opts.next,
-        }),
+        body: JSON.stringify(body),
       });
       const json = (await res.json()) as { report?: unknown; error?: string };
       if (!res.ok) {
@@ -1114,11 +1329,16 @@ export function DailyServicesView() {
       }
       void mutateReports();
     },
-    [mutateReports, reportExistence, spreadsheetId]
+    [detectServiceReportKind, mutateReports, reportExistence, spreadsheetId]
   );
 
   const capturePhoto = useCallback(
     async (opts: { serviceId: string; row: DailyServiceRow; file: File }) => {
+      const kind = detectServiceReportKind(opts.row.type);
+      if (kind === "departure") {
+        throw new Error("La photo n’est pas disponible pour les départs.");
+      }
+
       const ts = Date.now();
       const safeFileName = `photo-${ts}.png`;
 
@@ -1161,8 +1381,9 @@ export function DailyServicesView() {
           service_date: opts.row.dateIso,
           service_client: opts.row.client,
           service_type: opts.row.type,
-          report_kind: detectServiceReportKind(opts.row.type),
+          report_kind: kind,
           photo_url: json.publicUrl,
+          meeting_time: formatLocalTimeHHMMSS(),
         }),
       });
       const saveJson = (await save.json()) as { error?: string };
@@ -1176,14 +1397,37 @@ export function DailyServicesView() {
   );
 
   const openReportForm = useCallback(
-    (opts: { serviceId: string }) => {
+    async (opts: { serviceId: string }) => {
+      const row = filtered.find(
+        (r) => serviceReportIdFromRow(r) === opts.serviceId
+      );
+      if (row) {
+        const res = await fetch("/api/service-reports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            spreadsheet_id: spreadsheetId,
+            service_id: opts.serviceId,
+            service_date: row.dateIso,
+            service_client: row.client,
+            service_type: row.type,
+            report_kind: detectServiceReportKind(row.type),
+            end_of_service: formatLocalTimeHHMMSS(),
+          }),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok) {
+          throw new Error(json?.error || "Enregistrement heure de fin impossible.");
+        }
+        void mutateReports();
+      }
       router.push(
         `/rapport/${encodeURIComponent(opts.serviceId)}?spreadsheetId=${encodeURIComponent(
           spreadsheetId
         )}&date=${encodeURIComponent(selectedKey)}`
       );
     },
-    [router, spreadsheetId, selectedKey]
+    [detectServiceReportKind, filtered, mutateReports, router, spreadsheetId, selectedKey]
   );
 
   const downloadReportPdf = useCallback(
@@ -1220,25 +1464,11 @@ export function DailyServicesView() {
         serviceTel: r.service_tel,
         serviceDriverInfo: r.service_driver_info,
         assigneeName: r.assignee_name,
-        deplanning: r.deplanning,
-        pax: r.pax,
-        serviceStartedAt: r.service_started_at,
         meetingTime: r.meeting_time,
-        travelClass: r.travel_class,
-        immigrationSpeed: r.immigration_speed,
-        immigrationSecurity: r.immigration_security,
-        immigrationSecuritySpeed: r.immigration_security_speed,
-        checkinBags: r.checkin_bags,
-        customsControl: r.customs_control,
-        taxRefund: r.tax_refund,
-        taxRefundSpeed: r.tax_refund_speed,
-        taxRefundBy: r.tax_refund_by,
-        checkin: r.checkin,
-        vipLounge: r.vip_lounge,
-        boardingEndOfService: r.boarding_end_of_service,
-        transitBags: r.transit_bags,
         endOfService: r.end_of_service,
-        placeEndOfService: r.place_end_of_service,
+        pax: r.pax,
+        immigrationSpeed: r.immigration_speed,
+        immigrationSecuritySpeed: r.immigration_security_speed,
         comments: r.comments,
       });
       doc.save(
@@ -1249,6 +1479,47 @@ export function DailyServicesView() {
       );
     },
     [spreadsheetId]
+  );
+
+  const deleteReport = useCallback(
+    async (opts: { serviceId: string }) => {
+      const base = reportExistence ?? {
+        hasReport: {},
+        isPecByServiceId: {},
+        isCompletedByServiceId: {},
+        hasPhotoByServiceId: {},
+      };
+      const optimistic: ReportsData = {
+        ...base,
+        hasReport: { ...base.hasReport, [opts.serviceId]: false },
+        isPecByServiceId: { ...base.isPecByServiceId, [opts.serviceId]: false },
+        isCompletedByServiceId: {
+          ...base.isCompletedByServiceId,
+          [opts.serviceId]: false,
+        },
+        hasPhotoByServiceId: {
+          ...base.hasPhotoByServiceId,
+          [opts.serviceId]: false,
+        },
+      };
+      void mutateReports(optimistic, { revalidate: false });
+
+      const res = await fetch("/api/service-reports", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spreadsheet_id: spreadsheetId,
+          service_id: opts.serviceId,
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        void mutateReports();
+        throw new Error(json?.error || "Suppression impossible.");
+      }
+      void mutateReports();
+    },
+    [mutateReports, reportExistence, spreadsheetId]
   );
 
   /**
@@ -1599,6 +1870,7 @@ export function DailyServicesView() {
                     await downloadReportPdf(o);
                     void mutateReports();
                   }}
+                  onDeleteReport={deleteReport}
                 />
               );
             })}

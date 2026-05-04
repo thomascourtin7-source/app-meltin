@@ -1,6 +1,8 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
+import { formatTimeForDisplay } from "@/lib/reports/report-time";
+
 export type ServiceReportPdfData = {
   title: string;
   reportKind?: "arrival" | "departure" | "transit";
@@ -90,12 +92,6 @@ function clean(v: unknown): string {
   return String(v ?? "").trim();
 }
 
-function yesNo(v: boolean | null | undefined): string {
-  if (v === true) return "YES";
-  if (v === false) return "NO";
-  return "—";
-}
-
 export async function generateServiceReportPdf(
   data: ServiceReportPdfData
 ): Promise<jsPDF> {
@@ -135,6 +131,8 @@ export async function generateServiceReportPdf(
   const serviceDetails: Array<[string, string]> = [
     ["VOL", clean(data.serviceVol) || "—"],
     ["DEST/PROV", clean(data.serviceDestProv) || "—"],
+    ["HEURE DÉBUT (autom.)", formatTimeForDisplay(data.meetingTime)],
+    ["HEURE FIN (autom.)", formatTimeForDisplay(data.endOfService)],
   ];
 
   autoTable(doc, {
@@ -154,58 +152,18 @@ export async function generateServiceReportPdf(
   const kindLabel =
     kind === "departure" ? "Departure" : kind === "transit" ? "Transit" : "Arrival";
 
-  const reportDetails: Array<[string, string]> =
-    kind === "departure"
-      ? [
-          ["PAX", data.pax != null ? String(data.pax) : "—"],
-          ["CHECKIN BAGS", data.checkinBags != null ? String(data.checkinBags) : "—"],
-          ["MEETING TIME", clean(data.meetingTime) || "—"],
-          ["TAX REFUND", yesNo(data.taxRefund)],
-          ["TAX REFUND TIME", clean(data.taxRefundSpeed) || "—"],
-          ["REFUND TAX BY", clean(data.taxRefundBy) || "—"],
-          ["CHECKIN", yesNo(data.checkin)],
-          ["TRAVEL CLASS", clean(data.travelClass) || "—"],
-          [
-            "IMMIGRATION & SECURITY SPEED",
-            clean(data.immigrationSecuritySpeed) || "—",
-          ],
-          ["VIP LOUNGE", yesNo(data.vipLounge)],
-          ["BOARDING / END OF SERVICE", clean(data.boardingEndOfService) || "—"],
-          ["END OF SERVICE", clean(data.endOfService) || "—"],
-          ["COMMENTS", clean(data.comments) || "—"],
-        ]
-      : kind === "transit"
-        ? [
-            ["DEPLANNING", clean(data.deplanning) || "—"],
-            ["PAX", data.pax != null ? String(data.pax) : "—"],
-            ["MEETING TIME", clean(data.meetingTime) || "—"],
-            ["TRAVEL CLASS", clean(data.travelClass) || "—"],
-            ["TRANSIT BAGS", clean(data.transitBags) || "—"],
-            ["IMMIGRATION & SECURITY", yesNo(data.immigrationSecurity)],
-            [
-              "IMMIGRATION & SECURITY SPEED",
-              clean(data.immigrationSecuritySpeed) || "—",
-            ],
-            ["VIP LOUNGE", yesNo(data.vipLounge)],
-            ["BOARDING / END OF SERVICE", clean(data.boardingEndOfService) || "—"],
-            ["END OF SERVICE", clean(data.endOfService) || "—"],
-            ["COMMENTS", clean(data.comments) || "—"],
-          ]
-        : [
-            ["DEPLANNING", clean(data.deplanning) || "—"],
-            ["PAX", data.pax != null ? String(data.pax) : "—"],
-            ["SERVICE STARTED AT", clean(data.serviceStartedAt) || "—"],
-            ["TRAVEL CLASS", clean(data.travelClass) || "—"],
-            ["IMMIGRATION SPEED", clean(data.immigrationSpeed) || "—"],
-            [
-              "CHECKIN BAGS",
-              data.checkinBags != null ? String(data.checkinBags) : "—",
-            ],
-            ["CUSTOMS CONTROL", yesNo(data.customsControl)],
-            ["END OF SERVICE", clean(data.endOfService) || "—"],
-            ["PLACE END OF SERVICE", clean(data.placeEndOfService) || "—"],
-            ["COMMENTS", clean(data.comments) || "—"],
-          ];
+  const immigrationLabel =
+    kind === "arrival" ? "IMMIGRATION SPEED" : "IMMIGRATION & SECURITY SPEED";
+  const immigrationValue =
+    kind === "arrival"
+      ? clean(data.immigrationSpeed)
+      : clean(data.immigrationSecuritySpeed);
+
+  const reportDetails: Array<[string, string]> = [
+    ["PAX", data.pax != null ? String(data.pax) : "—"],
+    [immigrationLabel, immigrationValue || "—"],
+    ["COMMENTS", clean(data.comments) || "—"],
+  ];
 
   const afterService = (doc as unknown as { lastAutoTable?: { finalY: number } })
     .lastAutoTable?.finalY;

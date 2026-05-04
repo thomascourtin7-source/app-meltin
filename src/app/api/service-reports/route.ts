@@ -140,3 +140,106 @@ export async function POST(request: Request) {
   return NextResponse.json({ report: data as ServiceReportRow });
 }
 
+const SERVICE_PHOTOS_BUCKET = "service-photos";
+
+function objectPathInBucketFromPublicUrl(
+  publicUrl: string,
+  bucket: string
+): string | null {
+  const trimmed = publicUrl.trim();
+  if (!trimmed) return null;
+  try {
+    const u = new URL(trimmed);
+    const idx = u.pathname.indexOf(`/${bucket}/`);
+    if (idx === -1) return null;
+    const raw = u.pathname.slice(idx + bucket.length + 2);
+    return raw ? decodeURIComponent(raw) : null;
+  } catch {
+    const marker = `${bucket}/`;
+    const i = trimmed.indexOf(marker);
+    if (i === -1) return null;
+    const tail = trimmed.slice(i + marker.length).split(/[?#]/)[0];
+    return tail ? decodeURIComponent(tail) : null;
+  }
+}
+
+export async function DELETE(request: Request) {
+  const { supabase, error } = supabaseOrError();
+  if (error) return error;
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Body JSON invalide." }, { status: 400 });
+  }
+
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Body JSON invalide." }, { status: 400 });
+  }
+
+  const b = body as {
+    spreadsheet_id?: unknown;
+    service_id?: unknown;
+  };
+
+  const spreadsheetId =
+    typeof b.spreadsheet_id === "string" ? b.spreadsheet_id.trim() : "";
+  const serviceId =
+    typeof b.service_id === "string" ? b.service_id.trim() : "";
+
+  if (!spreadsheetId || !serviceId) {
+    return NextResponse.json(
+      { error: "Champs requis manquants (spreadsheet_id, service_id)." },
+      { status: 400 }
+    );
+  }
+
+  const { data: row, error: selErr } = await supabase
+    .from("service_reports")
+    .select("photo_url")
+    .eq("spreadsheet_id", spreadsheetId)
+    .eq("service_id", serviceId)
+    .maybeSingle();
+
+  if (selErr) {
+    return NextResponse.json({ error: selErr.message }, { status: 500 });
+  }
+
+  if (!row) {
+    return NextResponse.json({ error: "Rapport introuvable." }, { status: 404 });
+  }
+
+  const photoUrl =
+    typeof (row as { photo_url?: unknown }).photo_url === "string"
+      ? (row as { photo_url: string }).photo_url.trim()
+      : "";
+
+  const { error: delErr } = await supabase
+    .from("service_reports")
+    .delete()
+    .eq("spreadsheet_id", spreadsheetId)
+    .eq("service_id", serviceId);
+
+  if (delErr) {
+    return NextResponse.json({ error: delErr.message }, { status: 500 });
+  }
+
+  if (photoUrl) {
+    const objectPath = objectPathInBucketFromPublicUrl(
+      photoUrl,
+      SERVICE_PHOTOS_BUCKET
+    );
+    if (objectPath) {
+      const { error: rmErr } = await supabase.storage
+        .from(SERVICE_PHOTOS_BUCKET)
+        .remove([objectPath]);
+      if (rmErr) {
+        console.error("[service-reports DELETE] storage remove", rmErr);
+      }
+    }
+  }
+
+  return NextResponse.json({ ok: true });
+}
+
