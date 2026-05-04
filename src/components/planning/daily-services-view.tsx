@@ -40,8 +40,10 @@ import {
   PLANNING_ASSIGNEE_OPTIONS,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
   PLANNING_URGENT_ASSIGNEE_SLUG,
+  assigneeSlugFromNotifyLabel,
   assigneeSlugToNotifyLabel,
   isUrgentAssignee,
+  planningDisplayNameEquals,
   normalizeAssigneeListFromStored,
   normalizeAssigneeStoredValue,
 } from "@/lib/planning/planning-team";
@@ -295,6 +297,8 @@ type ServiceBlockProps = {
   rowKey: string;
   reportServiceId: string;
   assignees: string[];
+  /** Profil courant (« S’enregistrer »), pour permissions photo / PEC. */
+  meName: string;
   onAssigneesChange: (key: string, next: string[]) => void;
   hasTimeConflict?: boolean;
   showConflictUi?: boolean;
@@ -323,6 +327,7 @@ function ServiceBlock({
   rowKey,
   reportServiceId,
   assignees,
+  meName,
   onAssigneesChange,
   hasTimeConflict = false,
   showConflictUi = false,
@@ -381,14 +386,44 @@ function ServiceBlock({
   );
   const showPhotoCapture = reportKind !== "departure";
 
+  const hasNamedAssignee = useMemo(
+    () => assignees.some((s) => assigneeSlugToNotifyLabel(s) != null),
+    [assignees]
+  );
+
+  const canAction = useMemo(() => {
+    if (!hasNamedAssignee) return true;
+    const me = meName.trim();
+    if (!me) return false;
+    return assignees.some((s) => {
+      const label = assigneeSlugToNotifyLabel(s);
+      return label != null && planningDisplayNameEquals(label, me);
+    });
+  }, [assignees, hasNamedAssignee, meName]);
+
+  const ensureSelfAssignedIfUnassigned = useCallback(() => {
+    if (hasNamedAssignee) return;
+    const me = meName.trim();
+    if (!me) return;
+    const slug = assigneeSlugFromNotifyLabel(me);
+    if (!slug) return;
+    onAssigneesChange(rowKey, [slug]);
+  }, [hasNamedAssignee, meName, onAssigneesChange, rowKey]);
+
   const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lockedHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copyToastVisible, setCopyToastVisible] = useState(false);
+  const [lockedHintVisible, setLockedHintVisible] = useState(false);
 
   useEffect(() => {
     return () => {
       if (copyToastTimerRef.current) {
         clearTimeout(copyToastTimerRef.current);
         copyToastTimerRef.current = null;
+      }
+      if (lockedHintTimerRef.current) {
+        clearTimeout(lockedHintTimerRef.current);
+        lockedHintTimerRef.current = null;
       }
     };
   }, []);
@@ -400,6 +435,15 @@ function ServiceBlock({
       setCopyToastVisible(false);
       copyToastTimerRef.current = null;
     }, 2500);
+  }, []);
+
+  const showLockedHint = useCallback(() => {
+    setLockedHintVisible(true);
+    if (lockedHintTimerRef.current) clearTimeout(lockedHintTimerRef.current);
+    lockedHintTimerRef.current = setTimeout(() => {
+      setLockedHintVisible(false);
+      lockedHintTimerRef.current = null;
+    }, 2200);
   }, []);
 
   const handleCopyServiceDetails = useCallback(async () => {
@@ -433,6 +477,17 @@ function ServiceBlock({
         className="pointer-events-none absolute bottom-3 right-3 z-20 rounded-lg bg-foreground px-3 py-2 text-xs font-medium text-background shadow-lg"
       >
         Détails copiés !
+      </div>
+    ) : null;
+
+  const lockedActionHint =
+    lockedHintVisible ? (
+      <div
+        role="status"
+        aria-live="polite"
+        className="pointer-events-none absolute bottom-14 right-3 z-20 max-w-[min(18rem,calc(100%-1.5rem))] rounded-lg border border-amber-500/35 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950 shadow-md dark:border-amber-400/30 dark:bg-amber-950/60 dark:text-amber-50"
+      >
+        Réservé à l’agent assigné. Utilisez « S’enregistrer » si besoin.
       </div>
     ) : null;
 
@@ -707,15 +762,34 @@ function ServiceBlock({
         </h2>
 
         {showPhotoCapture ? (
-          <div className="mb-2 flex items-center gap-2">
+          <div
+            className={cn(
+              "mb-2 flex items-center gap-2",
+              !canAction && "opacity-45"
+            )}
+          >
             <button
               type="button"
               className={cn(
                 "inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-1 text-xs font-medium text-foreground",
-                "active:scale-[0.98] transition-transform"
+                "active:scale-[0.98] transition-transform",
+                !canAction && "cursor-not-allowed"
               )}
-              onClick={() => fileRef.current?.click()}
+              onClick={() => {
+                if (!canAction) {
+                  showLockedHint();
+                  return;
+                }
+                ensureSelfAssignedIfUnassigned();
+                fileRef.current?.click();
+              }}
               aria-label={hasPhoto ? "Photo prise" : "Prendre une photo"}
+              aria-disabled={!canAction}
+              title={
+                !canAction && hasNamedAssignee
+                  ? "Réservé à l’agent assigné à ce service"
+                  : undefined
+              }
             >
               <span aria-hidden>📷</span>
               {hasPhoto ? <span aria-hidden>✅</span> : null}
@@ -729,6 +803,12 @@ function ServiceBlock({
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (!f) return;
+                if (!canAction) {
+                  showLockedHint();
+                  e.currentTarget.value = "";
+                  return;
+                }
+                ensureSelfAssignedIfUnassigned();
                 onCapturePhoto({ serviceId: reportServiceId, row, file: f }).catch(
                   (err) => {
                     console.error(err);
@@ -751,27 +831,54 @@ function ServiceBlock({
               Type :{" "}
             </span>
             <PlanningPhoneRichText text={typeLine || "—"} />
-            <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-orange-500"
-                checked={Boolean(isPec)}
-                onChange={(e) => {
-                  const next = e.target.checked;
-                  onTogglePec({ serviceId: reportServiceId, next }).catch(
-                    (err) => {
-                      console.error(err);
-                      window.alert(
-                        err instanceof Error
-                          ? err.message
-                          : "Mise à jour PEC impossible."
-                      );
+            <span className="relative inline-flex items-center">
+              <label
+                className={cn(
+                  "inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200",
+                  !canAction && "opacity-45"
+                )}
+                title={
+                  !canAction && hasNamedAssignee
+                    ? "Réservé à l’agent assigné à ce service"
+                    : undefined
+                }
+              >
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-orange-500 disabled:opacity-70"
+                  checked={Boolean(isPec)}
+                  disabled={!canAction}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    if (!canAction) {
+                      showLockedHint();
+                      return;
                     }
-                  );
-                }}
-              />
-              PEC
-            </label>
+                    if (next) ensureSelfAssignedIfUnassigned();
+                    onTogglePec({ serviceId: reportServiceId, next }).catch(
+                      (err) => {
+                        console.error(err);
+                        window.alert(
+                          err instanceof Error
+                            ? err.message
+                            : "Mise à jour PEC impossible."
+                        );
+                      }
+                    );
+                  }}
+                />
+                PEC
+              </label>
+              {!canAction && hasNamedAssignee ? (
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  aria-label="Action réservée à l’agent assigné"
+                  className="absolute inset-0 z-[1] cursor-not-allowed rounded-sm"
+                  onClick={() => showLockedHint()}
+                />
+              ) : null}
+            </span>
           </span>
         </p>
         <p className="mb-3 text-sm font-medium leading-relaxed text-slate-800 dark:text-slate-200">
@@ -819,6 +926,7 @@ function ServiceBlock({
         </Button>
       </div>
       {copyToast}
+      {lockedActionHint}
     </div>
   );
 }
@@ -1849,6 +1957,7 @@ export function DailyServicesView() {
                   rowKey={rowKey}
                   reportServiceId={serviceReportIdFromRow(row)}
                   assignees={assigneeList}
+                  meName={meName}
                   onAssigneesChange={setAssigneesForRow}
                   hasTimeConflict={conflictRowKeys.has(rowKey)}
                   showConflictUi={prepModeActive}

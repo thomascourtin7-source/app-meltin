@@ -117,12 +117,31 @@ export function assigneeSlugToNotifyLabel(slug: string): string | null {
   return opt?.label ?? slug;
 }
 
-function normKey(s: string): string {
+export function normKey(s: string): string {
   return s
     .trim()
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+/** Compare deux libellés « humains » (profil, agent affiché). */
+export function planningDisplayNameEquals(a: string, b: string): boolean {
+  return normKey(a) === normKey(b);
+}
+
+/** Slug planning pour un libellé d’agent (ex. profil « S’enregistrer »). */
+export function assigneeSlugFromNotifyLabel(label: string): string | null {
+  const t = label.trim();
+  if (!t) return null;
+  const key = normKey(t);
+  for (const o of PLANNING_ASSIGNEE_OPTIONS) {
+    if (o.value === DEFAULT_PLANNING_ASSIGNEE_SLUG || isUrgentAssignee(o.value)) {
+      continue;
+    }
+    if (normKey(o.label) === key) return o.value;
+  }
+  return null;
 }
 
 /**
