@@ -1815,7 +1815,7 @@ export function DailyServicesView() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               serviceId: serviceReportIdFromRow(row),
-              rdv1: row.rdv1,
+              rdv: row.rdv1 || row.rdv2 || "",
             }),
           }).catch(() => {});
         }

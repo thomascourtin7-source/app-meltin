@@ -85,8 +85,12 @@ const ALARM_UNCOVERED_BODY = "who can do it ?";
 function normalizeRdvToTitleSuffix(rdv: string | null | undefined): string {
   const t = String(rdv ?? "").trim();
   if (!t) return "";
+  // If it's a range like "06:45 - 09:45", keep only the start.
+  const start = t.split(/[-–—]/)[0]?.trim() ?? "";
+  if (!start) return "";
+
   // Accept "08:30", "8:30", "08h30", "08:30:00", etc.
-  const m = /^(\d{1,2})\s*(?:[:hH])\s*(\d{2})/.exec(t);
+  const m = /^(\d{1,2})\s*(?:[:hH])\s*(\d{2})/.exec(start);
   if (!m) return "";
   const hh = String(Math.min(23, Math.max(0, Number(m[1])))).padStart(2, "0");
   const mm = String(Math.min(59, Math.max(0, Number(m[2])))).padStart(2, "0");

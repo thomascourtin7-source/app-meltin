@@ -34,8 +34,12 @@ export async function POST(req: Request) {
   }
 
   const rdv =
-    body && typeof body === "object" && "rdv1" in body && typeof (body as { rdv1?: unknown }).rdv1 === "string"
-      ? ((body as { rdv1: string }).rdv1 || "").trim()
+    body && typeof body === "object"
+      ? typeof (body as { rdv?: unknown }).rdv === "string"
+        ? ((body as { rdv: string }).rdv || "").trim()
+        : typeof (body as { rdv1?: unknown }).rdv1 === "string"
+          ? ((body as { rdv1: string }).rdv1 || "").trim()
+          : null
       : null;
 
   const result = await broadcastAlarmUncoveredPush({ rdv });
