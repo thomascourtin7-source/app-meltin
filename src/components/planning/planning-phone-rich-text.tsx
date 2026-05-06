@@ -16,7 +16,16 @@ import { cn } from "@/lib/utils";
 const phoneButtonClass =
   "inline max-w-full cursor-pointer rounded-sm px-0.5 text-left font-medium text-blue-600 underline decoration-blue-600 underline-offset-[3px] transition-colors hover:bg-blue-500/10 hover:text-blue-800 active:bg-blue-500/15 dark:text-blue-400 dark:decoration-blue-400 dark:hover:bg-blue-500/15 dark:hover:text-blue-200";
 
-function PhoneContactSheetTrigger({ raw }: { raw: string }) {
+const phoneButtonClassInherit =
+  "inline max-w-full cursor-pointer rounded-sm px-0.5 text-left font-medium text-current underline decoration-current/50 underline-offset-[3px] transition-colors hover:bg-black/5 hover:text-current active:bg-black/10";
+
+function PhoneContactSheetTrigger({
+  raw,
+  tone = "default",
+}: {
+  raw: string;
+  tone?: "default" | "inherit";
+}) {
   const normalized = normalizePhoneForLinks(raw);
   if (!normalized) {
     return <span className="whitespace-pre-wrap">{raw}</span>;
@@ -33,7 +42,10 @@ function PhoneContactSheetTrigger({ raw }: { raw: string }) {
             role="button"
             tabIndex={0}
             aria-label={`Ouvrir les options de contact pour ${normalized.e164Display}`}
-            className={cn(phoneButtonClass, "touch-manipulation")}
+            className={cn(
+              tone === "inherit" ? phoneButtonClassInherit : phoneButtonClass,
+              "touch-manipulation"
+            )}
             style={{ touchAction: "manipulation" }}
           >
             {raw}
@@ -105,9 +117,11 @@ function PhoneContactSheetTrigger({ raw }: { raw: string }) {
 export function PlanningPhoneRichText({
   text,
   className,
+  tone = "default",
 }: {
   text: string;
   className?: string;
+  tone?: "default" | "inherit";
 }) {
   const segments = splitTextByPhoneMatches(text);
   return (
@@ -117,7 +131,7 @@ export function PlanningPhoneRichText({
         if (seg.kind === "text") {
           return <span key={key}>{seg.value}</span>;
         }
-        return <PhoneContactSheetTrigger key={key} raw={seg.value} />;
+        return <PhoneContactSheetTrigger key={key} raw={seg.value} tone={tone} />;
       })}
     </span>
   );

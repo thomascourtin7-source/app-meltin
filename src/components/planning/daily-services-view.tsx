@@ -333,7 +333,7 @@ function ServiceBlock({
   const driverDetails = row.driverInfo.trim();
 
   const ASSIGN_GREEN =
-    "font-bold text-emerald-900 dark:text-emerald-400";
+    "font-bold text-slate-900";
 
   const primaryAssigneeLabel = useMemo(() => {
     for (const slug of assignees) {
@@ -460,13 +460,13 @@ function ServiceBlock({
     return (
       <div
         className={cn(
-          "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-card px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+          "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
           isUrgent
-            ? "border-red-300/60 bg-red-50/90 dark:border-red-900/50 dark:bg-red-950/35"
-            : "border-border/50",
+            ? "border-red-500"
+            : "border-slate-300",
           hasTimeConflict &&
             showConflictUi &&
-            "bg-red-50 dark:bg-red-950/25"
+            "bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200"
         )}
       >
         {hasTimeConflict && showConflictUi ? (
@@ -480,23 +480,33 @@ function ServiceBlock({
         ) : null}
 
         <div className="mb-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Assigné
           </div>
-          <div className="mt-1 text-sm font-semibold text-foreground">
-            {primaryAssigneeLabel ?? "—"}
+          <div className="mt-1">
+            {primaryAssigneeLabel ? (
+              <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-900">
+                {primaryAssigneeLabel}
+              </span>
+            ) : (
+              <span className="text-sm font-semibold text-slate-900">—</span>
+            )}
           </div>
         </div>
 
         <div className="mb-5 flex flex-wrap items-start justify-between gap-2">
-          <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-foreground">
-            <PlanningPhoneRichText text={row.client.trim() || "—"} /> ✅
+          <h2 className="min-w-0 flex-1 text-lg font-bold leading-snug tracking-tight text-slate-900">
+            <PlanningPhoneRichText
+              text={row.client.trim() || "—"}
+              tone="inherit"
+            />{" "}
+            ✅
           </h2>
           <Button
             type="button"
             variant="outline"
             size="icon"
-            className="h-9 w-9 shrink-0 touch-manipulation border-border/60 shadow-none hover:bg-muted/80"
+            className="h-9 w-9 shrink-0 touch-manipulation border border-slate-200 bg-slate-50 text-slate-900 shadow-none hover:bg-slate-100"
             style={{ touchAction: "manipulation" }}
             title="Copier les détails"
             aria-label="Copier les détails du service"
@@ -511,7 +521,7 @@ function ServiceBlock({
         <div className="flex items-stretch gap-2">
           <Button
             type="button"
-            className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600/90 dark:hover:bg-emerald-600"
+            className="flex-1 border border-slate-200 bg-slate-50 text-slate-900 hover:bg-slate-100"
             onClick={() => {
               onDownloadReportPdf({ serviceId: reportServiceId }).catch((e) => {
                 console.error(e);
@@ -527,7 +537,7 @@ function ServiceBlock({
             <Button
               type="button"
               variant="outline"
-              className="w-12 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/10"
+              className="w-12 shrink-0 border border-slate-200 bg-slate-50 text-slate-900 hover:bg-slate-100"
               aria-label="Supprimer le rapport"
               onClick={() => {
                 const ok = window.confirm(
@@ -554,13 +564,11 @@ function ServiceBlock({
   return (
     <div
       className={cn(
-        "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-card px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
-        isUrgent
-          ? "border-red-300/60 bg-red-50/90 dark:border-red-900/50 dark:bg-red-950/35"
-          : "border-border/50",
+        "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+        isUrgent ? "border-red-500" : "border-slate-300",
         hasTimeConflict &&
           showConflictUi &&
-          "bg-red-50 dark:bg-red-950/25"
+          "bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200"
       )}
     >
       {hasTimeConflict && showConflictUi ? (
@@ -795,16 +803,16 @@ function ServiceBlock({
           </div>
         ) : null}
 
-        <p className="mb-3 text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+        <p className="mb-3 text-sm leading-relaxed text-slate-900">
           <span className="inline-flex items-center gap-3">
-            <span className="font-semibold text-slate-800 dark:text-slate-200">
+            <span className="font-semibold text-slate-500">
               Type :{" "}
             </span>
-            <PlanningPhoneRichText text={typeLine || "—"} />
+            <PlanningPhoneRichText text={typeLine || "—"} tone="inherit" />
             <span className="relative inline-flex items-center">
               <label
                 className={cn(
-                  "inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200",
+                  "inline-flex items-center gap-2 text-xs font-medium text-slate-500",
                   !canAction && "opacity-45"
                 )}
                 title={
@@ -851,38 +859,38 @@ function ServiceBlock({
             </span>
           </span>
         </p>
-        <p className="mb-3 text-sm font-medium leading-relaxed text-slate-800 dark:text-slate-200">
-          <PlanningPhoneRichText text={formatVolRdvLine(row)} />
+        <p className="mb-3 text-sm font-medium leading-relaxed text-slate-900">
+          <PlanningPhoneRichText text={formatVolRdvLine(row)} tone="inherit" />
         </p>
-        <div className="space-y-3 border-t border-border/40 pt-4 text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+        <div className="space-y-3 border-t border-slate-200 pt-4 text-sm leading-relaxed text-slate-900">
           <p>
-            <span className="font-semibold text-slate-800 dark:text-slate-200">
+            <span className="font-semibold text-slate-500">
               Dest. / prov. :{" "}
             </span>
-            <PlanningPhoneRichText text={destProv || "—"} />
+            <PlanningPhoneRichText text={destProv || "—"} tone="inherit" />
           </p>
           <p>
-            <span className="font-semibold text-slate-800 dark:text-slate-200">
+            <span className="font-semibold text-slate-500">
               {"Tél. : "}
             </span>
-            <PlanningPhoneRichText text={row.tel.trim() || "—"} />
+            <PlanningPhoneRichText text={row.tel.trim() || "—"} tone="inherit" />
           </p>
           {driverDetails ? (
             <p>
-              <span className="font-semibold text-slate-800 dark:text-slate-200">
+              <span className="font-semibold text-slate-500">
                 Détails :{" "}
               </span>
-              <PlanningPhoneRichText text={driverDetails} />
+              <PlanningPhoneRichText text={driverDetails} tone="inherit" />
             </p>
           ) : null}
         </div>
       </div>
 
-      <div className="mt-5 border-t border-border/40 pt-4">
+      <div className="mt-5 border-t border-slate-200 pt-4">
         <Button
           type="button"
           variant="outline"
-          className="w-full"
+          className="w-full border border-slate-200 bg-slate-50 text-slate-900 hover:bg-slate-100"
           onClick={() => {
             void onOpenReportForm({ serviceId: reportServiceId }).catch((e) => {
               console.error(e);

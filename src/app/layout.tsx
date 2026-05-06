@@ -90,7 +90,7 @@ export default function RootLayout({
           sizes="180x180"
         />
       </head>
-      <body className="flex min-h-full w-full max-w-full flex-col overflow-x-hidden">
+      <body className="flex min-h-full w-full max-w-full flex-col overflow-x-hidden bg-white">
         <PlanningPushBootstrap />
         <PlanningPreparationProvider>
           <AppFrame>{children}</AppFrame>
