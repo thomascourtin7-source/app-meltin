@@ -1463,6 +1463,7 @@ export function DailyServicesView() {
       return sid === spreadsheetId;
     }
 
+    // Canal 1: changements DB (peut être flaky sur mobile selon config Realtime/RLS)
     const ch = supabase
       .channel(`planning-live-${encodeURIComponent(spreadsheetId)}`, {
         config: { broadcast: { ack: false, self: false } },
@@ -1498,14 +1499,28 @@ export function DailyServicesView() {
           /* Publications activées ; pas d’impact direct sur les pastilles. */
         }
       )
-      .on("broadcast", { event: PLANNING_ASSIGNEES_BROADCAST_EVENT }, () => {
-        startTransition(() => setAssigneesBump((b) => b + 1));
-        void mutatePlanningRef.current?.(undefined, { revalidate: true });
-        void mutateReportsRef.current?.(undefined, { revalidate: true });
+      .subscribe();
+
+    // Canal 2: broadcast dédié (nom fixe) — stratégie “force refresh”
+    // Même si postgres_changes ne marche pas sur mobile, broadcast doit passer.
+    const bch = supabase
+      .channel("assignees_changed", {
+        config: { broadcast: { ack: false, self: false } },
       })
+      .on(
+        "broadcast",
+        { event: PLANNING_ASSIGNEES_BROADCAST_EVENT },
+        (payload) => {
+          console.log("MESSAGE REALTIME REÇU", payload);
+          startTransition(() => setAssigneesBump((b) => b + 1));
+          void mutatePlanningRef.current?.(undefined, { revalidate: true });
+          void mutateReportsRef.current?.(undefined, { revalidate: true });
+        }
+      )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
-          setPlanningAssigneesRealtimeChannel(ch, spreadsheetId);
+          // On utilise ce canal pour émettre les broadcasts d’assignation.
+          setPlanningAssigneesRealtimeChannel(bch, spreadsheetId);
         }
       });
 
@@ -1514,6 +1529,7 @@ export function DailyServicesView() {
       if (reportsTimer) clearTimeout(reportsTimer);
       if (planningTimer) clearTimeout(planningTimer);
       void supabase.removeChannel(ch);
+      void supabase.removeChannel(bch);
     };
   }, [spreadsheetId]);
 
