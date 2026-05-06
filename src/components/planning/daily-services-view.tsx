@@ -333,7 +333,7 @@ function ServiceBlock({
   const driverDetails = row.driverInfo.trim();
 
   const ASSIGN_GREEN =
-    "font-bold text-slate-900";
+    "rounded-full bg-white px-2 py-0.5 text-base font-bold text-[#065f46] border border-emerald-600/30";
 
   const primaryAssigneeLabel = useMemo(() => {
     for (const slug of assignees) {
@@ -460,13 +460,13 @@ function ServiceBlock({
     return (
       <div
         className={cn(
-          "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+          "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-slate-100 px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5",
           isUrgent
             ? "border-red-500"
             : "border-slate-300",
           hasTimeConflict &&
             showConflictUi &&
-            "bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200"
+            "bg-slate-100"
         )}
       >
         {hasTimeConflict && showConflictUi ? (
@@ -485,7 +485,7 @@ function ServiceBlock({
           </div>
           <div className="mt-1">
             {primaryAssigneeLabel ? (
-              <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-900">
+              <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-base font-bold text-[#065f46] border border-emerald-600/30">
                 {primaryAssigneeLabel}
               </span>
             ) : (
@@ -495,7 +495,7 @@ function ServiceBlock({
         </div>
 
         <div className="mb-5 flex flex-wrap items-start justify-between gap-2">
-          <h2 className="min-w-0 flex-1 text-lg font-bold leading-snug tracking-tight text-slate-900">
+          <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-slate-900">
             <PlanningPhoneRichText
               text={row.client.trim() || "—"}
               tone="inherit"
@@ -564,11 +564,11 @@ function ServiceBlock({
   return (
     <div
       className={cn(
-        "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 px-4 py-4 shadow-sm -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+        "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-slate-100 px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5",
         isUrgent ? "border-red-500" : "border-slate-300",
         hasTimeConflict &&
           showConflictUi &&
-          "bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200"
+          "bg-slate-100"
       )}
     >
       {hasTimeConflict && showConflictUi ? (
@@ -734,8 +734,8 @@ function ServiceBlock({
       </div>
 
       <div className="space-y-0">
-        <h2 className="mb-3 text-xl font-bold leading-snug tracking-tight text-foreground">
-          <PlanningPhoneRichText text={row.client.trim() || "—"} />
+        <h2 className="mb-3 text-xl font-bold leading-snug tracking-tight text-slate-900">
+          <PlanningPhoneRichText text={row.client.trim() || "—"} tone="inherit" />
           {isPec ? " 🟠" : ""}
         </h2>
 
@@ -890,7 +890,7 @@ function ServiceBlock({
         <Button
           type="button"
           variant="outline"
-          className="w-full border border-slate-200 bg-slate-50 text-slate-900 hover:bg-slate-100"
+          className="w-full border border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
           onClick={() => {
             void onOpenReportForm({ serviceId: reportServiceId }).catch((e) => {
               console.error(e);
