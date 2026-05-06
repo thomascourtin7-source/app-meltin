@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   const serviceDateRaw =
     typeof b.serviceDate === "string" ? b.serviceDate.trim() : "";
   const serviceDate = serviceDateRaw
-    ? normalizeCanonicalDateKey(serviceDateRaw)
+    ? normalizeCanonicalDateKey(serviceDateRaw).slice(0, 10)
     : "";
 
   if (!serviceId || !serviceDate) {
@@ -68,7 +68,44 @@ export async function POST(request: Request) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    // Workaround PostgREST "schema cache" after migrations:
+    // retry once via REST with a cache-busting query param.
+    const msg = error.message || "";
+    if (/schema cache/i.test(msg)) {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim().replace(/\/$/, "");
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+      if (url && key) {
+        try {
+          const res = await fetch(
+            `${url}/rest/v1/planning_assignments?on_conflict=service_id&select=service_id,agent_name&ts=${Date.now()}`,
+            {
+              method: "POST",
+              headers: {
+                apikey: key,
+                Authorization: `Bearer ${key}`,
+                "Content-Type": "application/json",
+                Prefer: "resolution=merge-duplicates,return=representation",
+              },
+              body: JSON.stringify(payload),
+            }
+          );
+          const j: unknown = await res.json();
+          if (!res.ok) {
+            const em =
+              j && typeof j === "object" && "message" in j
+                ? String((j as { message?: unknown }).message ?? "Erreur Supabase.")
+                : "Erreur Supabase.";
+            return NextResponse.json({ error: em }, { status: 500 });
+          }
+          const arr = Array.isArray(j) ? j : [];
+          const first = arr[0] ?? null;
+          return NextResponse.json({ ok: true, assignment: first });
+        } catch {
+          // fallthrough to normal error
+        }
+      }
+    }
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, assignment: data });
