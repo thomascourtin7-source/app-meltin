@@ -47,6 +47,24 @@ self.addEventListener("push", function (event) {
           renotify: type === "planning-update",
           vibrate: type === "planning-update" ? [120, 80, 120] : undefined,
           data: { url: openUrl },
+        }).then(function () {
+          // Réveil UI : force refresh immédiat côté app (planning)
+          // même si l’utilisateur ne clique pas sur la notif.
+          return clients
+            .matchAll({ type: "window", includeUncontrolled: true })
+            .then(function (clientList) {
+              clientList.forEach(function (c) {
+                try {
+                  c.postMessage({
+                    type: "planning-push-received",
+                    at: Date.now(),
+                    openUrl: openUrl,
+                  });
+                } catch (e) {
+                  /* ignore */
+                }
+              });
+            });
         });
       })
       .catch(function (err) {

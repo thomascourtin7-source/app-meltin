@@ -1371,6 +1371,27 @@ export function DailyServicesView() {
   );
   mutateReportsRef.current = mutateReports;
 
+  /** Push reçu (Service Worker) : refresh immédiat sans reload. */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!("serviceWorker" in navigator)) return;
+
+    const onMsg = (e: MessageEvent) => {
+      const d = e?.data;
+      if (!d || typeof d !== "object") return;
+      if ((d as { type?: unknown }).type !== "planning-push-received") return;
+      void mutatePlanningRef.current?.(undefined, { revalidate: true });
+      void mutateReportsRef.current?.(undefined, { revalidate: true });
+      // au cas où un autre appareil a mis à jour le store assignations + broadcast
+      startTransition(() => setAssigneesBump((b) => b + 1));
+    };
+
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => {
+      navigator.serviceWorker.removeEventListener("message", onMsg);
+    };
+  }, []);
+
   /** Sync assignations : autre onglet (même machine) via localStorage. */
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1479,6 +1500,8 @@ export function DailyServicesView() {
       )
       .on("broadcast", { event: PLANNING_ASSIGNEES_BROADCAST_EVENT }, () => {
         startTransition(() => setAssigneesBump((b) => b + 1));
+        void mutatePlanningRef.current?.(undefined, { revalidate: true });
+        void mutateReportsRef.current?.(undefined, { revalidate: true });
       })
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
