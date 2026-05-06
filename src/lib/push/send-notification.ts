@@ -79,9 +79,8 @@ export async function broadcastPlanningUpdate(payload: {
   return { sent, failed };
 }
 
-const ALARM_UNCOVERED_TITLE = "🚨 ALERTE : Service";
-const ALARM_UNCOVERED_BODY =
-  "Un service avec alarme est sans assignation. Action requise !";
+const ALARM_UNCOVERED_TITLE = "🚨 RAJOUT 🚨";
+const ALARM_UNCOVERED_BODY = "who can do it ?";
 
 /** Cas 5 : service avec alarme non couvert — diffusion à tous les abonnés. */
 export async function broadcastAlarmUncoveredPush(): Promise<{
@@ -97,7 +96,7 @@ export async function broadcastAlarmUncoveredPush(): Promise<{
     return { sent: 0, failed: 0 };
   }
 
-  const openUrl = "/";
+  const openUrl = "/planning";
   const subs = await getPlanningPushTargets();
   if (subs.length === 0) {
     console.warn("[planning-alarm-uncovered] Aucun abonnement push");

@@ -1,6 +1,16 @@
 import { NextResponse } from "next/server";
 
+import { DateTime } from "luxon";
+
+import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import { broadcastAlarmUncoveredPush } from "@/lib/push/send-notification";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+
+const ZONE = "Europe/Paris";
+
+function parisTodayYmd(): string {
+  return DateTime.now().setZone(ZONE).toISODate() ?? "";
+}
 
 const DEDUPE_MS = 10 * 60 * 1000;
 const dedupe = new Map<string, number>();
@@ -50,18 +60,54 @@ export async function POST(req: Request) {
   const spreadsheetId =
     typeof b.spreadsheetId === "string" ? b.spreadsheetId.trim() : "";
   const dateKey = typeof b.dateKey === "string" ? b.dateKey.trim() : "";
+  const serviceId = typeof b.serviceId === "string" ? b.serviceId.trim() : "";
 
-  if (!spreadsheetId || !dateKey) {
+  if (!spreadsheetId || !dateKey || !serviceId) {
     return NextResponse.json(
       {
-        error: "Champs requis : spreadsheetId (string), dateKey (string).",
+        error: "Champs requis : spreadsheetId (string), dateKey (string), serviceId (string).",
       },
       { status: 400 }
     );
   }
 
+  // Condition de date: push seulement si le service est pour aujourd'hui (Paris).
+  const serviceDate = normalizeCanonicalDateKey(dateKey);
+  const today = parisTodayYmd();
+  if (!serviceDate || serviceDate !== today) {
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      reason: "not-today",
+      today,
+      serviceDate,
+    });
+  }
+
+  // Historique anti-doublon (DB): 1 envoi max par service_id et par jour (Paris).
+  const admin = getSupabaseAdmin();
+  if (admin) {
+    const { data, error } = await admin
+      .from("sent_alarms")
+      .select("spreadsheet_id")
+      .eq("spreadsheet_id", spreadsheetId)
+      .eq("service_identity_key", serviceId)
+      .eq("sent_on", today)
+      .maybeSingle();
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    if (data) {
+      return NextResponse.json({
+        ok: true,
+        skipped: true,
+        reason: "already-sent",
+      });
+    }
+  }
+
   pruneDedupe();
-  const key = `${spreadsheetId}\x1f${dateKey}\x1falarm-uncovered`;
+  const key = `${spreadsheetId}\x1f${today}\x1f${serviceId}\x1falarm-uncovered`;
   const now = Date.now();
   const last = dedupe.get(key);
   if (last !== undefined && now - last < DEDUPE_MS) {
@@ -74,6 +120,18 @@ export async function POST(req: Request) {
   dedupe.set(key, now);
 
   const result = await broadcastAlarmUncoveredPush();
+
+  if (admin) {
+    await admin.from("sent_alarms").upsert(
+      {
+        spreadsheet_id: spreadsheetId,
+        service_identity_key: serviceId,
+        sent_on: today,
+        notified_at: new Date().toISOString(),
+      },
+      { onConflict: "spreadsheet_id,service_identity_key,sent_on" }
+    );
+  }
 
   return NextResponse.json({ ok: true, skipped: false, ...result });
 }
