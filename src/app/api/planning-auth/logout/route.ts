@@ -15,10 +15,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  await supabase
-    .from("agents_auth")
-    .update({ session_token: null })
-    .eq("session_token", token);
+  await supabase.from("agents_auth_sessions").delete().eq("token", token);
 
   return NextResponse.json({ ok: true });
 }

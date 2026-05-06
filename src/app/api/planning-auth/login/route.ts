@@ -25,9 +25,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Body JSON invalide." }, { status: 400 });
   }
 
-  const b = body as { name?: unknown; password?: unknown };
+  const b = body as { name?: unknown; password?: unknown; deviceId?: unknown };
   const nameRaw = typeof b.name === "string" ? b.name.trim() : "";
   const password = typeof b.password === "string" ? b.password : "";
+  const deviceId = typeof b.deviceId === "string" ? b.deviceId.trim() : "";
 
   if (!nameRaw) {
     return NextResponse.json({ error: "Prénom requis." }, { status: 400 });
@@ -77,40 +78,14 @@ export async function POST(request: Request) {
   const displayName = displayNameForPlanningAuthSlug(slug) ?? dbName;
   const sessionToken = randomUUID();
 
-  const rowName =
-    row && typeof (row as { name?: unknown }).name === "string"
-      ? (row as { name: string }).name.trim()
-      : nameRaw.trim();
-
-  let upd = await supabase
-    .from("agents_auth")
-    .update({ session_token: sessionToken })
-    .eq("name", rowName)
-    .select("name");
-
-  if (upd.error) {
-    return NextResponse.json({ error: upd.error.message }, { status: 500 });
-  }
-
-  if (!upd.data?.length && rowName !== nameRaw.trim()) {
-    upd = await supabase
-      .from("agents_auth")
-      .update({ session_token: sessionToken })
-      .eq("name", nameRaw.trim())
-      .select("name");
-    if (upd.error) {
-      return NextResponse.json({ error: upd.error.message }, { status: 500 });
-    }
-  }
-
-  if (!upd.data?.length) {
-    return NextResponse.json(
-      {
-        error:
-          "Impossible d’enregistrer la session (aucune ligne mise à jour). Vérifiez la colonne session_token sur agents_auth.",
-      },
-      { status: 500 }
-    );
+  // Session multi-appareils : enregistre un token indépendant (ne déconnecte pas les autres).
+  const { error: sessErr } = await supabase.from("agents_auth_sessions").insert({
+    token: sessionToken,
+    name: dbName,
+    device_id: deviceId || null,
+  });
+  if (sessErr) {
+    return NextResponse.json({ error: sessErr.message }, { status: 500 });
   }
 
   return NextResponse.json({

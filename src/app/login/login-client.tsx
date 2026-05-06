@@ -20,7 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { persistPlanningAuthSession } from "@/lib/auth/planning-auth-session";
+import {
+  getOrCreatePlanningDeviceId,
+  persistPlanningAuthSession,
+} from "@/lib/auth/planning-auth-session";
 import {
   PLANNING_TEAM_REGISTER_OPTIONS,
   planningDisplayNameEquals,
@@ -124,8 +127,8 @@ export function LoginClient() {
         mode === "signup" ? "/api/planning-auth/register" : "/api/planning-auth/login";
       const body =
         mode === "signup"
-          ? { slug: signupSlug.trim(), password }
-          : { name: loginName.trim(), password };
+          ? { slug: signupSlug.trim(), password, deviceId: getOrCreatePlanningDeviceId() }
+          : { name: loginName.trim(), password, deviceId: getOrCreatePlanningDeviceId() };
 
       const res = await fetch(path, {
         method: "POST",

@@ -18,6 +18,7 @@ export const PLANNING_ASSIGNEE_OPTIONS = [
   { value: "__none__", label: "Non assigné" },
   { value: "javed", label: "Javed" },
   { value: "thomas", label: "Thomas" },
+  { value: "test", label: "Test" },
   { value: "simon", label: "Simon" },
   { value: "karthik", label: "Karthik" },
   { value: "elias", label: "Elias" },

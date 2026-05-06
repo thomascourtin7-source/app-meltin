@@ -9,11 +9,31 @@ export const MELTIN_PLANNING_AUTH_SESSION_KEY = "meltin_planning_auth_session";
 
 export const MELTIN_AUTH_SESSION_CHANGED_EVENT = "meltin_planning_auth_session_changed";
 
+export const MELTIN_PLANNING_DEVICE_ID_KEY = "meltin_planning_device_id";
+
 export type PlanningAuthSession = {
   slug: string;
   displayName: string;
   token: string;
 };
+
+export function getOrCreatePlanningDeviceId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const existing = window.localStorage
+      .getItem(MELTIN_PLANNING_DEVICE_ID_KEY)
+      ?.trim();
+    if (existing) return existing;
+    const v =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `dev-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    window.localStorage.setItem(MELTIN_PLANNING_DEVICE_ID_KEY, v);
+    return v;
+  } catch {
+    return "";
+  }
+}
 
 function parseSession(raw: string | null): PlanningAuthSession | null {
   if (!raw) return null;

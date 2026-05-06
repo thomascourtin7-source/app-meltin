@@ -25,9 +25,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Body JSON invalide." }, { status: 400 });
   }
 
-  const b = body as { slug?: unknown; password?: unknown };
+  const b = body as { slug?: unknown; password?: unknown; deviceId?: unknown };
   const slug = typeof b.slug === "string" ? b.slug.trim().toLowerCase() : "";
   const password = typeof b.password === "string" ? b.password : "";
+  const deviceId = typeof b.deviceId === "string" ? b.deviceId.trim() : "";
 
   if (!slug || !isAllowedPlanningAuthSlug(slug)) {
     return NextResponse.json({ error: "Prénom non autorisé." }, { status: 400 });
@@ -50,7 +51,6 @@ export async function POST(request: Request) {
   const { error: insErr } = await supabase.from("agents_auth").insert({
     name: displayName,
     password: passwordHash,
-    session_token: sessionToken,
   });
 
   if (insErr) {
@@ -68,6 +68,15 @@ export async function POST(request: Request) {
       );
     }
     return NextResponse.json({ error: insErr.message }, { status: 500 });
+  }
+
+  const { error: sessErr } = await supabase.from("agents_auth_sessions").insert({
+    token: sessionToken,
+    name: displayName,
+    device_id: deviceId || null,
+  });
+  if (sessErr) {
+    return NextResponse.json({ error: sessErr.message }, { status: 500 });
   }
 
   return NextResponse.json({

@@ -8,7 +8,7 @@ export type PlanningAdminAuthResult =
   | { ok: false; response: NextResponse };
 
 /**
- * Vérifie `Authorization: Bearer <session_token>` : token stocké sur `agents_auth`,
+ * Vérifie `Authorization: Bearer <token>` : token stocké sur `agents_auth_sessions`,
  * prénom en base dans la liste des administrateurs planning.
  */
 export async function requirePlanningAdminBearer(
@@ -36,9 +36,9 @@ export async function requirePlanningAdminBearer(
   }
 
   const { data, error } = await supabase
-    .from("agents_auth")
+    .from("agents_auth_sessions")
     .select("name")
-    .eq("session_token", token)
+    .eq("token", token)
     .maybeSingle();
 
   if (error) {
