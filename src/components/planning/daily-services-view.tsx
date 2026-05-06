@@ -1411,6 +1411,7 @@ export function DailyServicesView() {
     const debounceMs = 280;
     let reportsTimer: ReturnType<typeof setTimeout> | null = null;
     let planningTimer: ReturnType<typeof setTimeout> | null = null;
+    let assigneesTimer: ReturnType<typeof setTimeout> | null = null;
 
     const scheduleReports = () => {
       if (reportsTimer) clearTimeout(reportsTimer);
@@ -1512,9 +1513,15 @@ export function DailyServicesView() {
         { event: PLANNING_ASSIGNEES_BROADCAST_EVENT },
         (payload) => {
           console.log("MESSAGE REALTIME REÇU", payload);
-          startTransition(() => setAssigneesBump((b) => b + 1));
-          void mutatePlanningRef.current?.(undefined, { revalidate: true });
-          void mutateReportsRef.current?.(undefined, { revalidate: true });
+          // Petit délai pour laisser le temps à l’écriture côté serveur/cron d’être visible
+          // avant de re-fetch sur les autres appareils (évite de recharger l’ancienne donnée).
+          if (assigneesTimer) clearTimeout(assigneesTimer);
+          assigneesTimer = setTimeout(() => {
+            assigneesTimer = null;
+            startTransition(() => setAssigneesBump((b) => b + 1));
+            void mutatePlanningRef.current?.(undefined, { revalidate: true });
+            void mutateReportsRef.current?.(undefined, { revalidate: true });
+          }, 300);
         }
       )
       .subscribe((status) => {
@@ -1528,6 +1535,7 @@ export function DailyServicesView() {
       setPlanningAssigneesRealtimeChannel(null, null);
       if (reportsTimer) clearTimeout(reportsTimer);
       if (planningTimer) clearTimeout(planningTimer);
+      if (assigneesTimer) clearTimeout(assigneesTimer);
       void supabase.removeChannel(ch);
       void supabase.removeChannel(bch);
     };
