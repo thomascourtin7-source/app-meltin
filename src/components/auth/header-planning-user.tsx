@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { User } from "lucide-react";
+import { RefreshCw, User } from "lucide-react";
 
 import {
   MELTIN_AUTH_SESSION_CHANGED_EVENT,
@@ -38,6 +38,21 @@ export function HeaderPlanningUser() {
       ) : (
         <span className="sr-only">Profil</span>
       )}
+      <button
+        type="button"
+        className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+        onClick={() => {
+          try {
+            window.dispatchEvent(new Event("meltin_planning_force_refresh"));
+          } catch {
+            /* ignore */
+          }
+        }}
+        aria-label="Rafraîchir le planning"
+        title="Rafraîchir"
+      >
+        <RefreshCw className="size-4" aria-hidden />
+      </button>
     </div>
   );
 }

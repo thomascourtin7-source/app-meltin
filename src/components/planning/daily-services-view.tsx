@@ -73,15 +73,10 @@ import {
   readPlanningAuthSession,
 } from "@/lib/auth/planning-auth-session";
 import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
-import {
-  PLANNING_ASSIGNEES_BROADCAST_EVENT,
-  PLANNING_ASSIGNEES_STORAGE_KEY,
-  broadcastPlanningAssigneesChanged,
-  setPlanningAssigneesRealtimeChannel,
-} from "@/lib/planning/planning-assignees-realtime";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 const POLL_MS = 5 * 60 * 1000;
+const AUTO_REFRESH_MS = 10 * 1000;
+const FORCE_REFRESH_EVENT = "meltin_planning_force_refresh";
 
 type ServiceReportRow = {
   service_client: string;
@@ -119,6 +114,8 @@ type ServiceReportRow = {
 };
 
 const DEFAULT_ASSIGNEE = DEFAULT_PLANNING_ASSIGNEE_SLUG;
+
+const PLANNING_ASSIGNEES_STORAGE_KEY = "meltin_planning_assignees_v3";
 
 /** Ancienne clé (chaîne unique par ligne) → migrée une fois vers v3. */
 const PLANNING_ASSIGNEES_STORAGE_KEY_LEGACY_V2 = "meltin_planning_assignees_v2";
@@ -1028,7 +1025,7 @@ export function DailyServicesView() {
   );
   const mutateReportsRef = useRef<KeyedMutator<ReportsData> | undefined>(undefined);
   const selectedKeyRef = useRef("");
-  const realtimeReloadedRef = useRef(false);
+  const refreshTimerRef = useRef<number | null>(null);
 
   const configuredId = useLocalSpreadsheetId();
   const spreadsheetId =
@@ -1372,23 +1369,42 @@ export function DailyServicesView() {
   );
   mutateReportsRef.current = mutateReports;
 
-  /**
-   * Realtime ultra-simple (debug mobile) :
-   * écoute tout sur `planning_states` et recharge la page au moindre changement.
-   */
-  useEffect(() => {
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase) return;
-
-    realtimeReloadedRef.current = false;
-
-    // Code demandé (exact) : souscription globale aux changements Postgres.
-    const ch = supabase.channel('any').on('postgres_changes', { event: '*', schema: 'public', table: 'planning_states' }, () => { window.location.reload(); }).subscribe();
-
-    return () => {
-      void supabase.removeChannel(ch);
-    };
+  const refreshAll = useCallback(() => {
+    void mutatePlanningRef.current?.(undefined, { revalidate: true });
+    void mutateReportsRef.current?.(undefined, { revalidate: true });
+    startTransition(() => setAssigneesBump((b) => b + 1));
   }, []);
+
+  /** Intervalle de sécurité : refresh auto toutes les 10s. */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (refreshTimerRef.current) window.clearInterval(refreshTimerRef.current);
+    refreshTimerRef.current = window.setInterval(() => {
+      refreshAll();
+    }, AUTO_REFRESH_MS);
+    return () => {
+      if (refreshTimerRef.current) {
+        window.clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, [refreshAll]);
+
+  /** Focus refresh : au retour sur l’onglet / déverrouillage. */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onFocus = () => refreshAll();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshAll]);
+
+  /** Refresh manuel (bouton dans le header). */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onForce = () => refreshAll();
+    window.addEventListener(FORCE_REFRESH_EVENT, onForce);
+    return () => window.removeEventListener(FORCE_REFRESH_EVENT, onForce);
+  }, [refreshAll]);
 
   /** Après retour du rapport : force le re-fetch des statuts PDF. */
   useEffect(() => {
@@ -1805,7 +1821,6 @@ export function DailyServicesView() {
             JSON.stringify(all)
           );
           setAssigneesBump((b) => b + 1);
-          broadcastPlanningAssigneesChanged(spreadsheetId);
 
           const dateKey = normalizeCanonicalDateKey(selectedDate);
           const planningDay = planningDayBucket(
