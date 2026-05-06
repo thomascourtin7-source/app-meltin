@@ -1382,23 +1382,8 @@ export function DailyServicesView() {
 
     realtimeReloadedRef.current = false;
 
-    const ch = supabase
-      .channel("planning_states_reload")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "planning_states" },
-        () => {
-          if (realtimeReloadedRef.current) return;
-          realtimeReloadedRef.current = true;
-          console.log("MESSAGE REALTIME REÇU");
-          try {
-            window.location.reload();
-          } catch {
-            /* ignore */
-          }
-        }
-      )
-      .subscribe();
+    // Code demandé (exact) : souscription globale aux changements Postgres.
+    const ch = supabase.channel('any').on('postgres_changes', { event: '*', schema: 'public', table: 'planning_states' }, () => { window.location.reload(); }).subscribe();
 
     return () => {
       void supabase.removeChannel(ch);
