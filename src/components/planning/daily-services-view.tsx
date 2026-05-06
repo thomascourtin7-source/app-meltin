@@ -77,7 +77,6 @@ import {
 import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
 
 const POLL_MS = 5 * 60 * 1000;
-const AUTO_REFRESH_MS = 10 * 1000;
 const FORCE_REFRESH_EVENT = "meltin_planning_force_refresh";
 
 type ServiceReportRow = {
@@ -226,10 +225,13 @@ type PlanningDebug = {
 
 type PlanningServicesPayload = {
   rows: DailyServiceRow[];
-  assigneesByServiceId?: Record<string, string>;
   fetchedAt: string;
   filterDateIso?: string | null;
   debug?: PlanningDebug;
+};
+
+type PlanningAssignmentsPayload = {
+  assigneesByServiceId: Record<string, string>;
 };
 
 async function planningServicesFetcher(
@@ -974,8 +976,10 @@ export function DailyServicesView() {
     undefined
   );
   const mutateReportsRef = useRef<KeyedMutator<ReportsData> | undefined>(undefined);
+  const mutateAssignmentsRef = useRef<
+    KeyedMutator<PlanningAssignmentsPayload> | undefined
+  >(undefined);
   const selectedKeyRef = useRef("");
-  const refreshTimerRef = useRef<number | null>(null);
 
   const configuredId = useLocalSpreadsheetId();
   const spreadsheetId =
@@ -1062,9 +1066,72 @@ export function DailyServicesView() {
   );
   mutatePlanningRef.current = mutate;
 
+  const selectedKey = normalizeCanonicalDateKey(selectedDate);
+  selectedKeyRef.current = selectedKey;
+  const todayYmd = normalizeCanonicalDateKey(formatLocalYmd(new Date()));
+  const tomorrowYmd = normalizeCanonicalDateKey(
+    formatLocalYmd(addDaysLocal(new Date(), 1))
+  );
+  const isTodaySelected = selectedKey === todayYmd;
+  const isTomorrowSelected = selectedKey === tomorrowYmd;
+  const isCustomDateSelected = !isTodaySelected && !isTomorrowSelected;
+
+  const serviceIdsForAssignments = useMemo(() => {
+    const rows = data?.rows ?? [];
+    return [...new Set(rows.map((r) => serviceReportIdFromRow(r)).filter(Boolean))];
+  }, [data?.rows]);
+
+  const assignmentsKey = useMemo(() => {
+    if (!spreadsheetId) return null;
+    if (serviceIdsForAssignments.length === 0) return null;
+    return [
+      "planningAssignments",
+      spreadsheetId,
+      selectedKey,
+      serviceIdsForAssignments.join("||"),
+    ] as const;
+  }, [selectedKey, serviceIdsForAssignments, spreadsheetId]);
+
+  const {
+    data: assignmentsData,
+    mutate: mutateAssignments,
+  } = useSWR<PlanningAssignmentsPayload>(
+    assignmentsKey,
+    async () => {
+      const res = await fetch("/api/planning-assignments/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serviceIds: serviceIdsForAssignments }),
+      });
+      const json: unknown = await res.json();
+      if (!res.ok) {
+        const msg =
+          json &&
+          typeof json === "object" &&
+          "error" in json &&
+          typeof (json as { error?: unknown }).error === "string"
+            ? (json as { error: string }).error
+            : "Impossible de charger les assignations.";
+        throw new Error(msg);
+      }
+      const p = json as Partial<PlanningAssignmentsPayload>;
+      return {
+        assigneesByServiceId:
+          p.assigneesByServiceId && typeof p.assigneesByServiceId === "object"
+            ? (p.assigneesByServiceId as Record<string, string>)
+            : {},
+      };
+    },
+    {
+      refreshInterval: 5000,
+      revalidateOnFocus: true,
+    }
+  );
+  mutateAssignmentsRef.current = mutateAssignments;
+
   const assignees = useMemo(() => {
     const rows = data?.rows ?? [];
-    const mapByServiceId = data?.assigneesByServiceId ?? {};
+    const mapByServiceId = assignmentsData?.assigneesByServiceId ?? {};
     const next: Record<string, string[]> = {};
     for (const row of rows) {
       const rowKey = stableServiceRowKey(row);
@@ -1086,17 +1153,7 @@ export function DailyServicesView() {
       next[rowKey] = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
     }
     return next;
-  }, [data?.assigneesByServiceId, data?.rows]);
-
-  const selectedKey = normalizeCanonicalDateKey(selectedDate);
-  selectedKeyRef.current = selectedKey;
-  const todayYmd = normalizeCanonicalDateKey(formatLocalYmd(new Date()));
-  const tomorrowYmd = normalizeCanonicalDateKey(
-    formatLocalYmd(addDaysLocal(new Date(), 1))
-  );
-  const isTodaySelected = selectedKey === todayYmd;
-  const isTomorrowSelected = selectedKey === tomorrowYmd;
-  const isCustomDateSelected = !isTodaySelected && !isTomorrowSelected;
+  }, [assignmentsData?.assigneesByServiceId, data?.rows]);
 
   /** Planning déjà validé pour la date « demain » (persisté → pas de mode rouge au refresh). */
   const isTomorrowPlanningFinalized = useMemo(() => {
@@ -1301,30 +1358,8 @@ export function DailyServicesView() {
   const refreshAll = useCallback(() => {
     void mutatePlanningRef.current?.(undefined, { revalidate: true });
     void mutateReportsRef.current?.(undefined, { revalidate: true });
+    void mutateAssignmentsRef.current?.(undefined, { revalidate: true });
   }, []);
-
-  /** Intervalle de sécurité : refresh auto toutes les 10s. */
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (refreshTimerRef.current) window.clearInterval(refreshTimerRef.current);
-    refreshTimerRef.current = window.setInterval(() => {
-      refreshAll();
-    }, AUTO_REFRESH_MS);
-    return () => {
-      if (refreshTimerRef.current) {
-        window.clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-    };
-  }, [refreshAll]);
-
-  /** Focus refresh : au retour sur l’onglet / déverrouillage. */
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onFocus = () => refreshAll();
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [refreshAll]);
 
   /** Refresh manuel (bouton dans le header). */
   useEffect(() => {
