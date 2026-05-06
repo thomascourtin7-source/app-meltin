@@ -1776,6 +1776,7 @@ export function DailyServicesView() {
             (s) => s !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(s)
           )
         );
+        const hadUrgent = prevArr.some((s) => s === URGENT_ASSIGNEE);
 
         const dateKey = normalizeCanonicalDateKey(selectedDate);
         const planningDay = planningDayBucket(dateKey, todayYmd, tomorrowYmd);
@@ -1806,6 +1807,15 @@ export function DailyServicesView() {
         }
 
         refreshAll();
+
+        // 🚨 Clic alarme (urgence) : déclenche un envoi global immédiat.
+        if (safe.includes(URGENT_ASSIGNEE) && !hadUrgent) {
+          void fetch("/api/push/planning-alarm-uncovered", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ serviceId: serviceReportIdFromRow(row) }),
+          }).catch(() => {});
+        }
 
         const isPrep =
           typeof window !== "undefined" &&
