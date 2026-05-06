@@ -16,19 +16,15 @@ function isOriginAllowed(req: Request): boolean {
   }
 }
 
-const DEFAULT_TITLE = "📅 Planning";
-const DEFAULT_BODY = "Le planning a été modifié";
-const DEFAULT_OPEN = "/";
-
 /** Diffusion globale : tous les abonnés push (préparation terminée). */
 export async function POST(req: Request) {
   if (!isOriginAllowed(req)) {
     return NextResponse.json({ error: "Origin non autorisée." }, { status: 403 });
   }
 
-  let title = DEFAULT_TITLE;
-  let body = DEFAULT_BODY;
-  let openUrl = DEFAULT_OPEN;
+  let title = "";
+  let body = "";
+  let openUrl = "/";
 
   const ct = req.headers.get("content-type");
   if (ct?.includes("application/json")) {
@@ -45,11 +41,14 @@ export async function POST(req: Request) {
     }
   }
 
-  const result = await broadcastPlanningUpdate({
-    title,
-    body,
-    openUrl,
-  });
+  if (!title.trim() || !body.trim()) {
+    return NextResponse.json(
+      { error: "Titre et body requis (notifications génériques interdites)." },
+      { status: 400 }
+    );
+  }
+
+  const result = await broadcastPlanningUpdate({ title, body, openUrl });
 
   return NextResponse.json({ ok: true, ...result });
 }

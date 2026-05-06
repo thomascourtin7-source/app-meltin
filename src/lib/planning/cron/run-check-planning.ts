@@ -24,6 +24,7 @@ const ZONE = "Europe/Paris";
 const LOG_PREFIX = "[check-planning]";
 
 const REMINDER_WINDOW_MS = 6 * 60 * 1000; // fenêtre pour rattraper un cron pas à la seconde
+const NOTIF_IDLE_MS = 5000; // debounce : envoyer après 5s d'inactivité
 
 type SnapshotV4 = {
   v: 4;
@@ -464,6 +465,79 @@ async function markReminderSentToday(
   );
 }
 
+type PendingNotifRow = {
+  spreadsheet_id: string;
+  date_key: string;
+  stable_row_key: string;
+  kind: string;
+  target_name: string;
+  title: string;
+  body: string;
+  open_url: string;
+  last_hash: string;
+  last_seen_at: string;
+  sent_at: string | null;
+};
+
+async function upsertPendingNotification(
+  admin: SupabaseClient,
+  row: Omit<PendingNotifRow, "sent_at" | "last_seen_at">
+): Promise<void> {
+  await admin.from("planning_pending_notifications").upsert(
+    {
+      ...row,
+      last_seen_at: new Date().toISOString(),
+      sent_at: null,
+    },
+    {
+      onConflict: "spreadsheet_id,date_key,stable_row_key,kind,target_name",
+    }
+  );
+}
+
+async function flushDuePendingNotifications(
+  admin: SupabaseClient,
+  spreadsheetId: string
+): Promise<number> {
+  const now = DateTime.now().setZone(ZONE);
+  const cutoffIso = now.minus({ milliseconds: NOTIF_IDLE_MS }).toISO();
+  if (!cutoffIso) return 0;
+
+  const { data, error } = await admin
+    .from("planning_pending_notifications")
+    .select("*")
+    .eq("spreadsheet_id", spreadsheetId)
+    .is("sent_at", null)
+    .lt("last_seen_at", cutoffIso)
+    .limit(200);
+
+  if (error || !data?.length) return 0;
+
+  let sentCount = 0;
+  for (const raw of data as unknown as PendingNotifRow[]) {
+    const target = raw.target_name?.trim();
+    if (!target) continue;
+    const r = await notifyPlanningAssigneeSubscribers(
+      target,
+      {
+        title: raw.title,
+        body: raw.body,
+        openUrl: raw.open_url,
+      }
+    );
+    sentCount += r.sent;
+    await admin
+      .from("planning_pending_notifications")
+      .update({ sent_at: new Date().toISOString() })
+      .eq("spreadsheet_id", raw.spreadsheet_id)
+      .eq("date_key", raw.date_key)
+      .eq("stable_row_key", raw.stable_row_key)
+      .eq("kind", raw.kind)
+      .eq("target_name", raw.target_name);
+  }
+  return sentCount;
+}
+
 export type PlanningCronResult = {
   ok: boolean;
   error?: string;
@@ -838,6 +912,7 @@ export async function executePlanningCronCheck(
 
       const client = (b.client || "—").trim() || "—";
       const vol = (b.vol || "—").trim() || "—";
+      const rdvNew = (b.rdv1 || b.rdv2 || "—").trim() || "—";
 
       let body = "";
       if ((a.rdv1 || a.rdv2) !== (b.rdv1 || b.rdv2)) {
@@ -861,37 +936,38 @@ export async function executePlanningCronCheck(
         stableKey: stableKey.slice(0, 80),
       });
 
-      const r = await notifyPlanningAssigneeSubscribers(
-        nextAss,
-        {
-          title: "🛠️ Service mis à jour",
-          body,
-          openUrl:
-            dayBucketIso(dateKey) === "today"
-              ? "/planning?date=today"
-              : "/planning?date=tomorrow",
-        }
-      );
-      sent.assignee += r.sent;
+      // Interdit : pas de notif générique. On met en queue et on envoie après 5s d'inactivité.
+      const title = client !== "—" ? client : vol;
+      const openUrl =
+        dayBucketIso(dateKey) === "today"
+          ? "/planning?date=today"
+          : dayBucketIso(dateKey) === "tomorrow"
+            ? "/planning?date=tomorrow"
+            : `/planning?date=${encodeURIComponent(dateKey)}`;
+
+      await upsertPendingNotification(admin, {
+        spreadsheet_id: spreadsheetId,
+        date_key: dateKey,
+        stable_row_key: stableKey,
+        kind: "service_modified",
+        target_name: nextAss,
+        title,
+        body,
+        open_url: openUrl,
+        last_hash: nextHash,
+      });
       anySpecific = true;
     }
   }
+
+  // Flush debounce queue (descriptif, ciblé) : envoi après 5s d'inactivité.
+  sent.assignee += await flushDuePendingNotifications(admin, spreadsheetId);
 
   if (!anySpecific) {
     logChangeDetected("tous les abonnés", "planning-general", {
       motif: "hash différent mais aucun changement ciblé membre / alarme",
     });
-    const g = await broadcastPlanningUpdate({
-      title: "📅 Planning",
-      body: "Le planning a été modifié",
-      openUrl: "/",
-    });
-    sent.general = g.sent;
-    if (g.sent === 0) {
-      console.warn(
-        `${LOG_PREFIX} fallback général : 0 push — Vérifier VAPID et push_subscriptions`
-      );
-    }
+    // Interdit : le message générique “Le planning a été modifié” ne doit plus exister.
   } else {
     console.log(`${LOG_PREFIX} notifications ciblées envoyées — pas de fallback général`, sent);
   }
