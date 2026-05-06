@@ -1028,6 +1028,7 @@ export function DailyServicesView() {
   );
   const mutateReportsRef = useRef<KeyedMutator<ReportsData> | undefined>(undefined);
   const selectedKeyRef = useRef("");
+  const realtimeReloadedRef = useRef(false);
 
   const configuredId = useLocalSpreadsheetId();
   const spreadsheetId =
@@ -1371,175 +1372,38 @@ export function DailyServicesView() {
   );
   mutateReportsRef.current = mutateReports;
 
-  /** Push reçu (Service Worker) : refresh immédiat sans reload. */
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!("serviceWorker" in navigator)) return;
-
-    const onMsg = (e: MessageEvent) => {
-      const d = e?.data;
-      if (!d || typeof d !== "object") return;
-      if ((d as { type?: unknown }).type !== "planning-push-received") return;
-      void mutatePlanningRef.current?.(undefined, { revalidate: true });
-      void mutateReportsRef.current?.(undefined, { revalidate: true });
-      // au cas où un autre appareil a mis à jour le store assignations + broadcast
-      startTransition(() => setAssigneesBump((b) => b + 1));
-    };
-
-    navigator.serviceWorker.addEventListener("message", onMsg);
-    return () => {
-      navigator.serviceWorker.removeEventListener("message", onMsg);
-    };
-  }, []);
-
-  /** Sync assignations : autre onglet (même machine) via localStorage. */
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onStorage = (e: StorageEvent) => {
-      if (e.key !== PLANNING_ASSIGNEES_STORAGE_KEY) return;
-      startTransition(() => setAssigneesBump((b) => b + 1));
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
-  /** Supabase Realtime : rapports, état planning, broadcast assignations. */
+  /**
+   * Realtime ultra-simple (debug mobile) :
+   * écoute tout sur `planning_states` et recharge la page au moindre changement.
+   */
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
 
-    const debounceMs = 280;
-    let reportsTimer: ReturnType<typeof setTimeout> | null = null;
-    let planningTimer: ReturnType<typeof setTimeout> | null = null;
-    let assigneesTimer: ReturnType<typeof setTimeout> | null = null;
+    realtimeReloadedRef.current = false;
 
-    const scheduleReports = () => {
-      if (reportsTimer) clearTimeout(reportsTimer);
-      reportsTimer = setTimeout(() => {
-        reportsTimer = null;
-        void mutateReportsRef.current?.(undefined, { revalidate: true });
-      }, debounceMs);
-    };
-
-    const schedulePlanning = () => {
-      if (planningTimer) clearTimeout(planningTimer);
-      planningTimer = setTimeout(() => {
-        planningTimer = null;
-        void mutatePlanningRef.current?.(undefined, { revalidate: true });
-      }, debounceMs);
-    };
-
-    function rowSpreadsheetId(r: unknown): string {
-      if (!r || typeof r !== "object") return "";
-      const v = (r as { spreadsheet_id?: unknown }).spreadsheet_id;
-      return typeof v === "string" ? v : "";
-    }
-
-    function rowServiceDateYmd(r: unknown): string {
-      if (!r || typeof r !== "object") return "";
-      const v = (r as { service_date?: unknown }).service_date;
-      if (typeof v !== "string") return "";
-      return normalizeCanonicalDateKey(v.slice(0, 10));
-    }
-
-    function serviceReportAffectsCurrentView(payload: {
-      new?: unknown;
-      old?: unknown;
-    }): boolean {
-      const sid =
-        rowSpreadsheetId(payload.new) || rowSpreadsheetId(payload.old);
-      if (sid !== spreadsheetId) return false;
-      const d =
-        rowServiceDateYmd(payload.new) || rowServiceDateYmd(payload.old);
-      if (!d) return true;
-      return d === selectedKeyRef.current;
-    }
-
-    function planningStateAffectsView(payload: {
-      new?: unknown;
-      old?: unknown;
-    }): boolean {
-      const sid =
-        rowSpreadsheetId(payload.new) || rowSpreadsheetId(payload.old);
-      return sid === spreadsheetId;
-    }
-
-    // Canal 1: changements DB (peut être flaky sur mobile selon config Realtime/RLS)
     const ch = supabase
-      .channel(`planning-live-${encodeURIComponent(spreadsheetId)}`, {
-        config: { broadcast: { ack: false, self: false } },
-      })
+      .channel("planning_states_reload")
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "service_reports",
-          filter: `spreadsheet_id=eq.${spreadsheetId}`,
-        },
-        (payload) => {
-          if (serviceReportAffectsCurrentView(payload)) scheduleReports();
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "planning_states",
-          filter: `spreadsheet_id=eq.${spreadsheetId}`,
-        },
-        (payload) => {
-          if (planningStateAffectsView(payload)) schedulePlanning();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "agents_auth" },
+        { event: "*", schema: "public", table: "planning_states" },
         () => {
-          /* Publications activées ; pas d’impact direct sur les pastilles. */
+          if (realtimeReloadedRef.current) return;
+          realtimeReloadedRef.current = true;
+          console.log("MESSAGE REALTIME REÇU");
+          try {
+            window.location.reload();
+          } catch {
+            /* ignore */
+          }
         }
       )
       .subscribe();
 
-    // Canal 2: broadcast dédié (nom fixe) — stratégie “force refresh”
-    // Même si postgres_changes ne marche pas sur mobile, broadcast doit passer.
-    const bch = supabase
-      .channel("assignees_changed", {
-        config: { broadcast: { ack: false, self: false } },
-      })
-      .on(
-        "broadcast",
-        { event: PLANNING_ASSIGNEES_BROADCAST_EVENT },
-        (payload) => {
-          console.log("MESSAGE REALTIME REÇU", payload);
-          // Petit délai pour laisser le temps à l’écriture côté serveur/cron d’être visible
-          // avant de re-fetch sur les autres appareils (évite de recharger l’ancienne donnée).
-          if (assigneesTimer) clearTimeout(assigneesTimer);
-          assigneesTimer = setTimeout(() => {
-            assigneesTimer = null;
-            startTransition(() => setAssigneesBump((b) => b + 1));
-            void mutatePlanningRef.current?.(undefined, { revalidate: true });
-            void mutateReportsRef.current?.(undefined, { revalidate: true });
-          }, 300);
-        }
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          // On utilise ce canal pour émettre les broadcasts d’assignation.
-          setPlanningAssigneesRealtimeChannel(bch, spreadsheetId);
-        }
-      });
-
     return () => {
-      setPlanningAssigneesRealtimeChannel(null, null);
-      if (reportsTimer) clearTimeout(reportsTimer);
-      if (planningTimer) clearTimeout(planningTimer);
-      if (assigneesTimer) clearTimeout(assigneesTimer);
       void supabase.removeChannel(ch);
-      void supabase.removeChannel(bch);
     };
-  }, [spreadsheetId]);
+  }, []);
 
   /** Après retour du rapport : force le re-fetch des statuts PDF. */
   useEffect(() => {
