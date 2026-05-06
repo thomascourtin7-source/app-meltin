@@ -35,9 +35,16 @@ export async function POST(request: Request) {
   const serviceId = typeof b.serviceId === "string" ? b.serviceId.trim() : "";
   const serviceDateRaw =
     typeof b.serviceDate === "string" ? b.serviceDate.trim() : "";
-  const serviceDate = serviceDateRaw
-    ? normalizeCanonicalDateKey(serviceDateRaw).slice(0, 10)
-    : "";
+  const serviceDate = (() => {
+    if (!serviceDateRaw) return "";
+    const normalized = normalizeCanonicalDateKey(serviceDateRaw).slice(0, 10);
+    // Force strict ISO YYYY-MM-DD for Postgres DATE.
+    try {
+      return new Date(normalized).toISOString().split("T")[0];
+    } catch {
+      return normalized;
+    }
+  })();
 
   if (!serviceId || !serviceDate) {
     return NextResponse.json(
@@ -77,13 +84,15 @@ export async function POST(request: Request) {
       if (url && key) {
         try {
           const res = await fetch(
-            `${url}/rest/v1/planning_assignments?on_conflict=service_id&select=service_id,agent_name&ts=${Date.now()}`,
+            `${url}/rest/v1/planning_assignments?on_conflict=service_id&select=service_id,agent_name`,
             {
               method: "POST",
               headers: {
                 apikey: key,
                 Authorization: `Bearer ${key}`,
                 "Content-Type": "application/json",
+                "Cache-Control": "no-cache",
+                Pragma: "no-cache",
                 Prefer: "resolution=merge-duplicates,return=representation",
               },
               body: JSON.stringify(payload),
