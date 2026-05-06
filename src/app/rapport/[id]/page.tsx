@@ -24,11 +24,7 @@ import {
 } from "@/lib/planning/service-kind";
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
 import {
-  DEFAULT_PLANNING_ASSIGNEE_SLUG,
-  PLANNING_URGENT_ASSIGNEE_SLUG,
   assigneeSlugToNotifyLabel,
-  isUrgentAssignee,
-  normalizeAssigneeListFromStored,
 } from "@/lib/planning/planning-team";
 import {
   defaultReportFilename,
@@ -38,6 +34,7 @@ import { formatTimeForDisplay } from "@/lib/reports/report-time";
 
 type PlanningServicesPayload = {
   rows: DailyServiceRow[];
+  assigneesByServiceId?: Record<string, string>;
   fetchedAt: string;
   spreadsheetId?: string;
   filterDateIso?: string | null;
@@ -82,32 +79,6 @@ type ServiceReportRow = {
   completed_at: string | null;
   photo_url: string | null;
 };
-
-const PLANNING_ASSIGNEES_STORAGE_KEY = "meltin_planning_assignees_v3";
-
-function loadPrimaryAssigneeLabel(spreadsheetId: string, rowKey: string): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(PLANNING_ASSIGNEES_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    const store = parsed as Record<string, Record<string, unknown>>;
-    const sheetMap = store[spreadsheetId];
-    if (!sheetMap) return null;
-    const list = normalizeAssigneeListFromStored(sheetMap[rowKey]);
-    for (const slug of list) {
-      if (slug === DEFAULT_PLANNING_ASSIGNEE_SLUG) continue;
-      if (slug === PLANNING_URGENT_ASSIGNEE_SLUG || isUrgentAssignee(slug)) continue;
-      const label = assigneeSlugToNotifyLabel(slug);
-      if (label) return label;
-      return slug;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 async function jsonFetcher<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -197,9 +168,12 @@ export default function RapportServicePage() {
 
   const pageTitle = serviceRow?.client?.trim() || "Rapport de service";
   const primaryAssignee = useMemo(() => {
-    if (!spreadsheetId || !serviceRow) return null;
-    return loadPrimaryAssigneeLabel(spreadsheetId, stableServiceRowKey(serviceRow));
-  }, [spreadsheetId, serviceRow]);
+    if (!serviceRow) return null;
+    const serviceIdFromRow = serviceReportIdFromRow(serviceRow);
+    const fromPlanning =
+      (planningData?.assigneesByServiceId?.[serviceIdFromRow] || "").trim();
+    return fromPlanning || null;
+  }, [planningData?.assigneesByServiceId, serviceRow]);
 
   async function handleEnd(): Promise<void> {
     setSubmitError(null);

@@ -45,6 +45,8 @@ import {
   isUrgentAssignee,
   planningDisplayNameEquals,
   normalizeAssigneeListFromStored,
+  matchSheetAssigneeToTeamLabel,
+  parseAssigneeNameToSlugs,
   normalizeAssigneeStoredValue,
 } from "@/lib/planning/planning-team";
 import {
@@ -115,63 +117,10 @@ type ServiceReportRow = {
 
 const DEFAULT_ASSIGNEE = DEFAULT_PLANNING_ASSIGNEE_SLUG;
 
-const PLANNING_ASSIGNEES_STORAGE_KEY = "meltin_planning_assignees_v3";
-
-/** Ancienne clé (chaîne unique par ligne) → migrée une fois vers v3. */
-const PLANNING_ASSIGNEES_STORAGE_KEY_LEGACY_V2 = "meltin_planning_assignees_v2";
-
 /** Snapshots des identités « vues » par jour (détection des nouvelles lignes). */
 const PLANNING_ROW_SNAPSHOT_KEY = "meltin_planning_row_snapshot_v1";
 
-/** Par feuille : par clé de ligne stable, tableau de slugs (1 à 4). */
-type AssigneeStore = Record<string, Record<string, string[]>>;
-
 type SnapshotStore = Record<string, Record<string, string[]>>;
-
-function migrateLegacyV2ToV3(
-  legacy: Record<string, Record<string, unknown>>
-): AssigneeStore {
-  const out: AssigneeStore = {};
-  for (const [sid, rows] of Object.entries(legacy)) {
-    if (!rows || typeof rows !== "object") continue;
-    out[sid] = {};
-    for (const [rowKey, v] of Object.entries(rows)) {
-      out[sid][rowKey] = normalizeAssigneeListFromStored(v);
-    }
-  }
-  return out;
-}
-
-function loadAssigneeStore(): AssigneeStore {
-  if (typeof window === "undefined") return {};
-  try {
-    const rawV3 = window.localStorage.getItem(PLANNING_ASSIGNEES_STORAGE_KEY);
-    if (rawV3) {
-      const parsed: unknown = JSON.parse(rawV3);
-      if (!parsed || typeof parsed !== "object") return {};
-      return migrateLegacyV2ToV3(parsed as Record<string, Record<string, unknown>>);
-    }
-    const rawV2 = window.localStorage.getItem(
-      PLANNING_ASSIGNEES_STORAGE_KEY_LEGACY_V2
-    );
-    if (rawV2) {
-      const parsed: unknown = JSON.parse(rawV2);
-      if (parsed && typeof parsed === "object") {
-        const migrated = migrateLegacyV2ToV3(
-          parsed as Record<string, Record<string, unknown>>
-        );
-        window.localStorage.setItem(
-          PLANNING_ASSIGNEES_STORAGE_KEY,
-          JSON.stringify(migrated)
-        );
-        return migrated;
-      }
-    }
-    return {};
-  } catch {
-    return {};
-  }
-}
 
 function loadSnapshotStore(): SnapshotStore {
   if (typeof window === "undefined") return {};
@@ -277,6 +226,7 @@ type PlanningDebug = {
 
 type PlanningServicesPayload = {
   rows: DailyServiceRow[];
+  assigneesByServiceId?: Record<string, string>;
   fetchedAt: string;
   filterDateIso?: string | null;
   debug?: PlanningDebug;
@@ -1042,7 +992,6 @@ export function DailyServicesView() {
   const [meName, setMeName] = useState<string>("");
   const isPlanningAdmin = usePlanningAdminClient();
 
-  const [assigneesBump, setAssigneesBump] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const planningValidatedBannerTimerRef = useRef<ReturnType<
     typeof setTimeout
@@ -1056,52 +1005,6 @@ export function DailyServicesView() {
   const [conflictRowKeys, setConflictRowKeys] = useState<Set<string>>(
     () => new Set()
   );
-
-  /** Migration one-shot : normalise les assignations (tableaux / slugs / emojis). */
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(PLANNING_ASSIGNEES_STORAGE_KEY);
-      if (!raw) return;
-      const parsed: unknown = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") return;
-      const store = parsed as AssigneeStore;
-      let changed = false;
-      for (const sid of Object.keys(store)) {
-        const rows = store[sid];
-        if (!rows || typeof rows !== "object") continue;
-        for (const rowKey of Object.keys(rows)) {
-          const v = rows[rowKey];
-          const n = normalizeAssigneeListFromStored(v);
-          if (JSON.stringify(v) !== JSON.stringify(n)) {
-            rows[rowKey] = n;
-            changed = true;
-          }
-        }
-      }
-      if (changed) {
-        window.localStorage.setItem(
-          PLANNING_ASSIGNEES_STORAGE_KEY,
-          JSON.stringify(store)
-        );
-        startTransition(() => setAssigneesBump((b) => b + 1));
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const assignees = useMemo(() => {
-    void assigneesBump;
-    if (typeof window === "undefined") return {};
-    const sheetMap = loadAssigneeStore()[spreadsheetId];
-    if (!sheetMap) return {};
-    const next: Record<string, string[]> = {};
-    for (const [k, v] of Object.entries(sheetMap)) {
-      next[k] = normalizeAssigneeListFromStored(v);
-    }
-    return next;
-  }, [spreadsheetId, assigneesBump]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1158,6 +1061,32 @@ export function DailyServicesView() {
     }
   );
   mutatePlanningRef.current = mutate;
+
+  const assignees = useMemo(() => {
+    const rows = data?.rows ?? [];
+    const mapByServiceId = data?.assigneesByServiceId ?? {};
+    const next: Record<string, string[]> = {};
+    for (const row of rows) {
+      const rowKey = stableServiceRowKey(row);
+      const serviceId = serviceReportIdFromRow(row);
+      const fromDb = mapByServiceId[serviceId];
+      if (fromDb) {
+        next[rowKey] = parseAssigneeNameToSlugs(fromDb);
+        continue;
+      }
+      const label = matchSheetAssigneeToTeamLabel(row.sheetAssignee || "");
+      if (label) {
+        const slug =
+          assigneeSlugFromNotifyLabel(label) ?? DEFAULT_PLANNING_ASSIGNEE_SLUG;
+        next[rowKey] = normalizeAssigneeListFromStored([
+          normalizeAssigneeStoredValue(slug),
+        ]);
+        continue;
+      }
+      next[rowKey] = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+    }
+    return next;
+  }, [data?.assigneesByServiceId, data?.rows]);
 
   const selectedKey = normalizeCanonicalDateKey(selectedDate);
   selectedKeyRef.current = selectedKey;
@@ -1372,7 +1301,6 @@ export function DailyServicesView() {
   const refreshAll = useCallback(() => {
     void mutatePlanningRef.current?.(undefined, { revalidate: true });
     void mutateReportsRef.current?.(undefined, { revalidate: true });
-    startTransition(() => setAssigneesBump((b) => b + 1));
   }, []);
 
   /** Intervalle de sécurité : refresh auto toutes les 10s. */
@@ -1770,11 +1698,15 @@ export function DailyServicesView() {
       row,
     }));
     setConflictRowKeys(computeConflictRowKeys(rowKeysAndRows, assignees));
-  }, [prepModeActive, visibleRows, assignees, assigneesBump]);
+  }, [prepModeActive, visibleRows, assignees]);
 
   const setAssigneesForRow = useCallback(
     (key: string, next: string[]) => {
       void (async () => {
+        const rows = data?.rows ?? [];
+        const row = rows.find((r) => stableServiceRowKey(r) === key);
+        if (!row) return;
+
         const token = readPlanningAuthSession()?.token;
         if (!token) {
           window.alert(
@@ -1802,66 +1734,75 @@ export function DailyServicesView() {
           .slice(0, MAX_PLANNING_ASSIGNEES_PER_SERVICE)
           .map((x) => normalizeAssigneeStoredValue(x));
         if (safe.length === 0) safe = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
-        if (typeof window === "undefined") return;
-        try {
-          const all = loadAssigneeStore();
-          const prevRaw = all[spreadsheetId]?.[key];
-          const prevArr = normalizeAssigneeListFromStored(prevRaw);
-          const prevNotify = new Set(
-            prevArr.filter(
-              (s) =>
-                s !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(s)
-            )
-          );
 
-          const cur = { ...(all[spreadsheetId] ?? {}), [key]: safe };
-          all[spreadsheetId] = cur;
-          window.localStorage.setItem(
-            PLANNING_ASSIGNEES_STORAGE_KEY,
-            JSON.stringify(all)
-          );
-          setAssigneesBump((b) => b + 1);
+        const prevArr = normalizeAssigneeListFromStored(assignees[key]);
+        const prevNotify = new Set(
+          prevArr.filter(
+            (s) => s !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(s)
+          )
+        );
 
-          const dateKey = normalizeCanonicalDateKey(selectedDate);
-          const planningDay = planningDayBucket(
-            dateKey,
-            todayYmd,
-            tomorrowYmd
-          );
-          const isPrep =
-            new URLSearchParams(window.location.search).get("mode") === "prep";
-          /** Demain + `mode=prep` : pas de notifs individuelles pendant la préparation. */
-          if (dateKey === tomorrowYmd && isPrep) {
-            return;
+        const dateKey = normalizeCanonicalDateKey(selectedDate);
+        const planningDay = planningDayBucket(dateKey, todayYmd, tomorrowYmd);
+
+        const res = await fetch("/api/planning-assignees/set", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            serviceId: serviceReportIdFromRow(row),
+            assigneeSlugs: safe,
+          }),
+        });
+
+        if (!res.ok) {
+          let msg = "Enregistrement impossible.";
+          try {
+            const j = (await res.json()) as { error?: string };
+            if (typeof j?.error === "string") msg = j.error;
+          } catch {
+            /* ignore */
           }
-          /** Sans `mode=prep` : notifs pour chaque nouvel assigné ajouté sur la ligne. */
-          for (const slug of safe) {
-            if (prevNotify.has(slug)) continue;
-            const label = assigneeSlugToNotifyLabel(slug);
-            if (!label) continue;
-            const actorName = readPlanningAuthSession()?.displayName?.trim() ?? "";
-            void fetch("/api/push/planning-assignee-alert", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                spreadsheetId,
-                dateKey,
-                stableRowKey: key,
-                assigneeName: label,
-                planningDay,
-                actorName,
-              }),
-            }).catch(() => {});
-          }
-        } catch {
-          /* quota / private mode */
+          window.alert(msg);
+          return;
+        }
+
+        refreshAll();
+
+        const isPrep =
+          typeof window !== "undefined" &&
+          new URLSearchParams(window.location.search).get("mode") === "prep";
+        /** Demain + `mode=prep` : pas de notifs individuelles pendant la préparation. */
+        if (dateKey === tomorrowYmd && isPrep) {
+          return;
+        }
+        /** Sans `mode=prep` : notifs pour chaque nouvel assigné ajouté sur la ligne. */
+        for (const slug of safe) {
+          if (prevNotify.has(slug)) continue;
+          const label = assigneeSlugToNotifyLabel(slug);
+          if (!label) continue;
+          const actorName = readPlanningAuthSession()?.displayName?.trim() ?? "";
+          void fetch("/api/push/planning-assignee-alert", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              spreadsheetId,
+              dateKey,
+              stableRowKey: key,
+              assigneeName: label,
+              planningDay,
+              actorName,
+            }),
+          }).catch(() => {});
         }
       })();
     },
-    [spreadsheetId, selectedDate, tomorrowYmd, todayYmd]
+    [assignees, data?.rows, refreshAll, selectedDate, spreadsheetId, todayYmd, tomorrowYmd]
   );
 
   /** Détection d’urgence : nouvelles lignes du jour → 🚨 si pas encore d’assignation (y compris après refresh SWR). */
@@ -1898,15 +1839,15 @@ export function DailyServicesView() {
     const prevSet = new Set(prev);
     const newIdentities = currentIdentities.filter((id) => !prevSet.has(id));
 
-    const store = loadAssigneeStore();
-    const sheetAssign = { ...(store[spreadsheetId] ?? {}) };
-    let changed = false;
-
     for (const id of newIdentities) {
       for (const stableKey of identityToStables.get(id) ?? []) {
-        if (!(stableKey in sheetAssign)) {
-          sheetAssign[stableKey] = [URGENT_ASSIGNEE];
-          changed = true;
+        if (!isPlanningAdmin) continue;
+        const current = normalizeAssigneeListFromStored(assignees[stableKey]);
+        if (
+          current.every((s) => s === DEFAULT_PLANNING_ASSIGNEE_SLUG) &&
+          !current.some(isUrgentAssignee)
+        ) {
+          setAssigneesForRow(stableKey, [URGENT_ASSIGNEE]);
         }
       }
     }
@@ -1918,15 +1859,15 @@ export function DailyServicesView() {
     };
     saveSnapshotStore(snapshots);
 
-    if (changed && isPlanningAdmin) {
-      store[spreadsheetId] = sheetAssign;
-      window.localStorage.setItem(
-        PLANNING_ASSIGNEES_STORAGE_KEY,
-        JSON.stringify(store)
-      );
-      startTransition(() => setAssigneesBump((b) => b + 1));
-    }
-  }, [data?.rows, data?.fetchedAt, spreadsheetId, selectedDate, isPlanningAdmin]);
+  }, [
+    assignees,
+    data?.rows,
+    data?.fetchedAt,
+    isPlanningAdmin,
+    selectedDate,
+    setAssigneesForRow,
+    spreadsheetId,
+  ]);
 
   return (
     <div

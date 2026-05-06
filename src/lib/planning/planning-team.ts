@@ -159,3 +159,52 @@ export function matchSheetAssigneeToTeamLabel(raw: string): string | null {
   }
   return null;
 }
+
+/**
+ * Decode `service_reports.assignee_name` into planning slugs.
+ * We accept legacy free-text and also multi-assign formats like "Javed;Thomas".
+ */
+export function parseAssigneeNameToSlugs(raw: string | null | undefined): string[] {
+  const t = String(raw ?? "").trim();
+  if (!t) return [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+  if (t === PLANNING_URGENT_ASSIGNEE_DISPLAY) return [PLANNING_URGENT_ASSIGNEE_SLUG];
+  if (t === PLANNING_URGENT_ASSIGNEE_SLUG) return [PLANNING_URGENT_ASSIGNEE_SLUG];
+
+  const parts = t
+    .split(/[;|,+/]+/g)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) return [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+
+  const slugs: string[] = [];
+  for (const p of parts) {
+    if (p === PLANNING_URGENT_ASSIGNEE_DISPLAY) {
+      slugs.push(PLANNING_URGENT_ASSIGNEE_SLUG);
+      continue;
+    }
+    const s = assigneeSlugFromNotifyLabel(p);
+    if (s) slugs.push(s);
+  }
+  return normalizeAssigneeListFromStored(slugs);
+}
+
+/**
+ * Encode slugs into a stable, human-readable string for `service_reports.assignee_name`.
+ * Uses team labels, separated by `;` (to allow multiple assignees).
+ */
+export function serializeAssigneeSlugsToName(slugs: string[]): string | null {
+  const list = normalizeAssigneeListFromStored(slugs);
+  const labels: string[] = [];
+  for (const slug of list) {
+    if (slug === DEFAULT_PLANNING_ASSIGNEE_SLUG) continue;
+    if (slug === PLANNING_URGENT_ASSIGNEE_SLUG) {
+      labels.push(PLANNING_URGENT_ASSIGNEE_DISPLAY);
+      continue;
+    }
+    const label = assigneeSlugToNotifyLabel(slug);
+    if (label) labels.push(label);
+  }
+  const out = labels.join(";");
+  return out ? out : null;
+}
