@@ -26,7 +26,19 @@ export async function POST(req: Request) {
 
   console.log("ENVOI GLOBAL DÉCLENCHÉ");
 
-  const result = await broadcastAlarmUncoveredPush();
+  let body: unknown = null;
+  try {
+    body = await req.json();
+  } catch {
+    /* ignore */
+  }
+
+  const rdv =
+    body && typeof body === "object" && "rdv1" in body && typeof (body as { rdv1?: unknown }).rdv1 === "string"
+      ? ((body as { rdv1: string }).rdv1 || "").trim()
+      : null;
+
+  const result = await broadcastAlarmUncoveredPush({ rdv });
 
   return NextResponse.json({ ok: true, skipped: false, ...result });
 }

@@ -1813,7 +1813,10 @@ export function DailyServicesView() {
           void fetch("/api/push/planning-alarm-uncovered", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ serviceId: serviceReportIdFromRow(row) }),
+            body: JSON.stringify({
+              serviceId: serviceReportIdFromRow(row),
+              rdv1: row.rdv1,
+            }),
           }).catch(() => {});
         }
 

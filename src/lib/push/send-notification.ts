@@ -82,8 +82,21 @@ export async function broadcastPlanningUpdate(payload: {
 const ALARM_UNCOVERED_TITLE = "🚨 RAJOUT 🚨";
 const ALARM_UNCOVERED_BODY = "who can do it ?";
 
+function normalizeRdvToTitleSuffix(rdv: string | null | undefined): string {
+  const t = String(rdv ?? "").trim();
+  if (!t) return "";
+  // Accept "08:30", "8:30", "08h30", "08:30:00", etc.
+  const m = /^(\d{1,2})\s*(?:[:hH])\s*(\d{2})/.exec(t);
+  if (!m) return "";
+  const hh = String(Math.min(23, Math.max(0, Number(m[1])))).padStart(2, "0");
+  const mm = String(Math.min(59, Math.max(0, Number(m[2])))).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 /** Cas 5 : service avec alarme non couvert — diffusion à tous les abonnés. */
-export async function broadcastAlarmUncoveredPush(): Promise<{
+export async function broadcastAlarmUncoveredPush(opts?: {
+  rdv?: string | null;
+}): Promise<{
   sent: number;
   failed: number;
 }> {
@@ -104,10 +117,13 @@ export async function broadcastAlarmUncoveredPush(): Promise<{
   let sent = 0;
   let failed = 0;
 
+  const rdv = normalizeRdvToTitleSuffix(opts?.rdv ?? null);
+  const title = rdv ? `${ALARM_UNCOVERED_TITLE} ${rdv}` : ALARM_UNCOVERED_TITLE;
+
   for (const raw of subs) {
     const r = await sendPushNotification(
       raw,
-      ALARM_UNCOVERED_TITLE,
+      title,
       ALARM_UNCOVERED_BODY,
       openUrl,
       { variant: "planning" }
