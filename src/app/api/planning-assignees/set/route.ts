@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { requirePlanningAdminBearer } from "@/lib/auth/planning-admin-server";
+import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import { serializeAssigneeSlugsToName } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 type Body = {
   serviceId?: unknown;
+  serviceDate?: unknown;
   assigneeSlugs?: unknown;
 };
 
@@ -31,11 +33,16 @@ export async function POST(request: Request) {
   const b = (body ?? {}) as Body;
 
   const serviceId = typeof b.serviceId === "string" ? b.serviceId.trim() : "";
+  const serviceDateRaw =
+    typeof b.serviceDate === "string" ? b.serviceDate.trim() : "";
+  const serviceDate = serviceDateRaw
+    ? normalizeCanonicalDateKey(serviceDateRaw)
+    : "";
 
-  if (!serviceId) {
+  if (!serviceId || !serviceDate) {
     return NextResponse.json(
       {
-        error: "Champs requis : serviceId.",
+        error: "Champs requis : serviceId, serviceDate.",
       },
       { status: 400 }
     );
@@ -49,6 +56,7 @@ export async function POST(request: Request) {
 
   const payload = {
     service_id: serviceId,
+    service_date: serviceDate,
     agent_name: assigneeName,
     updated_at: new Date().toISOString(),
   };

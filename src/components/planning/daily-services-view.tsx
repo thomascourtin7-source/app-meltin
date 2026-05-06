@@ -1788,6 +1788,7 @@ export function DailyServicesView() {
           },
           body: JSON.stringify({
             serviceId: serviceReportIdFromRow(row),
+            serviceDate: row.dateIso,
             assigneeSlugs: safe,
           }),
         });

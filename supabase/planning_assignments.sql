@@ -1,6 +1,7 @@
 create table if not exists public.planning_assignments (
   id uuid primary key default gen_random_uuid(),
   service_id text not null,
+  service_date date,
   agent_name text,
   updated_at timestamptz not null default now()
 );

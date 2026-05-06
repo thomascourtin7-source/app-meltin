@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import { DateTime } from "luxon";
 
-import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import { broadcastAlarmUncoveredPush } from "@/lib/push/send-notification";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -57,23 +56,46 @@ export async function POST(req: Request) {
   }
 
   const b = body as Record<string, unknown>;
-  const spreadsheetId =
-    typeof b.spreadsheetId === "string" ? b.spreadsheetId.trim() : "";
-  const dateKey = typeof b.dateKey === "string" ? b.dateKey.trim() : "";
   const serviceId = typeof b.serviceId === "string" ? b.serviceId.trim() : "";
 
-  if (!spreadsheetId || !dateKey || !serviceId) {
+  console.log("Tentative d'envoi pour le service:", serviceId);
+
+  if (!serviceId) {
     return NextResponse.json(
       {
-        error: "Champs requis : spreadsheetId (string), dateKey (string), serviceId (string).",
+        error: "Champs requis : serviceId (string).",
       },
       { status: 400 }
     );
   }
 
-  // Condition de date: push seulement si le service est pour aujourd'hui (Paris).
-  const serviceDate = normalizeCanonicalDateKey(dateKey);
   const today = parisTodayYmd();
+
+  const admin = getSupabaseAdmin();
+  if (!admin) {
+    return NextResponse.json(
+      { error: "Supabase admin non configuré (SUPABASE_SERVICE_ROLE_KEY)." },
+      { status: 500 }
+    );
+  }
+
+  const { data: assignment, error: aErr } = await admin
+    .from("planning_assignments")
+    .select("service_date")
+    .eq("service_id", serviceId)
+    .maybeSingle();
+
+  if (aErr) {
+    return NextResponse.json({ error: aErr.message }, { status: 500 });
+  }
+
+  const serviceDate =
+    assignment &&
+    typeof (assignment as { service_date?: unknown }).service_date === "string"
+      ? ((assignment as { service_date: string }).service_date || "").slice(0, 10)
+      : "";
+
+  // Condition de date: push seulement si le service est pour aujourd'hui (Paris).
   if (!serviceDate || serviceDate !== today) {
     return NextResponse.json({
       ok: true,
@@ -84,30 +106,16 @@ export async function POST(req: Request) {
     });
   }
 
-  // Historique anti-doublon (DB): 1 envoi max par service_id et par jour (Paris).
-  const admin = getSupabaseAdmin();
-  if (admin) {
-    const { data, error } = await admin
-      .from("sent_alarms")
-      .select("spreadsheet_id")
-      .eq("spreadsheet_id", spreadsheetId)
-      .eq("service_identity_key", serviceId)
-      .eq("sent_on", today)
-      .maybeSingle();
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-    if (data) {
-      return NextResponse.json({
-        ok: true,
-        skipped: true,
-        reason: "already-sent",
-      });
-    }
+  const { count, error: sErr } = await admin
+    .from("push_subscriptions")
+    .select("endpoint", { count: "exact", head: true });
+  if (sErr) {
+    return NextResponse.json({ error: sErr.message }, { status: 500 });
   }
+  console.log("Nombre de destinataires trouvés:", count ?? 0);
 
   pruneDedupe();
-  const key = `${spreadsheetId}\x1f${today}\x1f${serviceId}\x1falarm-uncovered`;
+  const key = `${today}\x1f${serviceId}\x1falarm-uncovered`;
   const now = Date.now();
   const last = dedupe.get(key);
   if (last !== undefined && now - last < DEDUPE_MS) {
@@ -120,18 +128,6 @@ export async function POST(req: Request) {
   dedupe.set(key, now);
 
   const result = await broadcastAlarmUncoveredPush();
-
-  if (admin) {
-    await admin.from("sent_alarms").upsert(
-      {
-        spreadsheet_id: spreadsheetId,
-        service_identity_key: serviceId,
-        sent_on: today,
-        notified_at: new Date().toISOString(),
-      },
-      { onConflict: "spreadsheet_id,service_identity_key,sent_on" }
-    );
-  }
 
   return NextResponse.json({ ok: true, skipped: false, ...result });
 }
