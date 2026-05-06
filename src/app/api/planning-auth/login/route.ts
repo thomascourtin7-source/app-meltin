@@ -34,10 +34,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Prénom requis." }, { status: 400 });
   }
 
+  // Insensible à la casse : "test" ou "Test" doivent fonctionner.
   const { data: row, error: selErr } = await supabase
     .from("agents_auth")
     .select("name, password")
-    .eq("name", nameRaw)
+    .ilike("name", nameRaw)
     .maybeSingle();
 
   if (selErr) {
