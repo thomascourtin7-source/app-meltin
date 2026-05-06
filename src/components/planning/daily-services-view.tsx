@@ -1,9 +1,10 @@
 "use client";
 
 import {
-  startTransition,
+  memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -47,6 +48,7 @@ import {
   normalizeAssigneeListFromStored,
   matchSheetAssigneeToTeamLabel,
   parseAssigneeNameToSlugs,
+  serializeAssigneeSlugsToName,
   normalizeAssigneeStoredValue,
 } from "@/lib/planning/planning-team";
 import {
@@ -75,8 +77,9 @@ import {
   readPlanningAuthSession,
 } from "@/lib/auth/planning-auth-session";
 import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { setPlanningAssigneesRealtimeChannel } from "@/lib/planning/planning-assignees-realtime";
 
-const POLL_MS = 5 * 60 * 1000;
 const FORCE_REFRESH_EVENT = "meltin_planning_force_refresh";
 
 type ServiceReportRow = {
@@ -234,6 +237,67 @@ type PlanningAssignmentsPayload = {
   assigneesByServiceId: Record<string, string>;
 };
 
+/** Payload Postgres Realtime (shape stable côté `@supabase/supabase-js`). */
+type RealtimePlanningAssignmentPayload = {
+  eventType?: string;
+  new?: Record<string, unknown> | null;
+  old?: Record<string, unknown> | null;
+};
+
+function assignmentRowFromRealtimeRecord(rec: unknown): {
+  service_id: string;
+  agent_name: string;
+} | null {
+  if (!rec || typeof rec !== "object") return null;
+  const o = rec as Record<string, unknown>;
+  const sid = typeof o.service_id === "string" ? o.service_id.trim() : "";
+  if (!sid) return null;
+  return {
+    service_id: sid,
+    agent_name: typeof o.agent_name === "string" ? o.agent_name : "",
+  };
+}
+
+/** F12 : erreur persistance assignations (`planning_assignments` via API). */
+function logErreurSupabase(details: unknown) {
+  console.log("ERREUR SUPABASE:", details);
+}
+
+function isRealtimePlanningAssignmentDelete(
+  payload: RealtimePlanningAssignmentPayload
+): boolean {
+  const t =
+    typeof payload.eventType === "string"
+      ? payload.eventType.trim().toUpperCase()
+      : "";
+  if (t === "DELETE") return true;
+  return payload.new == null && payload.old != null;
+}
+
+function sameAssigneeSlugList(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/** Détecte un changement métier sur `row` même si l’objet référence diffère. */
+function serviceBlockRowFingerprint(row: DailyServiceRow): string {
+  return [
+    row.dateIso,
+    row.client,
+    row.type,
+    row.sheetAssignee,
+    row.driverInfo,
+    row.tel,
+    row.vol,
+    row.rdv1,
+    row.rdv2,
+    row.destProv,
+  ].join("\u0001");
+}
+
 async function planningServicesFetcher(
   url: string
 ): Promise<PlanningServicesPayload> {
@@ -259,7 +323,11 @@ type ServiceBlockProps = {
   assignees: string[];
   /** Profil courant (« S’enregistrer »), pour permissions photo / PEC. */
   meName: string;
-  onAssigneesChange: (key: string, next: string[]) => void;
+  onAssigneesChange: (
+    key: string,
+    next: string[],
+    options?: { persist?: boolean }
+  ) => void;
   hasTimeConflict?: boolean;
   showConflictUi?: boolean;
   isReportCompleted: boolean;
@@ -278,17 +346,37 @@ type ServiceBlockProps = {
   planningReadOnly: boolean;
 };
 
+function serviceBlockMemoAreEqual(
+  prev: Readonly<ServiceBlockProps>,
+  next: Readonly<ServiceBlockProps>
+): boolean {
+  if (prev.rowKey !== next.rowKey) return false;
+  if (prev.reportServiceId !== next.reportServiceId) return false;
+  if (prev.meName !== next.meName) return false;
+  if (prev.planningReadOnly !== next.planningReadOnly) return false;
+  if (prev.hasTimeConflict !== next.hasTimeConflict) return false;
+  if (prev.showConflictUi !== next.showConflictUi) return false;
+  if (prev.isReportCompleted !== next.isReportCompleted) return false;
+  if (prev.isPec !== next.isPec) return false;
+  if (prev.hasPhoto !== next.hasPhoto) return false;
+  if (serviceBlockRowFingerprint(prev.row) !== serviceBlockRowFingerprint(next.row)) {
+    return false;
+  }
+  if (!sameAssigneeSlugList(prev.assignees, next.assignees)) return false;
+  return true;
+}
+
 /** Police : meilleur rendu des emojis sur iOS / Android. */
 const ASSIGNEE_SELECT_EMOJI_FONT =
   "[font-family:system-ui,-apple-system,'Segoe_UI_Emoji','Apple_Color_Emoji',sans-serif]";
 
 const URGENT_ASSIGNEE = PLANNING_URGENT_ASSIGNEE_SLUG;
 
-function ServiceBlock({
+function ServiceBlockInner({
   row,
   rowKey,
   reportServiceId,
-  assignees,
+  assignees: assigneesRaw,
   meName,
   onAssigneesChange,
   hasTimeConflict = false,
@@ -303,24 +391,155 @@ function ServiceBlock({
   onDeleteReport,
   planningReadOnly,
 }: ServiceBlockProps) {
+  const assignees = Array.isArray(assigneesRaw) ? assigneesRaw : [];
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
   const fileRef = useRef<HTMLInputElement>(null);
+  const assigneesSectionRef = useRef<HTMLDivElement>(null);
+  /**
+   * Flux « + » local (`isAddingAssignee`) : tant qu’actif, un arrivage Realtime (`assignees`) ne peut
+   * pas rabattre le nombre de lignes ni fermer la session d’ajout.
+   */
+  const [isAddingAssignee, setIsAddingAssignee] = useState(false);
+  /** Hauteur locale des lignes d’assignation (indépendante des re-render parent hors `rowKey`). */
+  const [assigneeSlotFloor, setAssigneeSlotFloor] = useState(assignees.length);
+  /** Après clic « + », focus/autoFocus du dernier sélecteur (mobile : clavier). */
+  const [pendingAssigneeSelectAutoFocus, setPendingAssigneeSelectAutoFocus] =
+    useState(false);
+  /**
+   * Nombre minimal de lignes «  forcées » par l’UI au clic (+), indépendamment des props retardées ;
+   * recalée à 0 dès que `assignees.length` rattrape.
+   */
+  const [survivalAssigneeSlots, setSurvivalAssigneeSlots] = useState(0);
+
+  useEffect(() => {
+    setIsAddingAssignee(false);
+    setAssigneeSlotFloor(assignees.length);
+    setSurvivalAssigneeSlots(0);
+    setPendingAssigneeSelectAutoFocus(false);
+  }, [rowKey]);
+
+  useEffect(() => {
+    if (isAddingAssignee) return;
+    if (assignees.length > assigneeSlotFloor) {
+      setAssigneeSlotFloor(assignees.length);
+    }
+  }, [isAddingAssignee, assignees.length, assigneeSlotFloor]);
+
+  useEffect(() => {
+    if (isAddingAssignee) return;
+    if (assignees.length < assigneeSlotFloor) {
+      setAssigneeSlotFloor(assignees.length);
+    }
+  }, [isAddingAssignee, assignees.length, assigneeSlotFloor]);
+
+  useEffect(() => {
+    if (assignees.length >= assigneeSlotFloor) {
+      setIsAddingAssignee(false);
+    }
+  }, [assignees.length, assigneeSlotFloor]);
+
+  useEffect(() => {
+    if (survivalAssigneeSlots <= 0) return;
+    if (assignees.length >= survivalAssigneeSlots) {
+      setSurvivalAssigneeSlots(0);
+    }
+  }, [assignees.length, survivalAssigneeSlots]);
+
+  const assigneeRowCount = Math.min(
+    MAX_PLANNING_ASSIGNEES_PER_SERVICE,
+    Math.max(
+      assignees.length,
+      assigneeSlotFloor,
+      survivalAssigneeSlots
+    )
+  );
+
+  useLayoutEffect(() => {
+    if (!pendingAssigneeSelectAutoFocus || planningReadOnly) return;
+    const root = assigneesSectionRef.current;
+    if (!root) return;
+    const triggers = root.querySelectorAll('[data-slot=select-trigger]');
+    const last = triggers.item(triggers.length - 1);
+    const el = last instanceof HTMLElement ? last : null;
+    if (el) {
+      queueMicrotask(() => {
+        el.focus({ preventScroll: true });
+      });
+    }
+  }, [
+    pendingAssigneeSelectAutoFocus,
+    assigneeRowCount,
+    planningReadOnly,
+    assignees.length,
+    assigneeSlotFloor,
+  ]);
+
+  useEffect(() => {
+    if (!pendingAssigneeSelectAutoFocus) return;
+    const id = requestAnimationFrame(() => {
+      setPendingAssigneeSelectAutoFocus(false);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [pendingAssigneeSelectAutoFocus, assigneeRowCount]);
 
   const updateSlot = (slot: number, value: string) => {
     const next = [...assignees];
+    while (next.length <= slot) {
+      next.push(DEFAULT_PLANNING_ASSIGNEE_SLUG);
+    }
     next[slot] = normalizeAssigneeStoredValue(value);
     onAssigneesChange(rowKey, next);
   };
 
-  const addRow = () => {
-    if (assignees.length >= MAX_PLANNING_ASSIGNEES_PER_SERVICE) return;
-    onAssigneesChange(rowKey, [
-      ...assignees,
-      DEFAULT_PLANNING_ASSIGNEE_SLUG,
-    ]);
+  const handleAddAssignee = () => {
+    try {
+      console.log("CLIC PLUS DETECTÉ");
+      if (!row || !rowKey?.trim?.() || !reportServiceId?.trim?.()) {
+        console.error("handleAddAssignee: ligne ou identifiants invalides.", {
+          row,
+          rowKey,
+          reportServiceId,
+        });
+        return;
+      }
+      if (assigneeRowCount >= MAX_PLANNING_ASSIGNEES_PER_SERVICE) return;
+      if (!PLANNING_ASSIGNEE_OPTIONS?.length) {
+        console.error("handleAddAssignee: liste des agents indisponible.");
+        return;
+      }
+
+      const baseSlots: string[] = [...assignees];
+      const draftNextSlots: string[] = [
+        ...baseSlots,
+        DEFAULT_PLANNING_ASSIGNEE_SLUG,
+      ];
+
+      /** Tout synchrone avant tout effet parent / API async. */
+      const nextLen = draftNextSlots.length;
+      setSurvivalAssigneeSlots((s) =>
+        Math.min(MAX_PLANNING_ASSIGNEES_PER_SERVICE, Math.max(s, nextLen))
+      );
+      setIsAddingAssignee(true);
+      setPendingAssigneeSelectAutoFocus(true);
+      setAssigneeSlotFloor((f) =>
+        Math.min(MAX_PLANNING_ASSIGNEES_PER_SERVICE, Math.max(f, nextLen))
+      );
+      /** + : uniquement brouillon local (`__none__`), pas d’API tant qu’on n’a pas choisi un nom. */
+      onAssigneesChange(rowKey, draftNextSlots, { persist: false });
+    } catch (error) {
+      logErreurSupabase({ stage: "handleAddAssignee (sync)", error });
+      console.error(error);
+    }
   };
 
   const removeRow = (slot: number) => {
+    if (assigneeRowCount <= 1) return;
+    if (slot >= assignees.length) {
+      setAssigneeSlotFloor((f) =>
+        Math.max(1, Math.max(assignees.length, f - 1))
+      );
+      return;
+    }
     if (assignees.length <= 1) return;
     onAssigneesChange(
       rowKey,
@@ -459,6 +678,7 @@ function ServiceBlock({
   if (isReportCompleted) {
     return (
       <div
+        data-planning-service-card
         className={cn(
           "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-slate-100 px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5",
           isUrgent
@@ -563,6 +783,7 @@ function ServiceBlock({
 
   return (
     <div
+      data-planning-service-card
       className={cn(
         "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-slate-100 px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5",
         isUrgent ? "border-red-500" : "border-slate-300",
@@ -580,12 +801,22 @@ function ServiceBlock({
           <span>Conflit horaire</span>
         </div>
       ) : null}
-      <div className="mb-5">
+      <div className="mb-5" aria-busy={isAddingAssignee}>
         <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
           Assignation
         </span>
-        <div className="flex flex-col gap-2 sm:gap-2.5">
-          {assignees.map((assignee, slot) => {
+        <div
+          ref={assigneesSectionRef}
+          className="flex flex-col gap-2 sm:gap-2.5"
+        >
+          {Array.from({ length: assigneeRowCount }, (_, slot) => {
+            const rawSlot =
+              assignees[slot] ?? DEFAULT_PLANNING_ASSIGNEE_SLUG;
+            const assignee = PLANNING_ASSIGNEE_OPTIONS.some(
+              (opt) => opt.value === rawSlot
+            )
+              ? rawSlot
+              : DEFAULT_PLANNING_ASSIGNEE_SLUG;
             const triggerDisplayText =
               assignee === PLANNING_URGENT_ASSIGNEE_SLUG
                 ? PLANNING_URGENT_ASSIGNEE_DISPLAY
@@ -595,7 +826,7 @@ function ServiceBlock({
             const canAddMore =
               !planningReadOnly &&
               slot === 0 &&
-              assignees.length < MAX_PLANNING_ASSIGNEES_PER_SERVICE;
+              assigneeRowCount < MAX_PLANNING_ASSIGNEES_PER_SERVICE;
             const highlightAssignee = isAssigneeHighlighted(assignee);
 
             return (
@@ -614,6 +845,11 @@ function ServiceBlock({
                     <SelectTrigger
                       size="sm"
                       disabled={planningReadOnly}
+                      autoFocus={
+                        pendingAssigneeSelectAutoFocus &&
+                        slot === assigneeRowCount - 1 &&
+                        !planningReadOnly
+                      }
                       className={cn(
                         "h-8 w-full justify-start gap-2 border border-border/50 bg-muted/40 text-sm shadow-none",
                         ASSIGNEE_SELECT_EMOJI_FONT,
@@ -680,17 +916,25 @@ function ServiceBlock({
                   </Select>
                 </div>
                 {canAddMore ? (
-                  <Button
+                  <button
                     type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 self-center rounded-lg border-dashed shadow-none touch-manipulation"
+                    className={cn(
+                      "relative z-50 pointer-events-auto shrink-0 self-center",
+                      "inline-flex size-8 items-center justify-center rounded-lg border border-dashed border-input",
+                      "bg-background text-foreground shadow-none touch-manipulation outline-none",
+                      "hover:bg-accent hover:text-accent-foreground",
+                      "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    )}
                     style={{ touchAction: "manipulation" }}
-                    onClick={addRow}
                     aria-label="Ajouter un assigné"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleAddAssignee();
+                    }}
                   >
                     <Plus className="size-4" aria-hidden />
-                  </Button>
+                  </button>
                 ) : null}
                 {slot === 0 ? (
                   <Button
@@ -891,11 +1135,19 @@ function ServiceBlock({
           type="button"
           variant="outline"
           className="w-full border border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
-          onClick={() => {
-            void onOpenReportForm({ serviceId: reportServiceId }).catch((e) => {
-              console.error(e);
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            void onOpenReportForm({ serviceId: reportServiceId }).catch((err) => {
+              console.error(err);
               window.alert(
-                e instanceof Error ? e.message : "Ouverture du rapport impossible."
+                err instanceof Error
+                  ? err.message
+                  : "Ouverture du rapport impossible."
               );
             });
           }}
@@ -908,6 +1160,8 @@ function ServiceBlock({
     </div>
   );
 }
+
+const ServiceBlock = memo(ServiceBlockInner, serviceBlockMemoAreEqual);
 
 async function fetchReportExistence(opts: {
   spreadsheetId: string;
@@ -987,6 +1241,11 @@ export function DailyServicesView() {
   const mutateAssignmentsRef = useRef<
     KeyedMutator<PlanningAssignmentsPayload> | undefined
   >(undefined);
+  /** Stabilise les références `string[]` par `rowKey` si les slugs n’ont pas changé (évite rechurn parent). */
+  const assigneesListCacheRef = useRef(
+    new Map<string, { key: string; list: string[] }>()
+  );
+
   const selectedKeyRef = useRef("");
 
   const configuredId = useLocalSpreadsheetId();
@@ -1017,6 +1276,11 @@ export function DailyServicesView() {
   const [conflictRowKeys, setConflictRowKeys] = useState<Set<string>>(
     () => new Set()
   );
+
+  /** Brouillon local : affichage immédiat des lignes d’assignation avant la réponse API. */
+  const [assigneesDraftByRowKey, setAssigneesDraftByRowKey] = useState<
+    Record<string, string[]>
+  >({});
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1063,16 +1327,39 @@ export function DailyServicesView() {
     spreadsheetId
   )}&date=${encodeURIComponent(normalizeCanonicalDateKey(selectedDate))}`;
 
-  const { data, error, isLoading: planningDataLoading, isValidating, mutate } =
-    useSWR(
-    swrKey,
-    planningServicesFetcher,
-    {
-      refreshInterval: POLL_MS,
-      revalidateOnFocus: true,
-    }
-  );
+  const {
+    data: planningData,
+    error,
+    isLoading: planningBootstrapLoading,
+    isValidating,
+    mutate,
+  } = useSWR(swrKey, planningServicesFetcher, {
+    refreshInterval: 0,
+    revalidateOnFocus: false,
+    keepPreviousData: true,
+  });
   mutatePlanningRef.current = mutate;
+
+  /** Dernier planning affiché : évite l’écran « Chargement… » pendant un re-render / revalidation. */
+  const planningDisplayedRef = useRef<PlanningServicesPayload | undefined>(
+    undefined
+  );
+  if (planningData != null) {
+    planningDisplayedRef.current = planningData;
+  }
+  const planningPayload =
+    planningData ?? planningDisplayedRef.current ?? undefined;
+
+  /** Dès qu’on a affiché un planning une fois, on ne remplace plus toute la vue par le loader (Realtime, revalidate, etc.). */
+  const planningShellHydratedRef = useRef(false);
+  useEffect(() => {
+    if (planningPayload != null) planningShellHydratedRef.current = true;
+  }, [planningPayload]);
+
+  const showPlanningBlockingLoader =
+    !planningShellHydratedRef.current &&
+    planningBootstrapLoading &&
+    planningPayload == null;
 
   const selectedKey = normalizeCanonicalDateKey(selectedDate);
   selectedKeyRef.current = selectedKey;
@@ -1085,31 +1372,21 @@ export function DailyServicesView() {
   const isCustomDateSelected = !isTodaySelected && !isTomorrowSelected;
 
   const serviceIdsForAssignments = useMemo(() => {
-    const rows = data?.rows ?? [];
+    const rows = planningPayload?.rows ?? [];
     return [...new Set(rows.map((r) => serviceReportIdFromRow(r)).filter(Boolean))];
-  }, [data?.rows]);
+  }, [planningPayload?.rows]);
 
-  const assignmentsKey = useMemo(() => {
-    if (!spreadsheetId) return null;
-    if (serviceIdsForAssignments.length === 0) return null;
-    return [
-      "planningAssignments",
-      spreadsheetId,
-      selectedKey,
-      serviceIdsForAssignments.join("||"),
-    ] as const;
-  }, [selectedKey, serviceIdsForAssignments, spreadsheetId]);
+  const serviceIdsForAssignmentsRef = useRef<string[]>([]);
+  serviceIdsForAssignmentsRef.current = serviceIdsForAssignments;
 
-  const {
-    data: assignmentsData,
-    mutate: mutateAssignments,
-  } = useSWR<PlanningAssignmentsPayload>(
-    assignmentsKey,
-    async () => {
+  const loadAssignmentsBatch = useCallback(
+    async (
+      serviceIds: string[]
+    ): Promise<PlanningAssignmentsPayload> => {
       const res = await fetch("/api/planning-assignments/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serviceIds: serviceIdsForAssignments }),
+        body: JSON.stringify({ serviceIds }),
       });
       const json: unknown = await res.json();
       if (!res.ok) {
@@ -1130,38 +1407,168 @@ export function DailyServicesView() {
             : {},
       };
     },
+    []
+  );
+
+  const assignmentsKey = useMemo(() => {
+    if (!spreadsheetId) return null;
+    if (serviceIdsForAssignments.length === 0) return null;
+    return [
+      "planningAssignments",
+      spreadsheetId,
+      selectedKey,
+      serviceIdsForAssignments.join("||"),
+    ] as const;
+  }, [selectedKey, serviceIdsForAssignments, spreadsheetId]);
+
+  const {
+    data: assignmentsData,
+    mutate: mutateAssignments,
+  } = useSWR<PlanningAssignmentsPayload>(
+    assignmentsKey,
+    () => loadAssignmentsBatch(serviceIdsForAssignments),
     {
-      refreshInterval: 5000,
-      revalidateOnFocus: true,
+      refreshInterval: 0,
+      revalidateOnFocus: false,
+      keepPreviousData: true,
     }
   );
   mutateAssignmentsRef.current = mutateAssignments;
 
+  /**
+   * Mise à jour « locale » du cache assignations (= état fusionné utilisé comme `services` métier pour les lignes du jour).
+   * Un seul `service_id` par événement Realtime ; pas de fetch batch, pas de loader planning.
+   */
+  const mergePlanningAssignmentFromRealtime = useCallback(
+    (payload: RealtimePlanningAssignmentPayload) => {
+      const del = isRealtimePlanningAssignmentDelete(payload);
+      const rec = del ? payload.old : payload.new;
+      const parsed = assignmentRowFromRealtimeRecord(rec);
+      if (!parsed) return;
+
+      void mutateAssignments(
+        (prev) => {
+          const base = prev?.assigneesByServiceId ?? {};
+          const allowed = new Set(serviceIdsForAssignmentsRef.current);
+          if (!allowed.has(parsed.service_id)) {
+            return prev;
+          }
+
+          let nextAssignment: string | undefined;
+          if (del) {
+            nextAssignment = undefined;
+          } else {
+            const trimmed = parsed.agent_name.trim();
+            if (!trimmed) nextAssignment = undefined;
+            else nextAssignment = parsed.agent_name;
+          }
+
+          const prevAssignment = base[parsed.service_id];
+          const unchanged =
+            (prevAssignment === undefined && nextAssignment === undefined) ||
+            prevAssignment === nextAssignment;
+          if (unchanged) {
+            return prev;
+          }
+
+          const nextMap = { ...base };
+          if (nextAssignment === undefined) {
+            delete nextMap[parsed.service_id];
+          } else {
+            nextMap[parsed.service_id] = nextAssignment;
+          }
+          return { assigneesByServiceId: nextMap };
+        },
+        { revalidate: false }
+      );
+    },
+    [mutateAssignments]
+  );
+
+  /**
+   * Source de vérité assignations côté client : Postgres Realtime → cache SWR local uniquement.
+   * Pas de `router.refresh()`, pas de refetch qui affiche « Chargement du planning… » depuis ce flux.
+   */
+  useEffect(() => {
+    const sb = getSupabaseBrowserClient();
+    if (!sb) return;
+
+    const topic = `planning_assignments:${slugifyForStorageKey(spreadsheetId)}`;
+    const ch = sb
+      .channel(topic)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "planning_assignments",
+        },
+        (payload: RealtimePlanningAssignmentPayload) => {
+          mergePlanningAssignmentFromRealtime(payload);
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          setPlanningAssigneesRealtimeChannel(ch, spreadsheetId);
+        }
+      });
+
+    return () => {
+      setPlanningAssigneesRealtimeChannel(null, null);
+      void sb.removeChannel(ch);
+    };
+  }, [spreadsheetId, mergePlanningAssignmentFromRealtime]);
+
   const assignees = useMemo(() => {
-    const rows = data?.rows ?? [];
+    const rows = planningPayload?.rows ?? [];
     const mapByServiceId = assignmentsData?.assigneesByServiceId ?? {};
+    const cache = assigneesListCacheRef.current;
+    const usedKeys = new Set<string>();
     const next: Record<string, string[]> = {};
     for (const row of rows) {
       const rowKey = stableServiceRowKey(row);
-      const serviceId = serviceReportIdFromRow(row);
-      const fromDb = mapByServiceId[serviceId];
-      if (fromDb) {
-        next[rowKey] = parseAssigneeNameToSlugs(fromDb);
-        continue;
+      usedKeys.add(rowKey);
+
+      let slugs: string[];
+      if (Object.prototype.hasOwnProperty.call(assigneesDraftByRowKey, rowKey)) {
+        slugs = normalizeAssigneeListFromStored(assigneesDraftByRowKey[rowKey]);
+      } else {
+        const serviceId = serviceReportIdFromRow(row);
+        const fromDb = mapByServiceId[serviceId];
+        if (fromDb) {
+          slugs = parseAssigneeNameToSlugs(fromDb);
+        } else {
+          const label = matchSheetAssigneeToTeamLabel(row.sheetAssignee || "");
+          if (label) {
+            const slug =
+              assigneeSlugFromNotifyLabel(label) ?? DEFAULT_PLANNING_ASSIGNEE_SLUG;
+            slugs = normalizeAssigneeListFromStored([
+              normalizeAssigneeStoredValue(slug),
+            ]);
+          } else {
+            slugs = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+          }
+        }
       }
-      const label = matchSheetAssigneeToTeamLabel(row.sheetAssignee || "");
-      if (label) {
-        const slug =
-          assigneeSlugFromNotifyLabel(label) ?? DEFAULT_PLANNING_ASSIGNEE_SLUG;
-        next[rowKey] = normalizeAssigneeListFromStored([
-          normalizeAssigneeStoredValue(slug),
-        ]);
-        continue;
+
+      const fingerprint = slugs.join("\u0001");
+      const cached = cache.get(rowKey);
+      if (cached && cached.key === fingerprint) {
+        next[rowKey] = cached.list;
+      } else {
+        cache.set(rowKey, { key: fingerprint, list: slugs });
+        next[rowKey] = slugs;
       }
-      next[rowKey] = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+    }
+    for (const k of cache.keys()) {
+      if (!usedKeys.has(k)) cache.delete(k);
     }
     return next;
-  }, [assignmentsData?.assigneesByServiceId, data?.rows]);
+  }, [
+    assigneesDraftByRowKey,
+    assignmentsData?.assigneesByServiceId,
+    planningPayload?.rows,
+  ]);
 
   /** Planning déjà validé pour la date « demain » (persisté → pas de mode rouge au refresh). */
   const isTomorrowPlanningFinalized = useMemo(() => {
@@ -1175,13 +1582,10 @@ export function DailyServicesView() {
       ? new URLSearchParams(window.location.search).get("mode") === "prep"
       : false;
 
-  const selectDateAndRefresh = useCallback(
-    (ymd: string) => {
-      setSelectedDate(normalizeCanonicalDateKey(ymd));
-      void mutate();
-    },
-    [mutate]
-  );
+  /** Nouvelle date ⇒ nouvelle clé SWR : fetch implicite, sans `mutate()` forcé (évite doubles requêtes / flash UI). */
+  const selectPlanningDate = useCallback((ymd: string) => {
+    setSelectedDate(normalizeCanonicalDateKey(ymd));
+  }, []);
 
   /**
    * `?mode=prep` → active la préparation.
@@ -1211,14 +1615,12 @@ export function DailyServicesView() {
 
     if (modePrep) setPreparingTomorrow(true);
     if (tomorrowQ) {
-      const ymd = tomorrowKey;
-      setSelectedDate(ymd);
-      void mutate();
+      setSelectedDate(tomorrowKey);
     }
     if (pathname === "/" && searchParams.get("day") === "tomorrow") {
       router.replace("/", { scroll: false });
     }
-  }, [planningQueryKey, pathname, mutate, router, setPreparingTomorrow]);
+  }, [planningQueryKey, pathname, router, setPreparingTomorrow]);
 
   /** Sans `mode=prep` dans l’URL, le contexte « préparation » doit être faux. */
   useEffect(() => {
@@ -1318,11 +1720,11 @@ export function DailyServicesView() {
 
   /** Déjà filtrées côté API par `?date=` ; garde-fou local si besoin. */
   const filtered = useMemo(() => {
-    const rows = data?.rows ?? [];
+    const rows = planningPayload?.rows ?? [];
     return rows.filter(
       (r) => normalizeCanonicalDateKey(r.dateIso) === selectedKey
     );
-  }, [data?.rows, selectedKey]);
+  }, [planningPayload?.rows, selectedKey]);
 
   const visibleRows = useMemo(() => {
     const name = meName.trim();
@@ -1363,10 +1765,13 @@ export function DailyServicesView() {
   );
   mutateReportsRef.current = mutateReports;
 
+  /**
+   * Secours manuel uniquement : feuille planning / PDF.
+   * Les assignations suivent Supabase Realtime — pas de re-fetch automatique forcé sur ce bloc.
+   */
   const refreshAll = useCallback(() => {
     void mutatePlanningRef.current?.(undefined, { revalidate: true });
     void mutateReportsRef.current?.(undefined, { revalidate: true });
-    void mutateAssignmentsRef.current?.(undefined, { revalidate: true });
   }, []);
 
   /** Refresh manuel (bouton dans le header). */
@@ -1679,6 +2084,14 @@ export function DailyServicesView() {
     [spreadsheetId]
   );
 
+  const downloadReportPdfAndRefreshStatuses = useCallback(
+    async (opts: { serviceId: string }) => {
+      await downloadReportPdf(opts);
+      void mutateReports();
+    },
+    [downloadReportPdf, mutateReports]
+  );
+
   const deleteReport = useCallback(
     async (opts: { serviceId: string }) => {
       const base = reportExistence ?? {
@@ -1744,128 +2157,248 @@ export function DailyServicesView() {
   }, [prepModeActive, visibleRows, assignees]);
 
   const setAssigneesForRow = useCallback(
-    (key: string, next: string[]) => {
-      void (async () => {
-        const rows = data?.rows ?? [];
-        const row = rows.find((r) => stableServiceRowKey(r) === key);
-        if (!row) return;
-
-        const token = readPlanningAuthSession()?.token;
-        if (!token) {
-          window.alert(
-            "Reconnectez-vous pour modifier les assignations (session requise)."
-          );
-          return;
-        }
-        const verify = await fetch("/api/planning-assignees/verify-admin", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!verify.ok) {
-          let msg = "Action réservée aux administrateurs.";
-          try {
-            const j = (await verify.json()) as { error?: string };
-            if (typeof j?.error === "string") msg = j.error;
-          } catch {
-            /* ignore */
-          }
-          window.alert(msg);
+    (key: string, next: string[], opts?: { persist?: boolean }) => {
+      try {
+        const persist = opts?.persist !== false;
+        const keyTrim = typeof key === "string" ? key.trim() : "";
+        if (!keyTrim) {
+          console.error("setAssigneesForRow: clé ligne vide ou invalide.");
           return;
         }
 
-        let safe = next
+        const nextRows = Array.isArray(next)
+          ? next
+          : next == null
+            ? ([] as string[])
+            : [];
+
+        let safe = nextRows
           .slice(0, MAX_PLANNING_ASSIGNEES_PER_SERVICE)
           .map((x) => normalizeAssigneeStoredValue(x));
         if (safe.length === 0) safe = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+        safe = normalizeAssigneeListFromStored(safe);
 
-        const prevArr = normalizeAssigneeListFromStored(assignees[key]);
-        const prevNotify = new Set(
-          prevArr.filter(
-            (s) => s !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(s)
-          )
+        const assigneesBucket =
+          typeof assignees === "object" && assignees !== null ? assignees : {};
+        const prevArrSnapshot = normalizeAssigneeListFromStored(
+          (assigneesBucket as Record<string, unknown>)[keyTrim]
         );
-        const hadUrgent = prevArr.some((s) => s === URGENT_ASSIGNEE);
 
-        const dateKey = normalizeCanonicalDateKey(selectedDate);
-        const planningDay = planningDayBucket(dateKey, todayYmd, tomorrowYmd);
+        setAssigneesDraftByRowKey((prev) => ({ ...prev, [keyTrim]: safe }));
 
-        const res = await fetch("/api/planning-assignees/set", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            serviceId: serviceReportIdFromRow(row),
-            serviceDate: row.dateIso,
-            assigneeSlugs: safe,
-          }),
-        });
+        if (!persist) {
+          return;
+        }
 
-        if (!res.ok) {
-          let msg = "Enregistrement impossible.";
+        void (async () => {
+          const clearDraft = () => {
+            setAssigneesDraftByRowKey((p) => {
+              if (!Object.prototype.hasOwnProperty.call(p, keyTrim)) return p;
+              const n = { ...p };
+              delete n[keyTrim];
+              return n;
+            });
+          };
+
           try {
-            const j = (await res.json()) as { error?: string };
-            if (typeof j?.error === "string") msg = j.error;
-          } catch {
-            /* ignore */
+            const rows =
+              planningDisplayedRef.current?.rows ??
+              planningPayload?.rows ??
+              [];
+            const row = rows.find((r) => stableServiceRowKey(r) === keyTrim);
+            if (!row || !serviceReportIdFromRow(row)?.trim?.()) {
+              clearDraft();
+              return;
+            }
+
+            const token = readPlanningAuthSession()?.token;
+            if (!token) {
+              window.alert(
+                "Reconnectez-vous pour modifier les assignations (session requise)."
+              );
+              clearDraft();
+              return;
+            }
+            const verify = await fetch("/api/planning-assignees/verify-admin", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!verify.ok) {
+              let msg = "Action réservée aux administrateurs.";
+              try {
+                const j = (await verify.json()) as { error?: string };
+                if (typeof j?.error === "string") msg = j.error;
+              } catch {
+                /* ignore */
+              }
+              window.alert(msg);
+              clearDraft();
+              return;
+            }
+
+            const prevNotify = new Set(
+              prevArrSnapshot.filter(
+                (s) =>
+                  s !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(s)
+              )
+            );
+            const hadUrgent = prevArrSnapshot.some((s) => s === URGENT_ASSIGNEE);
+
+            const dateKey = normalizeCanonicalDateKey(selectedDate);
+            const planningDay = planningDayBucket(dateKey, todayYmd, tomorrowYmd);
+
+            /** Même valeur que `agent_name` envoyée à Supabase (serializeAssigneeSlugsToName côté `/api/planning-assignees/set`). */
+            const agentNameMerged = serializeAssigneeSlugsToName(safe);
+            const sidSavedForPost = serviceReportIdFromRow(row);
+
+            const res = await fetch("/api/planning-assignees/set", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                serviceId: sidSavedForPost,
+                serviceDate: row.dateIso,
+                assigneeSlugs: safe,
+              }),
+            });
+
+            if (!res.ok) {
+              let msg = "Enregistrement impossible.";
+              let parsed: unknown = null;
+              const rawText = await res.text();
+              try {
+                parsed = rawText ? JSON.parse(rawText) : null;
+              } catch {
+                parsed = rawText;
+              }
+              if (
+                parsed &&
+                typeof parsed === "object" &&
+                "error" in parsed &&
+                typeof (parsed as { error?: unknown }).error === "string"
+              ) {
+                msg = (parsed as { error: string }).error;
+              }
+              logErreurSupabase({
+                stage: "POST /api/planning-assignees/set",
+                httpStatus: res.status,
+                parsed,
+                rawText,
+              });
+              window.alert(msg);
+              clearDraft();
+              return;
+            }
+
+            await mutateReportsRef.current?.(undefined, { revalidate: true });
+
+            const sidSaved = sidSavedForPost;
+            void mutateAssignments(
+              (prev) => {
+                const base = prev?.assigneesByServiceId ?? {};
+                let nextAssignment: string | undefined;
+                if (agentNameMerged == null || !agentNameMerged.trim()) {
+                  nextAssignment = undefined;
+                } else {
+                  nextAssignment = agentNameMerged;
+                }
+                const prevAssignment = base[sidSaved];
+                const unchanged =
+                  (prevAssignment === undefined &&
+                    nextAssignment === undefined) ||
+                  prevAssignment === nextAssignment;
+                if (unchanged) {
+                  return prev;
+                }
+
+                const nextMap = { ...base };
+                if (nextAssignment === undefined) {
+                  delete nextMap[sidSaved];
+                } else {
+                  nextMap[sidSaved] = nextAssignment;
+                }
+                return { assigneesByServiceId: nextMap };
+              },
+              { revalidate: false }
+            );
+
+            clearDraft();
+
+            // 🚨 Clic alarme (urgence) : déclenche un envoi global immédiat.
+            if (safe.includes(URGENT_ASSIGNEE) && !hadUrgent) {
+              void fetch("/api/push/planning-alarm-uncovered", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  serviceId: serviceReportIdFromRow(row),
+                  rdv: row.rdv1 || row.rdv2 || "",
+                }),
+              }).catch(() => {});
+            }
+
+            const isPrep =
+              typeof window !== "undefined" &&
+              new URLSearchParams(window.location.search).get("mode") === "prep";
+            /** Demain + `mode=prep` : pas de notifs individuelles pendant la préparation. */
+            if (dateKey === tomorrowYmd && isPrep) {
+              return;
+            }
+            /** Sans `mode=prep` : notifs pour chaque nouvel assigné ajouté sur la ligne. */
+            for (const slug of safe) {
+              if (prevNotify.has(slug)) continue;
+              const label = assigneeSlugToNotifyLabel(slug);
+              if (!label) continue;
+              const actorName =
+                readPlanningAuthSession()?.displayName?.trim() ?? "";
+              void fetch("/api/push/planning-assignee-alert", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                  spreadsheetId,
+                  dateKey,
+                  stableRowKey: keyTrim,
+                  assigneeName: label,
+                  planningDay,
+                  actorName,
+                }),
+              }).catch(() => {});
+            }
+          } catch (e) {
+            logErreurSupabase({ stage: "setAssigneesForRow (async)", error: e });
+            console.error(e);
+            setAssigneesDraftByRowKey((p) => {
+              if (!Object.prototype.hasOwnProperty.call(p, keyTrim)) return p;
+              const n = { ...p };
+              delete n[keyTrim];
+              return n;
+            });
           }
-          window.alert(msg);
-          return;
-        }
-
-        refreshAll();
-
-        // 🚨 Clic alarme (urgence) : déclenche un envoi global immédiat.
-        if (safe.includes(URGENT_ASSIGNEE) && !hadUrgent) {
-          void fetch("/api/push/planning-alarm-uncovered", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              serviceId: serviceReportIdFromRow(row),
-              rdv: row.rdv1 || row.rdv2 || "",
-            }),
-          }).catch(() => {});
-        }
-
-        const isPrep =
-          typeof window !== "undefined" &&
-          new URLSearchParams(window.location.search).get("mode") === "prep";
-        /** Demain + `mode=prep` : pas de notifs individuelles pendant la préparation. */
-        if (dateKey === tomorrowYmd && isPrep) {
-          return;
-        }
-        /** Sans `mode=prep` : notifs pour chaque nouvel assigné ajouté sur la ligne. */
-        for (const slug of safe) {
-          if (prevNotify.has(slug)) continue;
-          const label = assigneeSlugToNotifyLabel(slug);
-          if (!label) continue;
-          const actorName = readPlanningAuthSession()?.displayName?.trim() ?? "";
-          void fetch("/api/push/planning-assignee-alert", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              spreadsheetId,
-              dateKey,
-              stableRowKey: key,
-              assigneeName: label,
-              planningDay,
-              actorName,
-            }),
-          }).catch(() => {});
-        }
-      })();
+        })();
+      } catch (error) {
+        logErreurSupabase({ stage: "setAssigneesForRow (sync)", error });
+        console.error(error);
+      }
     },
-    [assignees, data?.rows, refreshAll, selectedDate, spreadsheetId, todayYmd, tomorrowYmd]
+    [
+      assignees,
+      mutateAssignments,
+      planningPayload?.rows,
+      selectedDate,
+      spreadsheetId,
+      todayYmd,
+      tomorrowYmd,
+    ]
   );
 
   /** Détection d’urgence : nouvelles lignes du jour → 🚨 si pas encore d’assignation (y compris après refresh SWR). */
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const rows = data?.rows;
+    const rows = planningPayload?.rows;
     if (!rows?.length) return;
 
     const todayKey = normalizeCanonicalDateKey(formatLocalYmd(new Date()));
@@ -1918,8 +2451,8 @@ export function DailyServicesView() {
 
   }, [
     assignees,
-    data?.rows,
-    data?.fetchedAt,
+    planningPayload?.rows,
+    planningPayload?.fetchedAt,
     isPlanningAdmin,
     selectedDate,
     setAssigneesForRow,
@@ -1985,7 +2518,7 @@ export function DailyServicesView() {
             type="button"
             variant="ghost"
             className={cn(dateNavButtonClass(isTodaySelected), "h-9")}
-            onClick={() => selectDateAndRefresh(todayYmd)}
+            onClick={() => selectPlanningDate(todayYmd)}
           >
             Aujourd’hui
           </Button>
@@ -1993,7 +2526,7 @@ export function DailyServicesView() {
             type="button"
             variant="ghost"
             className={cn(dateNavButtonClass(isTomorrowSelected), "h-9")}
-            onClick={() => selectDateAndRefresh(tomorrowYmd)}
+            onClick={() => selectPlanningDate(tomorrowYmd)}
           >
             Demain
           </Button>
@@ -2006,7 +2539,7 @@ export function DailyServicesView() {
               value={selectedDate}
               onChange={(e) => {
                 const v = e.target.value;
-                if (v) selectDateAndRefresh(v);
+                if (v) selectPlanningDate(v);
               }}
               aria-labelledby="planning-day-label"
               aria-label="Choisir une date dans le calendrier"
@@ -2064,7 +2597,7 @@ export function DailyServicesView() {
         </div>
       </div>
 
-      {planningDataLoading && !data ? (
+      {showPlanningBlockingLoader ? (
         <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed py-20 text-muted-foreground">
           <Loader2 className="size-5 animate-spin" aria-hidden />
           Chargement du planning…
@@ -2093,14 +2626,14 @@ export function DailyServicesView() {
             </div>
           ) : null}
           <div className="w-full">
-            {visibleRows.map((row, index) => {
+            {visibleRows.map((row) => {
               const rowKey = stableServiceRowKey(row);
               const assigneeList = normalizeAssigneeListFromStored(
                 assignees[rowKey]
               );
               return (
                 <ServiceBlock
-                  key={`${rowKey}#${index}`}
+                  key={serviceReportIdFromRow(row)}
                   row={row}
                   rowKey={rowKey}
                   reportServiceId={serviceReportIdFromRow(row)}
@@ -2123,17 +2656,14 @@ export function DailyServicesView() {
                     capturePhoto({ serviceId, row: r, file })
                   }
                   onOpenReportForm={openReportForm}
-                  onDownloadReportPdf={async (o) => {
-                    await downloadReportPdf(o);
-                    void mutateReports();
-                  }}
+                  onDownloadReportPdf={downloadReportPdfAndRefreshStatuses}
                   onDeleteReport={deleteReport}
                   planningReadOnly={!isPlanningAdmin}
                 />
               );
             })}
           </div>
-          {data?.fetchedAt ? (
+          {planningPayload?.fetchedAt ? (
             <p
               className={cn(
                 "text-center text-xs text-muted-foreground",
@@ -2144,7 +2674,7 @@ export function DailyServicesView() {
               {new Intl.DateTimeFormat("fr-FR", {
                 dateStyle: "short",
                 timeStyle: "medium",
-              }).format(new Date(data.fetchedAt))}
+              }).format(new Date(planningPayload.fetchedAt))}
               {isValidating ? " · mise à jour…" : ""}
             </p>
           ) : null}
@@ -2163,7 +2693,15 @@ export function DailyServicesView() {
               type="button"
               size="lg"
               disabled={isLoading}
-              onClick={handlePlanningFinished}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handlePlanningFinished();
+              }}
               className="inline-flex w-full gap-2 rounded-xl border shadow-sm sm:w-auto sm:min-w-[280px]"
               variant="default"
             >

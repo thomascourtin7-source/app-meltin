@@ -163,10 +163,12 @@ export function matchSheetAssigneeToTeamLabel(raw: string): string | null {
 /**
  * Decode `service_reports.assignee_name` into planning slugs.
  * We accept legacy free-text and also multi-assign formats like "Javed;Thomas".
+ * Cellule vide / absente ⇒ `[]` (l’appelant applique ensuite `normalizeAssigneeListFromStored` pour l’UI).
  */
 export function parseAssigneeNameToSlugs(raw: string | null | undefined): string[] {
-  const t = String(raw ?? "").trim();
-  if (!t) return [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+  if (raw == null) return [];
+  const t = String(raw).trim();
+  if (!t) return [];
   if (t === PLANNING_URGENT_ASSIGNEE_DISPLAY) return [PLANNING_URGENT_ASSIGNEE_SLUG];
   if (t === PLANNING_URGENT_ASSIGNEE_SLUG) return [PLANNING_URGENT_ASSIGNEE_SLUG];
 

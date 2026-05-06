@@ -68,6 +68,7 @@ export async function POST(request: Request) {
     updated_at: new Date().toISOString(),
   };
 
+  // Une ligne par `service_id` (index UNIQUE) : upsert remplace `agent_name` par la chaîne sérialisée.
   const { data, error } = await supabase
     .from("planning_assignments")
     .upsert(payload, { onConflict: "service_id" })
@@ -75,6 +76,12 @@ export async function POST(request: Request) {
     .single();
 
   if (error) {
+    console.error("[planning-assignees/set] Supabase upsert", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
     // Workaround PostgREST "schema cache" after migrations:
     // retry once via REST with a cache-busting query param.
     const msg = error.message || "";
@@ -100,6 +107,10 @@ export async function POST(request: Request) {
           );
           const j: unknown = await res.json();
           if (!res.ok) {
+            console.error("[planning-assignees/set] Supabase REST fallback", {
+              status: res.status,
+              body: j,
+            });
             const em =
               j && typeof j === "object" && "message" in j
                 ? String((j as { message?: unknown }).message ?? "Erreur Supabase.")
