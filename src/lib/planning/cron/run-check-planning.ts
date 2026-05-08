@@ -58,6 +58,20 @@ type SnapshotV5 = {
   rowSummaries: Record<string, Record<string, RowSummaryV1>>;
 };
 
+type SnapshotV6 = {
+  v: 6;
+  globalHash: string;
+  byDate: Record<string, Record<string, string>>;
+  identitiesByDate: Record<string, string[]>;
+  rowHashes: Record<string, Record<string, string>>;
+  rowSummaries: Record<string, Record<string, RowSummaryV1>>;
+  /**
+   * dateIso → stableKey → ISO datetime (Europe/Paris) du 1er moment où la ligne a été observée.
+   * Sert à filtrer les notifs “Rajout” au redémarrage / déploiement.
+   */
+  firstSeenAtByDate: Record<string, Record<string, string>>;
+};
+
 function sha256Hex(s: string): string {
   return createHash("sha256").update(s, "utf8").digest("hex");
 }
@@ -248,56 +262,83 @@ function parseRdvToDateTime(dateIso: string, rdvRaw: string): DateTime | null {
 }
 
 type ParsedSnapshot = {
-  snapshot: SnapshotV4 | SnapshotV5;
+  snapshot: SnapshotV4 | SnapshotV5 | SnapshotV6;
   isLegacyV3: boolean;
   isLegacyV4: boolean;
+  isLegacyV5: boolean;
 };
 
 function parseSnapshot(raw: unknown): ParsedSnapshot | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
-  if (o.v !== 3 && o.v !== 4 && o.v !== 5) return null;
+  if (o.v !== 3 && o.v !== 4 && o.v !== 5 && o.v !== 6) return null;
   if (typeof o.globalHash !== "string") return null;
   if (!o.byDate || typeof o.byDate !== "object") return null;
   if (!o.identitiesByDate || typeof o.identitiesByDate !== "object") return null;
   const isLegacyV3 = o.v === 3;
   const isLegacyV4 = o.v === 4;
+  const isLegacyV5 = o.v === 5;
   const rowHashes =
-    (o.v === 4 || o.v === 5) &&
+    (o.v === 4 || o.v === 5 || o.v === 6) &&
     o.rowHashes &&
     typeof o.rowHashes === "object" &&
     o.rowHashes !== null
       ? (o.rowHashes as Record<string, Record<string, string>>)
       : {};
   const rowSummaries =
-    o.v === 5 &&
+    (o.v === 5 || o.v === 6) &&
     o.rowSummaries &&
     typeof o.rowSummaries === "object" &&
     o.rowSummaries !== null
       ? (o.rowSummaries as Record<string, Record<string, RowSummaryV1>>)
       : {};
+  const firstSeenAtByDate =
+    o.v === 6 &&
+    o.firstSeenAtByDate &&
+    typeof o.firstSeenAtByDate === "object" &&
+    o.firstSeenAtByDate !== null
+      ? (o.firstSeenAtByDate as Record<string, Record<string, string>>)
+      : {};
   return {
     isLegacyV3,
     isLegacyV4,
+    isLegacyV5,
     snapshot: {
-      v: 5,
+      v: 6,
       globalHash: o.globalHash,
       byDate: o.byDate as Record<string, Record<string, string>>,
       identitiesByDate: o.identitiesByDate as Record<string, string[]>,
       rowHashes,
       rowSummaries,
+      firstSeenAtByDate,
     },
   };
 }
 
-function buildSnapshotV5(
+function buildSnapshotV6(
   byDate: Record<string, Record<string, string>>,
   identitiesByDate: Record<string, string[]>,
   rowHashes: Record<string, Record<string, string>>,
   rowSummaries: Record<string, Record<string, RowSummaryV1>>,
+  firstSeenAtByDate: Record<string, Record<string, string>>,
   globalHash: string
-): SnapshotV5 {
-  return { v: 5, globalHash, byDate, identitiesByDate, rowHashes, rowSummaries };
+): SnapshotV6 {
+  return {
+    v: 6,
+    globalHash,
+    byDate,
+    identitiesByDate,
+    rowHashes,
+    rowSummaries,
+    firstSeenAtByDate,
+  };
+}
+
+function isRecentFirstSeen(iso: string, now: DateTime): boolean {
+  const parsed = DateTime.fromISO(String(iso ?? ""), { zone: ZONE });
+  if (!parsed.isValid) return false;
+  // Notif “Rajout” uniquement si le service a été vu pour la première fois il y a moins de 5 minutes.
+  return parsed >= now.minus({ minutes: 5 });
 }
 
 /** Log demandé pour Vercel : cible + type de changement. */
@@ -360,7 +401,7 @@ async function loadPreviousPlanningState(
 async function persistPlanningState(
   admin: SupabaseClient,
   spreadsheetId: string,
-  snap: SnapshotV4 | SnapshotV5,
+  snap: SnapshotV4 | SnapshotV5 | SnapshotV6,
   reason: string
 ): Promise<boolean> {
   const { error } = await admin.from("planning_states").upsert(
@@ -589,6 +630,7 @@ export async function executePlanningCronCheck(
   const identitiesByDate = buildIdentitiesByDate(rows);
   const rowHashes = buildRowHashes(rows);
   const rowSummaries = buildRowSummaries(rows);
+  const nowParis = DateTime.now().setZone(ZONE);
   const globalHash = sha256Hex(
     `${hashGlobal(byDate)}\n${hashRowHashesTree(rowHashes)}`
   );
@@ -598,11 +640,40 @@ export async function executePlanningCronCheck(
     spreadsheetId
   );
   const prev = parsed?.snapshot;
-  const nextSnap = buildSnapshotV5(
+  // firstSeenAtByDate: garde-fou redémarrage/déploiement (ne pas notifier les lignes “anciennes”).
+  const prevFirstSeen =
+    prev && "firstSeenAtByDate" in prev && prev.firstSeenAtByDate
+      ? (prev.firstSeenAtByDate as Record<string, Record<string, string>>)
+      : {};
+  const firstSeenAtByDate: Record<string, Record<string, string>> = {};
+  for (const [dk, map] of Object.entries(rowHashes)) {
+    firstSeenAtByDate[dk] = {};
+    const prevMap = prevFirstSeen[dk] ?? {};
+    const prevRowHashes =
+      prev && "rowHashes" in prev && prev.rowHashes ? (prev.rowHashes[dk] ?? {}) : {};
+    for (const stableKey of Object.keys(map)) {
+      const existing = prevMap[stableKey];
+      if (existing) {
+        firstSeenAtByDate[dk][stableKey] = existing;
+        continue;
+      }
+      // Migration / changement d’algo : si la clé existait déjà auparavant, la considérer “ancienne”.
+      if (prevRowHashes && stableKey in prevRowHashes) {
+        firstSeenAtByDate[dk][stableKey] =
+          nowParis.minus({ hours: 1 }).toISO() ?? new Date(0).toISOString();
+        continue;
+      }
+      // Vrai nouveau service.
+      firstSeenAtByDate[dk][stableKey] =
+        nowParis.toISO() ?? new Date().toISOString();
+    }
+  }
+  const nextSnap = buildSnapshotV6(
     byDate,
     identitiesByDate,
     rowHashes,
     rowSummaries,
+    firstSeenAtByDate,
     globalHash
   );
 
@@ -641,6 +712,22 @@ export async function executePlanningCronCheck(
       "migration-v4→v5"
     );
     console.log(`${LOG_PREFIX} migration snapshot v4 → v5 sans notifications`);
+    return {
+      ok: true,
+      migratedSnapshot: true,
+      globalHashChanged: true,
+      sent: emptySent,
+    };
+  }
+
+  if (parsed?.isLegacyV5) {
+    await persistPlanningState(
+      admin,
+      spreadsheetId,
+      nextSnap,
+      "migration-v5→v6 (firstSeenAtByDate)"
+    );
+    console.log(`${LOG_PREFIX} migration snapshot v5 → v6 sans notifications`);
     return {
       ok: true,
       migratedSnapshot: true,
@@ -688,8 +775,14 @@ export async function executePlanningCronCheck(
     const prevHashes = (prev.rowHashes?.[dk] ?? {}) as Record<string, string>;
     const nextHashes = (rowHashes?.[dk] ?? {}) as Record<string, string>;
     const nextSumm = (rowSummaries?.[dk] ?? {}) as Record<string, RowSummaryV1>;
+    const firstSeen = (firstSeenAtByDate?.[dk] ?? {}) as Record<string, string>;
     for (const stableKey of Object.keys(nextHashes)) {
       if (stableKey in prevHashes) continue;
+      const seenAt = firstSeen[stableKey] ?? "";
+      if (!isRecentFirstSeen(seenAt, nowParis)) {
+        // Redémarrage / resync : ne pas spammer pour les services déjà présents.
+        continue;
+      }
       const s = nextSumm[stableKey];
       if (!s) continue;
       const rdv = (s.rdv1 || s.rdv2 || "—").trim() || "—";
