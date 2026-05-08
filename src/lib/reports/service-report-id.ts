@@ -13,6 +13,10 @@ function normPart(v: unknown): string {
  *
  * Important: on évite d'inclure des champs "volatiles" (tél, driverInfo, destProv, etc.)
  * qui peuvent changer légèrement après coup et casser le matching planning ↔ Supabase.
+ *
+ * CRITIQUE: ne pas inclure les heures (RDV) — si l’heure change dans le Sheet, on doit
+ * garder le même `service_id` pour préserver `planning_assignments` et éviter les faux
+ * “nouveau service”.
  */
 export function serviceReportIdFromRow(row: DailyServiceRow): string {
   const kind = detectServiceReportKind(row.type);
@@ -22,8 +26,6 @@ export function serviceReportIdFromRow(row: DailyServiceRow): string {
     kind,
     normPart(row.client),
     normPart(row.vol),
-    normPart(row.rdv1),
-    normPart(row.rdv2),
   ].join("|");
 }
 
