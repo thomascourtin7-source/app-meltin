@@ -680,18 +680,19 @@ function ServiceBlockInner({
       <div
         data-planning-service-card
         className={cn(
-          "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-slate-100 px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+          "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border-2 bg-gradient-to-br from-[#0f172a] to-[#1e293b] px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+          isUrgent ? "border-red-600" : "border-[#D4AF37]",
           isUrgent
-            ? "border-red-500"
-            : "border-slate-300",
+            ? "shadow-[0_0_0_2px_rgba(212,175,55,0.25)]"
+            : "",
           hasTimeConflict &&
             showConflictUi &&
-            "bg-slate-100"
+            "ring-2 ring-red-500/60"
         )}
       >
         {hasTimeConflict && showConflictUi ? (
           <div
-            className="mb-3 flex items-center gap-1.5 text-xs font-medium text-red-800 dark:text-red-200"
+            className="mb-3 flex items-center gap-1.5 text-xs font-medium text-red-200"
             role="status"
           >
             <span aria-hidden>⚠️</span>
@@ -700,22 +701,22 @@ function ServiceBlockInner({
         ) : null}
 
         <div className="mb-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">
             Assigné
           </div>
           <div className="mt-1">
             {primaryAssigneeLabel ? (
-              <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-base font-bold text-[#065f46] border border-emerald-600/30">
+              <span className="inline-flex items-center rounded-full bg-transparent px-2.5 py-1 text-base font-extrabold text-[#D4AF37] border border-[#D4AF37]/70">
                 {primaryAssigneeLabel}
               </span>
             ) : (
-              <span className="text-sm font-semibold text-slate-900">—</span>
+              <span className="text-sm font-semibold text-white">—</span>
             )}
           </div>
         </div>
 
         <div className="mb-5 flex flex-wrap items-start justify-between gap-2">
-          <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-slate-900">
+          <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-white">
             <PlanningPhoneRichText
               text={row.client.trim() || "—"}
               tone="inherit"
@@ -726,7 +727,7 @@ function ServiceBlockInner({
             type="button"
             variant="outline"
             size="icon"
-            className="h-9 w-9 shrink-0 touch-manipulation border border-slate-200 bg-slate-50 text-slate-900 shadow-none hover:bg-slate-100"
+            className="h-9 w-9 shrink-0 touch-manipulation border border-[#D4AF37]/60 bg-transparent text-[#D4AF37] shadow-none hover:bg-white/5"
             style={{ touchAction: "manipulation" }}
             title="Copier les détails"
             aria-label="Copier les détails du service"
@@ -734,14 +735,14 @@ function ServiceBlockInner({
               void handleCopyServiceDetails();
             }}
           >
-            <Copy className="size-4" aria-hidden />
+            <Copy className="size-4 text-[#D4AF37]" aria-hidden />
           </Button>
         </div>
 
         <div className="flex items-stretch gap-2">
           <Button
             type="button"
-            className="flex-1 border border-slate-200 bg-slate-50 text-slate-900 hover:bg-slate-100"
+            className="flex-1 border border-[#D4AF37]/60 bg-transparent text-white hover:bg-white/5"
             onClick={() => {
               onDownloadReportPdf({ serviceId: reportServiceId }).catch((e) => {
                 console.error(e);
@@ -757,7 +758,7 @@ function ServiceBlockInner({
             <Button
               type="button"
               variant="outline"
-              className="w-12 shrink-0 border border-slate-200 bg-slate-50 text-slate-900 hover:bg-slate-100"
+              className="w-12 shrink-0 border border-[#D4AF37]/60 bg-transparent text-[#D4AF37] hover:bg-white/5"
               aria-label="Supprimer le rapport"
               onClick={() => {
                 const ok = window.confirm(
@@ -785,16 +786,17 @@ function ServiceBlockInner({
     <div
       data-planning-service-card
       className={cn(
-        "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border bg-slate-100 px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5",
-        isUrgent ? "border-red-500" : "border-slate-300",
+        "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border-2 bg-gradient-to-br from-[#0f172a] to-[#1e293b] px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5 text-white",
+        isUrgent ? "border-red-600" : "border-[#D4AF37]",
+        isUrgent ? "shadow-[0_0_0_2px_rgba(212,175,55,0.25)]" : "",
         hasTimeConflict &&
           showConflictUi &&
-          "bg-slate-100"
+          "ring-2 ring-red-500/60"
       )}
     >
       {hasTimeConflict && showConflictUi ? (
         <div
-          className="mb-3 flex items-center gap-1.5 text-xs font-medium text-red-800 dark:text-red-200"
+          className="mb-3 flex items-center gap-1.5 text-xs font-medium text-red-200"
           role="status"
         >
           <span aria-hidden>⚠️</span>
@@ -802,7 +804,7 @@ function ServiceBlockInner({
         </div>
       ) : null}
       <div className="mb-5" aria-busy={isAddingAssignee}>
-        <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
+        <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-200">
           Assignation
         </span>
         <div
@@ -851,7 +853,7 @@ function ServiceBlockInner({
                         !planningReadOnly
                       }
                       className={cn(
-                        "h-8 w-full justify-start gap-2 border border-border/50 bg-muted/40 text-sm shadow-none",
+                        "h-8 w-full justify-start gap-2 border border-[#D4AF37]/60 bg-transparent text-sm shadow-none text-[#D4AF37] font-extrabold",
                         ASSIGNEE_SELECT_EMOJI_FONT,
                         assignee === PLANNING_URGENT_ASSIGNEE_SLUG &&
                           "[&_[data-slot=select-value]]:overflow-visible [&_[data-slot=select-value]]:[line-clamp:unset]"
@@ -862,7 +864,7 @@ function ServiceBlockInner({
                         <UserCircle
                           className={cn(
                             "size-4 shrink-0",
-                            "text-emerald-900 dark:text-emerald-400"
+                            "text-[#D4AF37]"
                           )}
                           aria-hidden
                         />
@@ -874,8 +876,8 @@ function ServiceBlockInner({
                           "select-value flex min-h-0 flex-1",
                           assignee === PLANNING_URGENT_ASSIGNEE_SLUG
                             ? "select-value--urgent items-center justify-center overflow-visible text-center text-lg leading-none tracking-tight whitespace-nowrap [line-clamp:unset]"
-                            : "min-w-0 truncate text-left",
-                          highlightAssignee && ASSIGN_GREEN
+                            : "min-w-0 truncate text-left text-[#D4AF37] font-extrabold",
+                          highlightAssignee && "text-[#D4AF37] font-extrabold"
                         )}
                       >
                         {assignee === PLANNING_URGENT_ASSIGNEE_SLUG
@@ -887,7 +889,7 @@ function ServiceBlockInner({
                     </SelectTrigger>
                     <SelectContent
                       className={cn(
-                        "z-50 max-h-72",
+                        "z-50 max-h-72 border border-[#D4AF37]/50 bg-[#0a192f] text-white",
                         ASSIGNEE_SELECT_EMOJI_FONT
                       )}
                     >
@@ -897,7 +899,7 @@ function ServiceBlockInner({
                           value={opt.value}
                           className={
                             opt.value === PLANNING_URGENT_ASSIGNEE_SLUG
-                              ? "py-2.5 text-base leading-none focus:bg-muted focus-visible:bg-muted"
+                              ? "py-2.5 text-base leading-none focus:bg-white/10 focus-visible:bg-white/10"
                               : undefined
                           }
                         >
@@ -921,7 +923,7 @@ function ServiceBlockInner({
                     className={cn(
                       "relative z-50 pointer-events-auto shrink-0 self-center",
                       "inline-flex size-8 items-center justify-center rounded-lg border border-dashed border-input",
-                      "bg-background text-foreground shadow-none touch-manipulation outline-none",
+                      "border-[#D4AF37]/70 bg-transparent text-[#D4AF37] shadow-none touch-manipulation outline-none",
                       "hover:bg-accent hover:text-accent-foreground",
                       "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                     )}
@@ -933,7 +935,7 @@ function ServiceBlockInner({
                       handleAddAssignee();
                     }}
                   >
-                    <Plus className="size-4" aria-hidden />
+                    <Plus className="size-4 text-[#D4AF37]" aria-hidden />
                   </button>
                 ) : null}
                 {slot === 0 ? (
@@ -941,7 +943,7 @@ function ServiceBlockInner({
                     type="button"
                     variant="outline"
                     size="icon"
-                    className="h-8 w-8 shrink-0 self-center rounded-lg border-border/60 shadow-none touch-manipulation hover:bg-muted/80"
+                    className="h-8 w-8 shrink-0 self-center rounded-lg border border-[#D4AF37]/60 bg-transparent text-[#D4AF37] shadow-none touch-manipulation hover:bg-white/5"
                     style={{ touchAction: "manipulation" }}
                     title="Copier les détails"
                     aria-label="Copier les détails du service"
@@ -949,7 +951,7 @@ function ServiceBlockInner({
                       void handleCopyServiceDetails();
                     }}
                   >
-                    <Copy className="size-4" aria-hidden />
+                    <Copy className="size-4 text-[#D4AF37]" aria-hidden />
                   </Button>
                 ) : null}
                 {showRemoveLine ? (
@@ -958,17 +960,17 @@ function ServiceBlockInner({
                     variant="outline"
                     size="icon"
                     className={cn(
-                      "h-8 w-8 shrink-0 self-center rounded-md border-destructive/25 text-destructive shadow-none",
+                      "h-8 w-8 shrink-0 self-center rounded-md border border-[#D4AF37]/60 text-[#D4AF37] shadow-none",
                       "touch-manipulation transition-[color,background-color,transform,box-shadow]",
-                      "hover:border-destructive/50 hover:bg-destructive/10 hover:text-destructive",
-                      "active:scale-[0.96] active:bg-destructive/20",
+                      "hover:bg-white/5",
+                      "active:scale-[0.96] active:bg-white/10",
                       "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                     )}
                     style={{ touchAction: "manipulation" }}
                     onClick={() => removeRow(slot)}
                     aria-label="Supprimer cette ligne d’assignation"
                   >
-                    <X className="size-4 shrink-0" aria-hidden />
+                    <X className="size-4 shrink-0 text-[#D4AF37]" aria-hidden />
                   </Button>
                 ) : null}
               </div>
@@ -978,7 +980,7 @@ function ServiceBlockInner({
       </div>
 
       <div className="space-y-0">
-        <h2 className="mb-3 text-xl font-bold leading-snug tracking-tight text-slate-900">
+        <h2 className="mb-3 text-xl font-bold leading-snug tracking-tight text-white">
           <PlanningPhoneRichText text={row.client.trim() || "—"} tone="inherit" />
           {isPec ? " 🟠" : ""}
         </h2>
@@ -1047,16 +1049,16 @@ function ServiceBlockInner({
           </div>
         ) : null}
 
-        <p className="mb-3 text-sm leading-relaxed text-slate-900">
+        <p className="mb-3 text-sm leading-relaxed text-white">
           <span className="inline-flex items-center gap-3">
-            <span className="font-semibold text-slate-500">
+            <span className="font-semibold text-slate-200">
               Type :{" "}
             </span>
             <PlanningPhoneRichText text={typeLine || "—"} tone="inherit" />
             <span className="relative inline-flex items-center">
               <label
                 className={cn(
-                  "inline-flex items-center gap-2 text-xs font-medium text-slate-500",
+                  "inline-flex items-center gap-2 text-xs font-medium text-slate-200",
                   !canAction && "opacity-45"
                 )}
                 title={
@@ -1103,25 +1105,25 @@ function ServiceBlockInner({
             </span>
           </span>
         </p>
-        <p className="mb-3 text-sm font-medium leading-relaxed text-slate-900">
+        <p className="mb-3 text-sm font-medium leading-relaxed text-white">
           <PlanningPhoneRichText text={formatVolRdvLine(row)} tone="inherit" />
         </p>
-        <div className="space-y-3 border-t border-slate-200 pt-4 text-sm leading-relaxed text-slate-900">
+        <div className="space-y-3 border-t border-[#D4AF37]/30 pt-4 text-sm leading-relaxed text-white">
           <p>
-            <span className="font-semibold text-slate-500">
+            <span className="font-semibold text-slate-200">
               Dest. / prov. :{" "}
             </span>
             <PlanningPhoneRichText text={destProv || "—"} tone="inherit" />
           </p>
           <p>
-            <span className="font-semibold text-slate-500">
+            <span className="font-semibold text-slate-200">
               {"Tél. : "}
             </span>
             <PlanningPhoneRichText text={row.tel.trim() || "—"} tone="inherit" />
           </p>
           {driverDetails ? (
             <p>
-              <span className="font-semibold text-slate-500">
+              <span className="font-semibold text-slate-200">
                 Détails :{" "}
               </span>
               <PlanningPhoneRichText text={driverDetails} tone="inherit" />
@@ -1130,11 +1132,11 @@ function ServiceBlockInner({
         </div>
       </div>
 
-      <div className="mt-5 border-t border-slate-200 pt-4">
+      <div className="mt-5 border-t border-[#D4AF37]/30 pt-4">
         <Button
           type="button"
           variant="outline"
-          className="w-full border border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+          className="w-full border-2 border-[#D4AF37] bg-[#D4AF37] text-[#0a192f] font-bold hover:bg-[#D4AF37]/90"
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
