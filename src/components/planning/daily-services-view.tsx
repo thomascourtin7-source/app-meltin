@@ -327,7 +327,9 @@ async function planningServicesFetcher(
   return data as PlanningServicesPayload;
 }
 
-/** ETA chauffeur (départs) — time picker natif, style Midnight Gold. */
+/**
+ * ETA chauffeur (départs) — bouton or + `input[type=time]` masqué (`ref`) ouvert via `showPicker()` / `click()` / `focus()`.
+ */
 function DepartureEtaButton({
   etaHHMM,
   onCommit,
@@ -335,24 +337,22 @@ function DepartureEtaButton({
   etaHHMM: string | null;
   onCommit: (hhmm: string | null) => Promise<void>;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const label = etaHHMM ? `ETA: ${etaHHMM}` : "ETA: --:--";
+  const timeInputRef = useRef<HTMLInputElement>(null);
+  /** Affichage immédiat après choix ; réinitialisé quand la prop (Realtime / SWR) change. */
+  const [localEtaHHMM, setLocalEtaHHMM] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalEtaHHMM(null);
+  }, [etaHHMM]);
+
+  const displayHHMM = localEtaHHMM ?? etaHHMM;
+  const label = displayHHMM ? `ETA: ${displayHHMM}` : "ETA: --:--";
+
   return (
-    <>
-      <input
-        ref={inputRef}
-        type="time"
-        step={60}
-        className="sr-only"
-        tabIndex={-1}
-        aria-hidden
-        onChange={async (e) => {
-          const v = e.currentTarget.value;
-          e.currentTarget.value = "";
-          if (!v) return;
-          await onCommit(v);
-        }}
-      />
+    <div
+      className="relative z-[60] inline-flex shrink-0 flex-col items-stretch touch-manipulation"
+      style={{ touchAction: "manipulation" }}
+    >
       <button
         type="button"
         className={cn(
@@ -360,10 +360,11 @@ function DepartureEtaButton({
           "shadow-md transition-[transform,box-shadow] hover:bg-[#D4AF37]/90 active:scale-[0.98]"
         )}
         style={{ touchAction: "manipulation" }}
+        aria-label="Choisir l’heure d’arrivée estimée (ETA)"
         onClick={(e) => {
-          e.preventDefault();
           e.stopPropagation();
-          const el = inputRef.current;
+          console.log("Bouton cliqué");
+          const el = timeInputRef.current;
           if (!el) return;
           const anyEl = el as HTMLInputElement & { showPicker?: () => void };
           if (typeof anyEl.showPicker === "function") {
@@ -371,15 +372,36 @@ function DepartureEtaButton({
               anyEl.showPicker();
               return;
             } catch {
-              /* fallback */
+              /* Safari / anciens navigateurs */
             }
           }
-          el.click();
+          el.focus({ preventScroll: true });
+          anyEl.click();
         }}
       >
         {label}
       </button>
-    </>
+      <input
+        ref={timeInputRef}
+        type="time"
+        step={60}
+        tabIndex={-1}
+        autoComplete="off"
+        aria-hidden
+        className="sr-only pointer-events-none"
+        onChange={async (e) => {
+          const v = e.currentTarget.value.trim();
+          e.currentTarget.value = "";
+          if (!v || !/^\d{2}:\d{2}$/.test(v)) return;
+          setLocalEtaHHMM(v);
+          try {
+            await onCommit(v);
+          } catch {
+            setLocalEtaHHMM(null);
+          }
+        }}
+      />
+    </div>
   );
 }
 
