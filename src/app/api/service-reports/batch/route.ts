@@ -57,9 +57,11 @@ export async function POST(request: Request) {
   const isPecByServiceId: Record<string, boolean> = {};
   const isCompletedByServiceId: Record<string, boolean> = {};
   const hasPhotoByServiceId: Record<string, boolean> = {};
+  const photoUrlByServiceId: Record<string, string | null> = {};
   for (const id of serviceIds) isPecByServiceId[id] = false;
   for (const id of serviceIds) isCompletedByServiceId[id] = false;
   for (const id of serviceIds) hasPhotoByServiceId[id] = false;
+  for (const id of serviceIds) photoUrlByServiceId[id] = null;
 
   for (const row of data ?? []) {
     const sid = (row as { service_id?: unknown }).service_id;
@@ -74,6 +76,7 @@ export async function POST(request: Request) {
     }
     if (typeof photoUrl === "string" && photoUrl.trim()) {
       hasPhotoByServiceId[sid] = true;
+      photoUrlByServiceId[sid] = photoUrl.trim();
     }
   }
 
@@ -85,6 +88,7 @@ export async function POST(request: Request) {
     isPecByServiceId,
     isCompletedByServiceId,
     hasPhotoByServiceId,
+    photoUrlByServiceId,
   });
 }
 

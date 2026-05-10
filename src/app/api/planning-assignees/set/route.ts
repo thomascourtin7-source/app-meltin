@@ -61,10 +61,18 @@ export async function POST(request: Request) {
 
   const assigneeName = serializeAssigneeSlugsToName(slugs);
 
+  const { data: existingEta } = await supabase
+    .from("planning_assignments")
+    .select("eta_time")
+    .eq("service_id", serviceId)
+    .maybeSingle();
+
   const payload = {
     service_id: serviceId,
     service_date: serviceDate,
     agent_name: assigneeName,
+    eta_time:
+      (existingEta as { eta_time?: string | null } | null)?.eta_time ?? null,
     updated_at: new Date().toISOString(),
   };
 
@@ -72,7 +80,7 @@ export async function POST(request: Request) {
   const { data, error } = await supabase
     .from("planning_assignments")
     .upsert(payload, { onConflict: "service_id" })
-    .select("service_id,agent_name")
+    .select("service_id,agent_name,eta_time")
     .single();
 
   if (error) {
@@ -91,7 +99,7 @@ export async function POST(request: Request) {
       if (url && key) {
         try {
           const res = await fetch(
-            `${url}/rest/v1/planning_assignments?on_conflict=service_id&select=service_id,agent_name`,
+            `${url}/rest/v1/planning_assignments?on_conflict=service_id&select=service_id,agent_name,eta_time`,
             {
               method: "POST",
               headers: {

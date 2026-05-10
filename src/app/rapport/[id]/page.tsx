@@ -386,6 +386,21 @@ export default function RapportServicePage() {
             </div>
           </div>
 
+          {existingReport?.photo_url?.trim() && reportKind !== "departure" ? (
+            <div className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Photo du service
+              </div>
+              <img
+                src={existingReport.photo_url.trim()}
+                alt="Photo jointe au rapport"
+                className="max-h-72 w-full max-w-md rounded-lg border border-border object-contain"
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
+          ) : null}
+
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>PAX</Label>

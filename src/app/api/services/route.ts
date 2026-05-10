@@ -10,6 +10,7 @@ type ServiceRow = {
   spreadsheet_id: string;
   service_id: string;
   is_pec: boolean;
+  eta_time: string | null;
 };
 
 function supabaseOrError() {
@@ -87,10 +88,19 @@ export async function POST(request: Request) {
     );
   }
 
+  const { data: existing } = await supabase
+    .from("services")
+    .select("eta_time")
+    .eq("spreadsheet_id", spreadsheetId)
+    .eq("service_id", serviceId)
+    .maybeSingle();
+
   const payload = {
     spreadsheet_id: spreadsheetId,
     service_id: serviceId,
     is_pec: isPec,
+    eta_time:
+      (existing as { eta_time?: string | null } | null)?.eta_time ?? null,
     updated_at: new Date().toISOString(),
   };
 

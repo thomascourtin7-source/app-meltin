@@ -29,12 +29,12 @@ export async function POST(request: Request) {
     : [];
 
   if (serviceIds.length === 0) {
-    return NextResponse.json({ assigneesByServiceId: {} });
+    return NextResponse.json({ assigneesByServiceId: {}, etaTimeByServiceId: {} });
   }
 
   const { data, error } = await supabase
     .from("planning_assignments")
-    .select("service_id,agent_name")
+    .select("service_id,agent_name,eta_time")
     .in("service_id", serviceIds);
 
   if (error) {
@@ -42,14 +42,24 @@ export async function POST(request: Request) {
   }
 
   const assigneesByServiceId: Record<string, string> = {};
+  const etaTimeByServiceId: Record<string, string | null> = {};
+  for (const id of serviceIds) {
+    etaTimeByServiceId[id] = null;
+  }
   for (const r of data ?? []) {
     const serviceId = (r as { service_id?: unknown }).service_id;
     const agentName = (r as { agent_name?: unknown }).agent_name;
+    const etaRaw = (r as { eta_time?: unknown }).eta_time;
     if (typeof serviceId !== "string") continue;
-    if (typeof agentName !== "string" || !agentName.trim()) continue;
-    assigneesByServiceId[serviceId] = agentName.trim();
+    if (typeof agentName === "string" && agentName.trim()) {
+      assigneesByServiceId[serviceId] = agentName.trim();
+    }
+    etaTimeByServiceId[serviceId] =
+      typeof etaRaw === "string" && /^\d{2}:\d{2}$/.test(etaRaw.trim())
+        ? etaRaw.trim()
+        : null;
   }
 
-  return NextResponse.json({ assigneesByServiceId });
+  return NextResponse.json({ assigneesByServiceId, etaTimeByServiceId });
 }
 

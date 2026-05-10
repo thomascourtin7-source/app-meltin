@@ -13,6 +13,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import useSWR, { type KeyedMutator, useSWRConfig } from "swr";
 import {
   Calendar,
+  ChevronDown,
   Copy,
   Loader2,
   Plus,
@@ -71,6 +72,7 @@ import {
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
 import { formatLocalTimeHHMMSS } from "@/lib/reports/report-time";
 import { detectServiceReportKind } from "@/lib/planning/service-kind";
+import { normalizeServicePhotoForUpload } from "@/lib/planning/normalize-service-photo";
 import {
   MELTIN_AUTH_SESSION_CHANGED_EVENT,
   MELTIN_PLANNING_AUTH_SESSION_KEY,
@@ -235,7 +237,14 @@ type PlanningServicesPayload = {
 
 type PlanningAssignmentsPayload = {
   assigneesByServiceId: Record<string, string>;
+  etaTimeByServiceId: Record<string, string | null>;
 };
+
+function etaHHMMFromPlanningColumn(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const t = raw.trim();
+  return /^\d{2}:\d{2}$/.test(t) ? t : null;
+}
 
 /** Payload Postgres Realtime (shape stable côté `@supabase/supabase-js`). */
 type RealtimePlanningAssignmentPayload = {
@@ -247,6 +256,7 @@ type RealtimePlanningAssignmentPayload = {
 function assignmentRowFromRealtimeRecord(rec: unknown): {
   service_id: string;
   agent_name: string;
+  etaHHMM: string | null;
 } | null {
   if (!rec || typeof rec !== "object") return null;
   const o = rec as Record<string, unknown>;
@@ -255,6 +265,7 @@ function assignmentRowFromRealtimeRecord(rec: unknown): {
   return {
     service_id: sid,
     agent_name: typeof o.agent_name === "string" ? o.agent_name : "",
+    etaHHMM: etaHHMMFromPlanningColumn(o.eta_time),
   };
 }
 
@@ -316,6 +327,62 @@ async function planningServicesFetcher(
   return data as PlanningServicesPayload;
 }
 
+/** ETA chauffeur (départs) — time picker natif, style Midnight Gold. */
+function DepartureEtaButton({
+  etaHHMM,
+  onCommit,
+}: {
+  etaHHMM: string | null;
+  onCommit: (hhmm: string | null) => Promise<void>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const label = etaHHMM ? `ETA: ${etaHHMM}` : "ETA: --:--";
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="time"
+        step={60}
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={async (e) => {
+          const v = e.currentTarget.value;
+          e.currentTarget.value = "";
+          if (!v) return;
+          await onCommit(v);
+        }}
+      />
+      <button
+        type="button"
+        className={cn(
+          "shrink-0 rounded-xl border-2 border-[#D4AF37] bg-[#D4AF37] px-4 py-2.5 text-base font-bold text-[#0a192f]",
+          "shadow-md transition-[transform,box-shadow] hover:bg-[#D4AF37]/90 active:scale-[0.98]"
+        )}
+        style={{ touchAction: "manipulation" }}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const el = inputRef.current;
+          if (!el) return;
+          const anyEl = el as HTMLInputElement & { showPicker?: () => void };
+          if (typeof anyEl.showPicker === "function") {
+            try {
+              anyEl.showPicker();
+              return;
+            } catch {
+              /* fallback */
+            }
+          }
+          el.click();
+        }}
+      >
+        {label}
+      </button>
+    </>
+  );
+}
+
 type ServiceBlockProps = {
   row: DailyServiceRow;
   rowKey: string;
@@ -333,6 +400,8 @@ type ServiceBlockProps = {
   isReportCompleted: boolean;
   isPec: boolean;
   hasPhoto: boolean;
+  /** Miniature après prise de vue (image déjà redressée côté client). */
+  servicePhotoPreviewUrl?: string | null;
   onTogglePec: (opts: { serviceId: string; next: boolean }) => Promise<void>;
   onCapturePhoto: (opts: {
     serviceId: string;
@@ -344,6 +413,13 @@ type ServiceBlockProps = {
   onDeleteReport: (opts: { serviceId: string }) => Promise<void>;
   /** Hors administrateurs : assignations visibles mais non modifiables. */
   planningReadOnly: boolean;
+  /** Heure d’arrivée (HH:mm) — colonne `eta_time` de `planning_assignments` (Realtime avec les agents). */
+  serviceEtaHHMM?: string | null;
+  onEtaCommit?: (
+    serviceId: string,
+    serviceDateIso: string,
+    hhmm: string | null
+  ) => Promise<void>;
 };
 
 function serviceBlockMemoAreEqual(
@@ -352,6 +428,8 @@ function serviceBlockMemoAreEqual(
 ): boolean {
   if (prev.rowKey !== next.rowKey) return false;
   if (prev.reportServiceId !== next.reportServiceId) return false;
+  if (prev.serviceEtaHHMM !== next.serviceEtaHHMM) return false;
+  if (prev.onEtaCommit !== next.onEtaCommit) return false;
   if (prev.meName !== next.meName) return false;
   if (prev.planningReadOnly !== next.planningReadOnly) return false;
   if (prev.hasTimeConflict !== next.hasTimeConflict) return false;
@@ -359,6 +437,7 @@ function serviceBlockMemoAreEqual(
   if (prev.isReportCompleted !== next.isReportCompleted) return false;
   if (prev.isPec !== next.isPec) return false;
   if (prev.hasPhoto !== next.hasPhoto) return false;
+  if (prev.servicePhotoPreviewUrl !== next.servicePhotoPreviewUrl) return false;
   if (serviceBlockRowFingerprint(prev.row) !== serviceBlockRowFingerprint(next.row)) {
     return false;
   }
@@ -384,12 +463,15 @@ function ServiceBlockInner({
   isReportCompleted,
   isPec,
   hasPhoto,
+  servicePhotoPreviewUrl = null,
   onTogglePec,
   onCapturePhoto,
   onOpenReportForm,
   onDownloadReportPdf,
   onDeleteReport,
   planningReadOnly,
+  serviceEtaHHMM = null,
+  onEtaCommit,
 }: ServiceBlockProps) {
   const assignees = Array.isArray(assigneesRaw) ? assigneesRaw : [];
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
@@ -410,6 +492,8 @@ function ServiceBlockInner({
    * recalée à 0 dès que `assignees.length` rattrape.
    */
   const [survivalAssigneeSlots, setSurvivalAssigneeSlots] = useState(0);
+  /** Dest./prov. + téléphone — repli Midnight Gold. */
+  const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
     setIsAddingAssignee(false);
@@ -566,7 +650,15 @@ function ServiceBlockInner({
     () => detectServiceReportKind(row.type),
     [row.type]
   );
+  const showDepartureEta = reportKind === "departure" && typeof onEtaCommit === "function";
   const showPhotoCapture = reportKind !== "departure";
+
+  const handleDepartureEtaCommit = useCallback(
+    async (hhmm: string | null) => {
+      await onEtaCommit?.(reportServiceId, row.dateIso, hhmm);
+    },
+    [onEtaCommit, reportServiceId, row.dateIso]
+  );
 
   const hasNamedAssignee = useMemo(
     () => assignees.some((s) => assigneeSlugToNotifyLabel(s) != null),
@@ -715,14 +807,22 @@ function ServiceBlockInner({
           </div>
         </div>
 
-        <div className="mb-5 flex flex-wrap items-start justify-between gap-2">
-          <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-white">
-            <PlanningPhoneRichText
-              text={row.client.trim() || "—"}
-              tone="inherit"
-            />{" "}
-            ✅
-          </h2>
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+            <h2 className="min-w-0 text-xl font-bold leading-snug tracking-tight text-white">
+              <PlanningPhoneRichText
+                text={row.client.trim() || "—"}
+                tone="inherit"
+              />{" "}
+              ✅
+            </h2>
+            {showDepartureEta ? (
+              <DepartureEtaButton
+                etaHHMM={serviceEtaHHMM}
+                onCommit={handleDepartureEtaCommit}
+              />
+            ) : null}
+          </div>
           <Button
             type="button"
             variant="outline"
@@ -980,15 +1080,23 @@ function ServiceBlockInner({
       </div>
 
       <div className="space-y-0">
-        <h2 className="mb-3 text-xl font-bold leading-snug tracking-tight text-white">
-          <PlanningPhoneRichText text={row.client.trim() || "—"} tone="inherit" />
-          {isPec ? " 🟠" : ""}
-        </h2>
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-white">
+            <PlanningPhoneRichText text={row.client.trim() || "—"} tone="inherit" />
+            {isPec ? " 🟠" : ""}
+          </h2>
+          {showDepartureEta ? (
+            <DepartureEtaButton
+              etaHHMM={serviceEtaHHMM}
+              onCommit={handleDepartureEtaCommit}
+            />
+          ) : null}
+        </div>
 
         {showPhotoCapture ? (
           <div
             className={cn(
-              "mb-2 flex items-center gap-2",
+              "mb-2 flex flex-wrap items-center gap-2",
               !canAction && "opacity-45"
             )}
           >
@@ -1018,6 +1126,15 @@ function ServiceBlockInner({
               <span aria-hidden>📷</span>
               {hasPhoto ? <span aria-hidden>✅</span> : null}
             </button>
+            {hasPhoto && servicePhotoPreviewUrl ? (
+              <img
+                src={servicePhotoPreviewUrl}
+                alt="Aperçu de la photo du service"
+                className="h-14 w-14 shrink-0 rounded-md border border-[#D4AF37]/40 object-cover object-center"
+                loading="lazy"
+                decoding="async"
+              />
+            ) : null}
             <input
               ref={fileRef}
               type="file"
@@ -1105,31 +1222,65 @@ function ServiceBlockInner({
             </span>
           </span>
         </p>
-        <p className="mb-3 text-sm font-medium leading-relaxed text-white">
+        <p className="mb-2 text-sm font-medium leading-relaxed text-white">
           <PlanningPhoneRichText text={formatVolRdvLine(row)} tone="inherit" />
         </p>
-        <div className="space-y-3 border-t border-[#D4AF37]/30 pt-4 text-sm leading-relaxed text-white">
-          <p>
-            <span className="font-semibold text-slate-200">
-              Dest. / prov. :{" "}
-            </span>
-            <PlanningPhoneRichText text={destProv || "—"} tone="inherit" />
-          </p>
-          <p>
-            <span className="font-semibold text-slate-200">
-              {"Tél. : "}
-            </span>
-            <PlanningPhoneRichText text={row.tel.trim() || "—"} tone="inherit" />
-          </p>
-          {driverDetails ? (
-            <p>
-              <span className="font-semibold text-slate-200">
-                Détails :{" "}
-              </span>
-              <PlanningPhoneRichText text={driverDetails} tone="inherit" />
-            </p>
-          ) : null}
+        <button
+          type="button"
+          aria-expanded={showDetails}
+          aria-controls={`planning-card-details-${reportServiceId}`}
+          className={cn(
+            "mb-1 inline-flex touch-manipulation items-center gap-1.5 rounded-lg px-1 py-1.5 text-xs font-medium text-[#D4AF37]",
+            "transition-colors hover:bg-white/5"
+          )}
+          style={{ touchAction: "manipulation" }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setShowDetails((v) => !v);
+          }}
+        >
+          <ChevronDown
+            aria-hidden
+            className={cn(
+              "size-4 shrink-0 text-[#D4AF37] transition-transform duration-300 ease-out",
+              showDetails && "rotate-180"
+            )}
+          />
+          {showDetails ? "Masquer détails" : "Voir détails"}
+        </button>
+        <div
+          className={cn(
+            "grid transition-[grid-template-rows] duration-300 ease-out",
+            showDetails ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+          )}
+        >
+          <div
+            id={`planning-card-details-${reportServiceId}`}
+            className="min-h-0 overflow-hidden"
+          >
+            <div className="space-y-3 border-t border-[#D4AF37]/30 pt-4 text-sm leading-relaxed text-white">
+              <p>
+                <span className="font-semibold text-slate-200">
+                  Dest. / prov. :{" "}
+                </span>
+                <PlanningPhoneRichText text={destProv || "—"} tone="inherit" />
+              </p>
+              <p>
+                <span className="font-semibold text-slate-200">
+                  {"Tél. : "}
+                </span>
+                <PlanningPhoneRichText text={row.tel.trim() || "—"} tone="inherit" />
+              </p>
+            </div>
+          </div>
         </div>
+        {driverDetails ? (
+          <div className="mt-3 text-sm leading-relaxed text-white">
+            <span className="font-semibold text-slate-200">Détails : </span>
+            <PlanningPhoneRichText text={driverDetails} tone="inherit" />
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-5 border-t border-[#D4AF37]/30 pt-4">
@@ -1185,7 +1336,11 @@ async function fetchReportExistence(opts: {
         : "Erreur service reports.";
     throw new Error(msg);
   }
-  return data as ReportsData;
+  const parsed = data as ReportsData & { photoUrlByServiceId?: unknown };
+  if (!parsed.photoUrlByServiceId || typeof parsed.photoUrlByServiceId !== "object") {
+    parsed.photoUrlByServiceId = {};
+  }
+  return parsed as ReportsData;
 }
 
 type ReportsData = {
@@ -1193,6 +1348,8 @@ type ReportsData = {
   isPecByServiceId: Record<string, boolean>;
   isCompletedByServiceId: Record<string, boolean>;
   hasPhotoByServiceId: Record<string, boolean>;
+  /** URL publique de la photo planning (aperçu + PDF) */
+  photoUrlByServiceId: Record<string, string | null>;
 };
 
 async function sendPushNotification(opts: {
@@ -1243,6 +1400,7 @@ export function DailyServicesView() {
   const mutateAssignmentsRef = useRef<
     KeyedMutator<PlanningAssignmentsPayload> | undefined
   >(undefined);
+  const etaSnapshotRef = useRef<Record<string, string | null>>({});
   /** Stabilise les références `string[]` par `rowKey` si les slugs n’ont pas changé (évite rechurn parent). */
   const assigneesListCacheRef = useRef(
     new Map<string, { key: string; list: string[] }>()
@@ -1402,12 +1560,24 @@ export function DailyServicesView() {
         throw new Error(msg);
       }
       const p = json as Partial<PlanningAssignmentsPayload>;
-      return {
-        assigneesByServiceId:
-          p.assigneesByServiceId && typeof p.assigneesByServiceId === "object"
-            ? (p.assigneesByServiceId as Record<string, string>)
-            : {},
-      };
+      const assigneesByServiceId =
+        p.assigneesByServiceId && typeof p.assigneesByServiceId === "object"
+          ? (p.assigneesByServiceId as Record<string, string>)
+          : {};
+      const etaTimeByServiceId: Record<string, string | null> = {};
+      for (const id of serviceIds) {
+        etaTimeByServiceId[id] = null;
+      }
+      const etaSrc = p.etaTimeByServiceId;
+      if (etaSrc && typeof etaSrc === "object" && !Array.isArray(etaSrc)) {
+        for (const [k, v] of Object.entries(etaSrc as Record<string, unknown>)) {
+          etaTimeByServiceId[k] =
+            typeof v === "string" && /^\d{2}:\d{2}$/.test(v.trim())
+              ? v.trim()
+              : null;
+        }
+      }
+      return { assigneesByServiceId, etaTimeByServiceId };
     },
     []
   );
@@ -1437,9 +1607,12 @@ export function DailyServicesView() {
   );
   mutateAssignmentsRef.current = mutateAssignments;
 
+  /** Snapshot pour rollback ETA (sans second fetch SWR). */
+  etaSnapshotRef.current = assignmentsData?.etaTimeByServiceId ?? {};
+
   /**
-   * Mise à jour « locale » du cache assignations (= état fusionné utilisé comme `services` métier pour les lignes du jour).
-   * Un seul `service_id` par événement Realtime ; pas de fetch batch, pas de loader planning.
+   * Mise à jour « locale » du cache assignations + ETA (`planning_assignments`).
+   * Gère aussi les événements « ETA seule » où `agent_name` est inchangé.
    */
   const mergePlanningAssignmentFromRealtime = useCallback(
     (payload: RealtimePlanningAssignmentPayload) => {
@@ -1450,36 +1623,49 @@ export function DailyServicesView() {
 
       void mutateAssignments(
         (prev) => {
-          const base = prev?.assigneesByServiceId ?? {};
           const allowed = new Set(serviceIdsForAssignmentsRef.current);
           if (!allowed.has(parsed.service_id)) {
             return prev;
           }
 
+          const baseAssign = { ...(prev?.assigneesByServiceId ?? {}) };
+          const baseEta = { ...(prev?.etaTimeByServiceId ?? {}) };
+
           let nextAssignment: string | undefined;
+          let nextEta: string | null;
+
           if (del) {
             nextAssignment = undefined;
+            nextEta = null;
           } else {
             const trimmed = parsed.agent_name.trim();
-            if (!trimmed) nextAssignment = undefined;
-            else nextAssignment = parsed.agent_name;
+            nextAssignment = trimmed ? parsed.agent_name : undefined;
+            nextEta = parsed.etaHHMM;
           }
 
-          const prevAssignment = base[parsed.service_id];
-          const unchanged =
+          const prevAssignment = baseAssign[parsed.service_id];
+          const prevEta = baseEta[parsed.service_id] ?? null;
+
+          const assignUnchanged =
             (prevAssignment === undefined && nextAssignment === undefined) ||
             prevAssignment === nextAssignment;
-          if (unchanged) {
-            return prev;
+          const etaUnchanged = prevEta === nextEta;
+
+          if (assignUnchanged && etaUnchanged) return prev;
+
+          const nextAssignMap = { ...baseAssign };
+          if (nextAssignment === undefined) {
+            delete nextAssignMap[parsed.service_id];
+          } else {
+            nextAssignMap[parsed.service_id] = nextAssignment;
           }
 
-          const nextMap = { ...base };
-          if (nextAssignment === undefined) {
-            delete nextMap[parsed.service_id];
-          } else {
-            nextMap[parsed.service_id] = nextAssignment;
-          }
-          return { assigneesByServiceId: nextMap };
+          const nextEtaMap = { ...baseEta, [parsed.service_id]: nextEta };
+
+          return {
+            assigneesByServiceId: nextAssignMap,
+            etaTimeByServiceId: nextEtaMap,
+          };
         },
         { revalidate: false }
       );
@@ -1767,6 +1953,59 @@ export function DailyServicesView() {
   );
   mutateReportsRef.current = mutateReports;
 
+  const commitServiceEta = useCallback(
+    async (serviceId: string, serviceDateIso: string, hhmm: string | null) => {
+      const prev = etaSnapshotRef.current[serviceId] ?? null;
+      void mutateAssignments(
+        (cur) => ({
+          assigneesByServiceId: { ...(cur?.assigneesByServiceId ?? {}) },
+          etaTimeByServiceId: {
+            ...(cur?.etaTimeByServiceId ?? {}),
+            [serviceId]: hhmm,
+          },
+        }),
+        { revalidate: false }
+      );
+
+      const res = await fetch("/api/planning-assignments/set-eta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serviceId,
+          serviceDate: serviceDateIso,
+          eta_time: hhmm,
+        }),
+      });
+
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        void mutateAssignments(
+          (cur) => ({
+            assigneesByServiceId: { ...(cur?.assigneesByServiceId ?? {}) },
+            etaTimeByServiceId: {
+              ...(cur?.etaTimeByServiceId ?? {}),
+              [serviceId]: prev,
+            },
+          }),
+          { revalidate: false }
+        );
+        throw new Error(json?.error ?? "Sauvegarde ETA impossible.");
+      }
+    },
+    [mutateAssignments]
+  );
+
+  const onAnyServiceEtaCommit = useCallback(
+    async (
+      serviceId: string,
+      serviceDateIso: string,
+      hhmm: string | null
+    ) => {
+      await commitServiceEta(serviceId, serviceDateIso, hhmm);
+    },
+    [commitServiceEta]
+  );
+
   /**
    * Secours manuel uniquement : feuille planning / PDF.
    * Les assignations suivent Supabase Realtime — pas de re-fetch automatique forcé sur ce bloc.
@@ -1774,6 +2013,7 @@ export function DailyServicesView() {
   const refreshAll = useCallback(() => {
     void mutatePlanningRef.current?.(undefined, { revalidate: true });
     void mutateReportsRef.current?.(undefined, { revalidate: true });
+    void mutateAssignmentsRef.current?.(undefined, { revalidate: true });
   }, []);
 
   /** Refresh manuel (bouton dans le header). */
@@ -1802,6 +2042,7 @@ export function DailyServicesView() {
   const isCompletedByServiceId = reportExistence?.isCompletedByServiceId ?? {};
   const isPecByServiceId = reportExistence?.isPecByServiceId ?? {};
   const hasPhotoByServiceId = reportExistence?.hasPhotoByServiceId ?? {};
+  const photoUrlByServiceId = reportExistence?.photoUrlByServiceId ?? {};
 
   const agentLabels = useMemo(() => {
     return PLANNING_ASSIGNEE_OPTIONS.filter(
@@ -1901,6 +2142,7 @@ export function DailyServicesView() {
           isPecByServiceId: {},
           isCompletedByServiceId: {},
           hasPhotoByServiceId: {},
+          photoUrlByServiceId: {},
         }),
         isPecByServiceId: {
           ...(reportExistence?.isPecByServiceId ?? {}),
@@ -1944,21 +2186,19 @@ export function DailyServicesView() {
         throw new Error("La photo n’est pas disponible pour les départs.");
       }
 
-      const ts = Date.now();
-      const safeFileName = `photo-${ts}.png`;
+      const processed = await normalizeServicePhotoForUpload(opts.file);
 
       const form = new FormData();
       form.set("spreadsheetId", spreadsheetId);
       form.set("serviceId", opts.serviceId);
-      form.set("fileName", safeFileName);
-      form.set("file", opts.file);
+      form.set("fileName", processed.name);
+      form.set("file", processed);
 
       const res = await fetch("/api/service-photos/upload", {
         method: "POST",
         body: form,
       });
       const json = (await res.json()) as { publicUrl?: string; error?: string };
-      console.log("[photo-upload] response", json);
       if (!res.ok || !json.publicUrl) {
         throw new Error(json?.error || "Upload photo impossible.");
       }
@@ -1969,10 +2209,15 @@ export function DailyServicesView() {
           isPecByServiceId: {},
           isCompletedByServiceId: {},
           hasPhotoByServiceId: {},
+          photoUrlByServiceId: {},
         }),
         hasPhotoByServiceId: {
           ...(reportExistence?.hasPhotoByServiceId ?? {}),
           [opts.serviceId]: true,
+        },
+        photoUrlByServiceId: {
+          ...(reportExistence?.photoUrlByServiceId ?? {}),
+          [opts.serviceId]: json.publicUrl,
         },
       };
       void mutateReports(optimistic, { revalidate: false });
@@ -2101,6 +2346,7 @@ export function DailyServicesView() {
         isPecByServiceId: {},
         isCompletedByServiceId: {},
         hasPhotoByServiceId: {},
+        photoUrlByServiceId: {},
       };
       const optimistic: ReportsData = {
         ...base,
@@ -2113,6 +2359,10 @@ export function DailyServicesView() {
         hasPhotoByServiceId: {
           ...base.hasPhotoByServiceId,
           [opts.serviceId]: false,
+        },
+        photoUrlByServiceId: {
+          ...(base.photoUrlByServiceId ?? {}),
+          [opts.serviceId]: null,
         },
       };
       void mutateReports(optimistic, { revalidate: false });
@@ -2299,29 +2549,36 @@ export function DailyServicesView() {
             const sidSaved = sidSavedForPost;
             void mutateAssignments(
               (prev) => {
-                const base = prev?.assigneesByServiceId ?? {};
+                const baseAssign = prev?.assigneesByServiceId ?? {};
+                const baseEta = { ...(prev?.etaTimeByServiceId ?? {}) };
                 let nextAssignment: string | undefined;
                 if (agentNameMerged == null || !agentNameMerged.trim()) {
                   nextAssignment = undefined;
                 } else {
                   nextAssignment = agentNameMerged;
                 }
-                const prevAssignment = base[sidSaved];
+                const prevAssignment = baseAssign[sidSaved];
                 const unchanged =
                   (prevAssignment === undefined &&
                     nextAssignment === undefined) ||
                   prevAssignment === nextAssignment;
                 if (unchanged) {
-                  return prev;
+                  return {
+                    assigneesByServiceId: baseAssign,
+                    etaTimeByServiceId: baseEta,
+                  };
                 }
 
-                const nextMap = { ...base };
+                const nextMap = { ...baseAssign };
                 if (nextAssignment === undefined) {
                   delete nextMap[sidSaved];
                 } else {
                   nextMap[sidSaved] = nextAssignment;
                 }
-                return { assigneesByServiceId: nextMap };
+                return {
+                  assigneesByServiceId: nextMap,
+                  etaTimeByServiceId: baseEta,
+                };
               },
               { revalidate: false }
             );
@@ -2630,27 +2887,27 @@ export function DailyServicesView() {
           <div className="w-full">
             {visibleRows.map((row) => {
               const rowKey = stableServiceRowKey(row);
+              const reportSid = serviceReportIdFromRow(row);
               const assigneeList = normalizeAssigneeListFromStored(
                 assignees[rowKey]
               );
               return (
                 <ServiceBlock
-                  key={serviceReportIdFromRow(row)}
+                  key={reportSid}
                   row={row}
                   rowKey={rowKey}
-                  reportServiceId={serviceReportIdFromRow(row)}
+                  reportServiceId={reportSid}
                   assignees={assigneeList}
                   meName={meName}
                   onAssigneesChange={setAssigneesForRow}
                   hasTimeConflict={conflictRowKeys.has(rowKey)}
                   showConflictUi={prepModeActive}
-                  isReportCompleted={Boolean(
-                    isCompletedByServiceId[serviceReportIdFromRow(row)]
-                  )}
-                  isPec={Boolean(isPecByServiceId[serviceReportIdFromRow(row)])}
-                  hasPhoto={Boolean(
-                    hasPhotoByServiceId[serviceReportIdFromRow(row)]
-                  )}
+                  isReportCompleted={Boolean(isCompletedByServiceId[reportSid])}
+                  isPec={Boolean(isPecByServiceId[reportSid])}
+                  hasPhoto={Boolean(hasPhotoByServiceId[reportSid])}
+                  servicePhotoPreviewUrl={
+                    photoUrlByServiceId[reportSid] ?? null
+                  }
                   onTogglePec={async ({ serviceId, next }) =>
                     togglePec({ serviceId, next, row })
                   }
@@ -2661,6 +2918,10 @@ export function DailyServicesView() {
                   onDownloadReportPdf={downloadReportPdfAndRefreshStatuses}
                   onDeleteReport={deleteReport}
                   planningReadOnly={!isPlanningAdmin}
+                  serviceEtaHHMM={
+                    assignmentsData?.etaTimeByServiceId?.[reportSid] ?? null
+                  }
+                  onEtaCommit={onAnyServiceEtaCommit}
                 />
               );
             })}

@@ -56,7 +56,9 @@ export async function POST(request: Request) {
   }
 
   const isPecByServiceId: Record<string, boolean> = {};
-  for (const id of serviceIds) isPecByServiceId[id] = false;
+  for (const id of serviceIds) {
+    isPecByServiceId[id] = false;
+  }
   for (const row of data ?? []) {
     const sid = (row as { service_id?: unknown }).service_id;
     const isPec = (row as { is_pec?: unknown }).is_pec;

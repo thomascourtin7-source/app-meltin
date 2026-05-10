@@ -183,7 +183,8 @@ export async function generateServiceReportPdf(
       const h = Math.max(80, h0 * ratio);
       const x = (pageWidth - w) / 2;
       try {
-        doc.addImage(photoDataUrl, "JPEG", x, cursorY, w, h);
+        const fmt = photoDataUrl.includes("image/png") ? "PNG" : "JPEG";
+        doc.addImage(photoDataUrl, fmt, x, cursorY, w, h);
         cursorY += h + 16;
       } catch {
         /* ignore */
