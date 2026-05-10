@@ -328,7 +328,8 @@ async function planningServicesFetcher(
 }
 
 /**
- * ETA chauffeur (départs) — bouton or + `input[type=time]` masqué (`ref`) ouvert via `showPicker()` / `click()` / `focus()`.
+ * ETA chauffeur (départs) — vrai `<input type="time">` stylé or (PWA iOS : pas d’ouverture indirecte).
+ * `onChange` + `onBlur` déclenchent la sauvegarde (dédoublonnage sur la dernière valeur envoyée).
  */
 function DepartureEtaButton({
   etaHHMM,
@@ -337,71 +338,51 @@ function DepartureEtaButton({
   etaHHMM: string | null;
   onCommit: (hhmm: string | null) => Promise<void>;
 }) {
-  const timeInputRef = useRef<HTMLInputElement>(null);
-  /** Affichage immédiat après choix ; réinitialisé quand la prop (Realtime / SWR) change. */
-  const [localEtaHHMM, setLocalEtaHHMM] = useState<string | null>(null);
+  const lastSentRef = useRef<string>("");
+  const etaPropRef = useRef<string | null>(etaHHMM);
+  etaPropRef.current = etaHHMM;
 
   useEffect(() => {
-    setLocalEtaHHMM(null);
+    lastSentRef.current = etaHHMM?.trim() ?? "";
   }, [etaHHMM]);
 
-  const displayHHMM = localEtaHHMM ?? etaHHMM;
-  const label = displayHHMM ? `ETA: ${displayHHMM}` : "ETA: --:--";
+  const persistEta = useCallback(
+    async (raw: string) => {
+      const v = raw.trim();
+      if (!v || !/^\d{2}:\d{2}$/.test(v)) return;
+      if (lastSentRef.current === v) return;
+      try {
+        await onCommit(v);
+        lastSentRef.current = v;
+      } catch {
+        lastSentRef.current = etaPropRef.current?.trim() ?? "";
+      }
+    },
+    [onCommit]
+  );
 
   return (
-    <div
-      className="relative z-[60] inline-flex shrink-0 flex-col items-stretch touch-manipulation"
+    <input
+      type="time"
+      step={60}
+      autoComplete="off"
+      placeholder="ETA"
+      title={etaHHMM ? `ETA: ${etaHHMM}` : "Choisir l’heure ETA"}
+      aria-label="Heure d’arrivée estimée (ETA)"
+      className={cn(
+        "planning-eta-time-input relative z-[60] box-border h-10 w-32 shrink-0 touch-manipulation rounded-lg border-2 border-[#D4AF37] bg-[#D4AF37] text-center text-base font-bold text-[#0a192f]",
+        "shadow-md transition-[transform,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D4AF37]/80"
+      )}
       style={{ touchAction: "manipulation" }}
-    >
-      <button
-        type="button"
-        className={cn(
-          "shrink-0 rounded-xl border-2 border-[#D4AF37] bg-[#D4AF37] px-4 py-2.5 text-base font-bold text-[#0a192f]",
-          "shadow-md transition-[transform,box-shadow] hover:bg-[#D4AF37]/90 active:scale-[0.98]"
-        )}
-        style={{ touchAction: "manipulation" }}
-        aria-label="Choisir l’heure d’arrivée estimée (ETA)"
-        onClick={(e) => {
-          e.stopPropagation();
-          console.log("Bouton cliqué");
-          const el = timeInputRef.current;
-          if (!el) return;
-          const anyEl = el as HTMLInputElement & { showPicker?: () => void };
-          if (typeof anyEl.showPicker === "function") {
-            try {
-              anyEl.showPicker();
-              return;
-            } catch {
-              /* Safari / anciens navigateurs */
-            }
-          }
-          el.focus({ preventScroll: true });
-          anyEl.click();
-        }}
-      >
-        {label}
-      </button>
-      <input
-        ref={timeInputRef}
-        type="time"
-        step={60}
-        tabIndex={-1}
-        autoComplete="off"
-        aria-hidden
-        className="sr-only pointer-events-none"
-        onChange={async (e) => {
-          const v = e.currentTarget.value.trim();
-          e.currentTarget.value = "";
-          if (!v || !/^\d{2}:\d{2}$/.test(v)) return;
-          setLocalEtaHHMM(v);
-          try {
-            await onCommit(v);
-          } catch {
-            setLocalEtaHHMM(null);
-          }
-        }}
-      />
-    </div>
+      value={etaHHMM ?? ""}
+      onPointerDown={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        void persistEta(e.currentTarget.value);
+      }}
+      onBlur={(e) => {
+        void persistEta(e.currentTarget.value);
+      }}
+    />
   );
 }
 

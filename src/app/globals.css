@@ -168,3 +168,9 @@
     text-align: center !important;
   }
 }
+
+/* Planning PWA : champ ETA — masquer l’icône calendrier WebKit (Chrome desktop) */
+input.planning-eta-time-input::-webkit-calendar-picker-indicator {
+  display: none;
+  -webkit-appearance: none;
+}
