@@ -361,28 +361,49 @@ function DepartureEtaButton({
     [onCommit]
   );
 
+  const hasEta = Boolean(etaHHMM?.trim());
+
   return (
-    <input
-      type="time"
-      step={60}
-      autoComplete="off"
-      placeholder="ETA"
-      title={etaHHMM ? `ETA: ${etaHHMM}` : "Choisir l’heure ETA"}
-      aria-label="Heure d’arrivée estimée (ETA)"
+    <div
       className={cn(
-        "planning-eta-time-input relative z-[60] box-border h-10 w-32 shrink-0 touch-manipulation rounded-lg border-2 border-[#D4AF37] bg-[#D4AF37] text-center text-base font-bold text-[#0a192f]",
-        "shadow-md transition-[transform,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D4AF37]/80"
+        "relative z-[60] box-border flex h-10 min-w-[11rem] shrink-0 touch-manipulation items-center justify-center gap-1 rounded-lg border-2 border-[#D4AF37] bg-[#D4AF37] px-2",
+        "shadow-md transition-[transform,box-shadow] focus-within:ring-2 focus-within:ring-[#D4AF37]/80"
       )}
       style={{ touchAction: "manipulation" }}
-      value={etaHHMM ?? ""}
-      onPointerDown={(e) => e.stopPropagation()}
-      onChange={(e) => {
-        void persistEta(e.currentTarget.value);
-      }}
-      onBlur={(e) => {
-        void persistEta(e.currentTarget.value);
-      }}
-    />
+      title={hasEta ? `ETA : ${etaHHMM}` : "Choisir l’heure ETA"}
+    >
+      <span className="pointer-events-none shrink-0 text-base font-bold leading-none tracking-tight text-[#0a192f]">
+        ETA&nbsp;:
+      </span>
+      <div className="relative flex min-h-8 min-w-0 flex-1 items-center justify-center">
+        {!hasEta ? (
+          <span
+            className="pointer-events-none absolute inset-0 flex items-center justify-center text-base font-bold leading-none text-[#0a192f]"
+            aria-hidden
+          >
+            --:--
+          </span>
+        ) : null}
+        <input
+          type="time"
+          step={60}
+          autoComplete="off"
+          aria-label="Heure d’arrivée estimée (ETA)"
+          className={cn(
+            "planning-eta-time-input relative z-[1] m-0 box-border h-8 min-w-[4.5rem] flex-1 cursor-pointer rounded bg-transparent px-0 text-center text-base font-bold tabular-nums leading-none outline-none focus-visible:outline-none",
+            hasEta ? "text-[#0a192f]" : "text-transparent caret-[#0a192f]"
+          )}
+          value={etaHHMM ?? ""}
+          onPointerDown={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            void persistEta(e.currentTarget.value);
+          }}
+          onBlur={(e) => {
+            void persistEta(e.currentTarget.value);
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
