@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,9 +26,11 @@ import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
 import {
   assigneeSlugToNotifyLabel,
 } from "@/lib/planning/planning-team";
+import { patchServiceReportsSwCaches } from "@/lib/planning/service-reports-swr";
 import {
   defaultReportFilename,
   generateServiceReportPdf,
+  serviceReportSnapshotToPdfData,
 } from "@/lib/reports/service-report-pdf";
 import { formatTimeForDisplay } from "@/lib/reports/report-time";
 
@@ -97,6 +99,7 @@ export default function RapportServicePage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
+  const { mutate: swrMutate } = useSWRConfig();
 
   const serviceId = decodeURIComponent(params.id || "").trim();
 
@@ -187,6 +190,20 @@ export default function RapportServicePage() {
     }
 
     setIsSubmitting(true);
+    const dateKeyForPlanning = (
+      serviceRow.dateIso ? normalizeCanonicalDateKey(serviceRow.dateIso) : dateIso
+    ).trim();
+    let optimisticCompletionApplied = false;
+    if (spreadsheetId && dateKeyForPlanning) {
+      patchServiceReportsSwCaches(swrMutate, {
+        spreadsheetId,
+        dateKey: dateKeyForPlanning,
+        serviceId,
+        isCompleted: true,
+      });
+      optimisticCompletionApplied = true;
+    }
+    let reportPersistedAsComplete = false;
     try {
       const snapRes = await fetch(
         `/api/service-reports?spreadsheetId=${encodeURIComponent(
@@ -265,28 +282,15 @@ export default function RapportServicePage() {
       }
 
       const saved = (saveJson as { report: ServiceReportRow }).report;
+      reportPersistedAsComplete = true;
 
-      const doc = await generateServiceReportPdf({
-        title: "Rapport de service",
-        reportKind,
-        photoUrl: saved.photo_url,
-        serviceClient: saved.service_client,
-        serviceType: saved.service_type,
-        serviceDateIso: saved.service_date,
-        serviceVol: saved.service_vol,
-        serviceRdv1: saved.service_rdv1,
-        serviceRdv2: saved.service_rdv2,
-        serviceDestProv: saved.service_dest_prov,
-        serviceTel: saved.service_tel,
-        serviceDriverInfo: saved.service_driver_info,
-        assigneeName: saved.assignee_name,
-        meetingTime: saved.meeting_time,
-        endOfService: saved.end_of_service,
-        pax: saved.pax,
-        immigrationSpeed: saved.immigration_speed,
-        immigrationSecuritySpeed: saved.immigration_security_speed,
-        comments: saved.comments,
-      });
+      const doc = await generateServiceReportPdf(
+        serviceReportSnapshotToPdfData({
+          row: saved,
+          reportKind,
+          title: "Rapport de service",
+        })
+      );
 
       doc.save(
         defaultReportFilename({
@@ -302,6 +306,19 @@ export default function RapportServicePage() {
       }
       router.push("/planning");
     } catch (e) {
+      if (
+        optimisticCompletionApplied &&
+        !reportPersistedAsComplete &&
+        spreadsheetId &&
+        dateKeyForPlanning
+      ) {
+        patchServiceReportsSwCaches(swrMutate, {
+          spreadsheetId,
+          dateKey: dateKeyForPlanning,
+          serviceId,
+          isCompleted: false,
+        });
+      }
       setSubmitError(e instanceof Error ? e.message : "Erreur inconnue.");
     } finally {
       setIsSubmitting(false);

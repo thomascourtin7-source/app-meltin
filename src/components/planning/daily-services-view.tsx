@@ -68,10 +68,15 @@ import {
 import {
   defaultReportFilename,
   generateServiceReportPdf,
+  serviceReportSnapshotToPdfData,
 } from "@/lib/reports/service-report-pdf";
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
 import { formatLocalTimeHHMMSS } from "@/lib/reports/report-time";
 import { detectServiceReportKind } from "@/lib/planning/service-kind";
+import {
+  SERVICE_REPORTS_SWR_KEY_0,
+  type ServiceReportsSwrBundle,
+} from "@/lib/planning/service-reports-swr";
 import { normalizeServicePhotoForUpload } from "@/lib/planning/normalize-service-photo";
 import {
   MELTIN_AUTH_SESSION_CHANGED_EVENT,
@@ -675,6 +680,8 @@ function ServiceBlockInner({
     [row.type]
   );
   const showDepartureEta = reportKind === "departure" && typeof onEtaCommit === "function";
+  /** ETA : coordination interne uniquement tant que le rapport n’est pas terminé (`completed_at` / batch). */
+  const showDepartureEtaControl = showDepartureEta && !isReportCompleted;
   const showPhotoCapture = reportKind !== "departure";
 
   const handleDepartureEtaCommit = useCallback(
@@ -833,19 +840,13 @@ function ServiceBlockInner({
 
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
-            <h2 className="min-w-0 text-xl font-bold leading-snug tracking-tight text-white">
+            <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-white">
               <PlanningPhoneRichText
                 text={row.client.trim() || "—"}
                 tone="inherit"
               />{" "}
               ✅
             </h2>
-            {showDepartureEta ? (
-              <DepartureEtaButton
-                etaHHMM={serviceEtaHHMM}
-                onCommit={handleDepartureEtaCommit}
-              />
-            ) : null}
           </div>
           <Button
             type="button"
@@ -1109,7 +1110,7 @@ function ServiceBlockInner({
             <PlanningPhoneRichText text={row.client.trim() || "—"} tone="inherit" />
             {isPec ? " 🟠" : ""}
           </h2>
-          {showDepartureEta ? (
+          {showDepartureEtaControl ? (
             <DepartureEtaButton
               etaHHMM={serviceEtaHHMM}
               onCommit={handleDepartureEtaCommit}
@@ -1367,14 +1368,7 @@ async function fetchReportExistence(opts: {
   return parsed as ReportsData;
 }
 
-type ReportsData = {
-  hasReport: Record<string, boolean>;
-  isPecByServiceId: Record<string, boolean>;
-  isCompletedByServiceId: Record<string, boolean>;
-  hasPhotoByServiceId: Record<string, boolean>;
-  /** URL publique de la photo planning (aperçu + PDF) */
-  photoUrlByServiceId: Record<string, string | null>;
-};
+type ReportsData = ServiceReportsSwrBundle;
 
 async function sendPushNotification(opts: {
   title: string;
@@ -1961,7 +1955,12 @@ export function DailyServicesView() {
   const reportKey = useMemo(() => {
     if (!spreadsheetId) return null;
     if (serviceIdsForReports.length === 0) return null;
-    return ["serviceReports", spreadsheetId, selectedKey, serviceIdsForReports.join("||")] as const;
+    return [
+      SERVICE_REPORTS_SWR_KEY_0,
+      spreadsheetId,
+      selectedKey,
+      serviceIdsForReports.join("||"),
+    ] as const;
   }, [spreadsheetId, selectedKey, serviceIdsForReports]);
 
   const {
@@ -2324,27 +2323,13 @@ export function DailyServicesView() {
         r.report_kind === "departure" || r.report_kind === "transit"
           ? r.report_kind
           : "arrival";
-      const doc = await generateServiceReportPdf({
-        title: "Rapport de service",
-        reportKind: kind,
-        photoUrl: r.photo_url ?? null,
-        serviceClient: r.service_client,
-        serviceType: r.service_type,
-        serviceDateIso: r.service_date,
-        serviceVol: r.service_vol,
-        serviceRdv1: r.service_rdv1,
-        serviceRdv2: r.service_rdv2,
-        serviceDestProv: r.service_dest_prov,
-        serviceTel: r.service_tel,
-        serviceDriverInfo: r.service_driver_info,
-        assigneeName: r.assignee_name,
-        meetingTime: r.meeting_time,
-        endOfService: r.end_of_service,
-        pax: r.pax,
-        immigrationSpeed: r.immigration_speed,
-        immigrationSecuritySpeed: r.immigration_security_speed,
-        comments: r.comments,
-      });
+      const doc = await generateServiceReportPdf(
+        serviceReportSnapshotToPdfData({
+          row: r,
+          reportKind: kind,
+          title: "Rapport de service",
+        })
+      );
       doc.save(
         defaultReportFilename({
           serviceClient: r.service_client,

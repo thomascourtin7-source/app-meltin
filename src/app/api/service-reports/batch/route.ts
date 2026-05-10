@@ -71,6 +71,8 @@ export async function POST(request: Request) {
     if (typeof sid !== "string") continue;
     existing.add(sid);
     if (typeof isPec === "boolean") isPecByServiceId[sid] = isPec;
+    // Rapport « terminé » côté planning (PDF client, masquage ETA) : `completed_at` renseigné.
+    // Si une colonne `is_completed` est ajoutée plus tard, l’OR ici avec la même sémantique.
     if (typeof completedAt === "string" && completedAt.trim()) {
       isCompletedByServiceId[sid] = true;
     }

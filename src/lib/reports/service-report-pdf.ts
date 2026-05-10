@@ -3,6 +3,10 @@ import autoTable from "jspdf-autotable";
 
 import { formatTimeForDisplay } from "@/lib/reports/report-time";
 
+/**
+ * Données PDF destinées au client.
+ * Ne jamais y inclure d’ETA / `eta_time` (coordination planning interne uniquement).
+ */
 export type ServiceReportPdfData = {
   title: string;
   reportKind?: "arrival" | "departure" | "transit";
@@ -90,6 +94,67 @@ async function getImageSize(dataUrl: string): Promise<{ w: number; h: number } |
 
 function clean(v: unknown): string {
   return String(v ?? "").trim();
+}
+
+/** Ligne rapport persistée : uniquement les champs autorisés pour le PDF (exclut toute ETA). */
+export type ServiceReportRowSnapshotForPdf = {
+  report_kind?: string | null;
+  photo_url?: string | null;
+  service_client: string;
+  service_type: string;
+  service_date: string;
+  service_vol?: string | null;
+  service_rdv1?: string | null;
+  service_rdv2?: string | null;
+  service_dest_prov?: string | null;
+  service_tel?: string | null;
+  service_driver_info?: string | null;
+  assignee_name?: string | null;
+  meeting_time?: string | null;
+  end_of_service?: string | null;
+  pax?: number | null;
+  immigration_speed?: string | null;
+  immigration_security_speed?: string | null;
+  comments?: string | null;
+};
+
+/**
+ * Construit le payload PDF à partir du rapport en base, sans reprendre de champs hors-liste
+ * (donc jamais d’`eta_time` même si elle apparaissait un jour sur la ligne).
+ */
+export function serviceReportSnapshotToPdfData(opts: {
+  row: ServiceReportRowSnapshotForPdf;
+  reportKind?: "arrival" | "departure" | "transit";
+  title?: string;
+}): ServiceReportPdfData {
+  const r = opts.row;
+  const stored = (r.report_kind || "").trim().toLowerCase();
+  const kindFromRow =
+    stored === "departure" || stored === "transit" || stored === "arrival"
+      ? (stored as "arrival" | "departure" | "transit")
+      : undefined;
+  const reportKind = opts.reportKind ?? kindFromRow ?? "arrival";
+  return {
+    title: opts.title ?? "Rapport de service",
+    reportKind,
+    photoUrl: r.photo_url ?? null,
+    serviceClient: r.service_client,
+    serviceType: r.service_type,
+    serviceDateIso: r.service_date,
+    serviceVol: r.service_vol,
+    serviceRdv1: r.service_rdv1,
+    serviceRdv2: r.service_rdv2,
+    serviceDestProv: r.service_dest_prov,
+    serviceTel: r.service_tel,
+    serviceDriverInfo: r.service_driver_info,
+    assigneeName: r.assignee_name,
+    meetingTime: r.meeting_time,
+    endOfService: r.end_of_service,
+    pax: r.pax,
+    immigrationSpeed: r.immigration_speed,
+    immigrationSecuritySpeed: r.immigration_security_speed,
+    comments: r.comments,
+  };
 }
 
 export async function generateServiceReportPdf(
