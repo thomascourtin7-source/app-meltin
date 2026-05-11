@@ -4,8 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 
+import { Pencil } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -32,7 +35,11 @@ import {
   generateServiceReportPdf,
   serviceReportSnapshotToPdfData,
 } from "@/lib/reports/service-report-pdf";
-import { formatTimeForDisplay } from "@/lib/reports/report-time";
+import {
+  formatTimeForDisplay,
+  postgresTimeFromTimeInput,
+  timeToTimeInputValue,
+} from "@/lib/reports/report-time";
 
 type PlanningServicesPayload = {
   rows: DailyServiceRow[];
@@ -158,6 +165,9 @@ export default function RapportServicePage() {
   const [immigrationSecuritySpeed, setImmigrationSecuritySpeed] =
     useState<string>("");
   const [comments, setComments] = useState<string>("");
+  const [isEditingHours, setIsEditingHours] = useState(false);
+  const [meetingTimeEdit, setMeetingTimeEdit] = useState("");
+  const [endOfServiceEdit, setEndOfServiceEdit] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -167,6 +177,8 @@ export default function RapportServicePage() {
     setImmigrationSpeed(existingReport.immigration_speed ?? "");
     setImmigrationSecuritySpeed(existingReport.immigration_security_speed ?? "");
     setComments(existingReport.comments ?? "");
+    setMeetingTimeEdit(timeToTimeInputValue(existingReport.meeting_time));
+    setEndOfServiceEdit(timeToTimeInputValue(existingReport.end_of_service));
   }, [existingReport]);
 
   const pageTitle = serviceRow?.client?.trim() || "Rapport de service";
@@ -218,6 +230,22 @@ export default function RapportServicePage() {
         throw new Error(snapJson?.error || "Impossible de relire le rapport.");
       }
       const latest = snapJson.report ?? existingReport;
+      const automaticMeetingTime = latest?.meeting_time ?? null;
+      const automaticEndOfService = latest?.end_of_service ?? null;
+      const manualMeetingTime = postgresTimeFromTimeInput(meetingTimeEdit);
+      const manualEndOfService = postgresTimeFromTimeInput(endOfServiceEdit);
+      const meeting_time = manualMeetingTime ?? automaticMeetingTime;
+      const end_of_service = manualEndOfService ?? automaticEndOfService;
+
+      console.log("[report hours] manual override before save", {
+        automaticMeetingTime,
+        automaticEndOfService,
+        manualMeetingTime,
+        manualEndOfService,
+        meeting_time,
+        end_of_service,
+        isEditingHours,
+      });
 
       const payload: Partial<ServiceReportRow> = {
         spreadsheet_id: spreadsheetId,
@@ -235,8 +263,8 @@ export default function RapportServicePage() {
         report_kind: reportKind,
         completed_at: new Date().toISOString(),
 
-        meeting_time: latest?.meeting_time ?? null,
-        end_of_service: latest?.end_of_service ?? null,
+        meeting_time,
+        end_of_service,
         photo_url: latest?.photo_url ?? null,
         is_pec:
           typeof latest?.is_pec === "boolean" ? latest.is_pec : false,
@@ -376,8 +404,26 @@ export default function RapportServicePage() {
           {/* debug banner removed */}
 
           <div className="rounded-lg border border-border/60 bg-muted/25 p-4 text-sm">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Horaires (automatiques)
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Horaires (automatiques)
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setIsEditingHours((v) => !v)}
+                aria-pressed={isEditingHours}
+                aria-label={
+                  isEditingHours
+                    ? "Terminer la modification des horaires"
+                    : "Modifier les horaires"
+                }
+              >
+                <Pencil className="size-3.5" aria-hidden />
+                {isEditingHours ? "Terminer" : "Modifier"}
+              </Button>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
               Début : photo réussie sur le planning. Fin : ouverture du formulaire
@@ -388,17 +434,49 @@ export default function RapportServicePage() {
                 <div className="text-xs font-medium text-muted-foreground">
                   Début du service
                 </div>
-                <div className="mt-0.5 rounded-md border border-transparent bg-background/80 px-2 py-1.5 font-medium text-foreground">
-                  {formatTimeForDisplay(existingReport?.meeting_time)}
-                </div>
+                {isEditingHours ? (
+                  <Input
+                    type="time"
+                    step={60}
+                    autoComplete="off"
+                    value={meetingTimeEdit}
+                    onChange={(e) => setMeetingTimeEdit(e.target.value)}
+                    className="mt-0.5 h-9 border-border/50 bg-background/80 font-medium text-foreground"
+                    aria-label="Début du service"
+                  />
+                ) : (
+                  <div className="mt-0.5 rounded-md border border-transparent bg-background/80 px-2 py-1.5 font-medium text-foreground">
+                    {formatTimeForDisplay(
+                      meetingTimeEdit
+                        ? postgresTimeFromTimeInput(meetingTimeEdit)
+                        : existingReport?.meeting_time
+                    )}
+                  </div>
+                )}
               </div>
               <div>
                 <div className="text-xs font-medium text-muted-foreground">
                   Fin du service
                 </div>
-                <div className="mt-0.5 rounded-md border border-transparent bg-background/80 px-2 py-1.5 font-medium text-foreground">
-                  {formatTimeForDisplay(existingReport?.end_of_service)}
-                </div>
+                {isEditingHours ? (
+                  <Input
+                    type="time"
+                    step={60}
+                    autoComplete="off"
+                    value={endOfServiceEdit}
+                    onChange={(e) => setEndOfServiceEdit(e.target.value)}
+                    className="mt-0.5 h-9 border-border/50 bg-background/80 font-medium text-foreground"
+                    aria-label="Fin du service"
+                  />
+                ) : (
+                  <div className="mt-0.5 rounded-md border border-transparent bg-background/80 px-2 py-1.5 font-medium text-foreground">
+                    {formatTimeForDisplay(
+                      endOfServiceEdit
+                        ? postgresTimeFromTimeInput(endOfServiceEdit)
+                        : existingReport?.end_of_service
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

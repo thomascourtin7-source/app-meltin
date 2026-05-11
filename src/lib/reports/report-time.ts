@@ -17,3 +17,19 @@ export function formatTimeForDisplay(value: string | null | undefined): string {
   const sec = m[3];
   return sec ? `${h}:${min}:${sec}` : `${h}:${min}`;
 }
+
+/** Valeur `HH:mm` pour `<input type="time" />` à partir d’une colonne Postgres `time`. */
+export function timeToTimeInputValue(value: string | null | undefined): string {
+  const t = String(value ?? "").trim();
+  const m = t.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return "";
+  return `${m[1].padStart(2, "0")}:${m[2]}`;
+}
+
+/** `HH:mm` saisi → `HH:mm:00` pour `meeting_time` / `end_of_service`. */
+export function postgresTimeFromTimeInput(hhmm: string): string | null {
+  const v = hhmm.trim();
+  if (!v) return null;
+  if (!/^\d{2}:\d{2}$/.test(v)) return null;
+  return `${v}:00`;
+}
