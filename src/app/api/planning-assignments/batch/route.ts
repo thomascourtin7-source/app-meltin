@@ -32,6 +32,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ assigneesByServiceId: {}, etaTimeByServiceId: {} });
   }
 
+  // Une ligne par `service_id` ; plusieurs agents dans `agent_name` (séparateur `;`).
+  // Pas de `.single()` / `.limit(1)` : on charge toutes les lignes des services demandés.
   const { data, error } = await supabase
     .from("planning_assignments")
     .select("service_id,agent_name,eta_time")

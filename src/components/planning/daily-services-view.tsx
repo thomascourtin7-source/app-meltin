@@ -667,12 +667,17 @@ function ServiceBlockInner({
   const ASSIGN_GREEN =
     "rounded-full bg-white px-2 py-0.5 text-base font-bold text-[#065f46] border border-emerald-600/30";
 
-  const primaryAssigneeLabel = useMemo(() => {
+  const assigneeDisplayLabels = useMemo(() => {
+    const labels: string[] = [];
     for (const slug of assignees) {
+      if (slug === PLANNING_URGENT_ASSIGNEE_SLUG) {
+        labels.push(PLANNING_URGENT_ASSIGNEE_DISPLAY);
+        continue;
+      }
       const label = assigneeSlugToNotifyLabel(slug);
-      if (label) return label;
+      if (label) labels.push(label);
     }
-    return null;
+    return labels;
   }, [assignees]);
 
   const reportKind = useMemo(
@@ -827,11 +832,16 @@ function ServiceBlockInner({
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">
             Assigné
           </div>
-          <div className="mt-1">
-            {primaryAssigneeLabel ? (
-              <span className="inline-flex items-center rounded-full bg-transparent px-2.5 py-1 text-base font-extrabold text-[#D4AF37] border border-[#D4AF37]/70">
-                {primaryAssigneeLabel}
-              </span>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {assigneeDisplayLabels.length > 0 ? (
+              assigneeDisplayLabels.map((label, index) => (
+                <span
+                  key={`${label}-${index}`}
+                  className="inline-flex items-center rounded-full bg-transparent px-2.5 py-1 text-base font-extrabold text-[#D4AF37] border border-[#D4AF37]/70"
+                >
+                  {label}
+                </span>
+              ))
             ) : (
               <span className="text-sm font-semibold text-white">—</span>
             )}
