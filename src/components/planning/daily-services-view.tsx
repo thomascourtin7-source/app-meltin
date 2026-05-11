@@ -199,6 +199,33 @@ function formatRdvForClipboard(row: DailyServiceRow): string {
   return "—";
 }
 
+/** `service_date` / `dateIso` (YYYY-MM-DD) → ex. « Lundi 11 Mai 2026 ». */
+function formatServiceDateForClipboard(dateIso: string): string {
+  const key = normalizeCanonicalDateKey(dateIso).slice(0, 10);
+  if (!key) return "—";
+  const dt = new Date(`${key}T12:00:00`);
+  if (Number.isNaN(dt.getTime())) return key;
+  const formatted = new Intl.DateTimeFormat("fr-FR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(dt);
+  return formatted.replace(/\p{L}+/gu, (word) => {
+    const c = word.charAt(0);
+    return c ? c.toUpperCase() + word.slice(1) : word;
+  });
+}
+
+function formatTelForClipboard(row: DailyServiceRow): string {
+  const tel = row.tel.trim();
+  const driver = row.driverInfo.trim();
+  if (tel && driver) return `${tel} — ${driver}`;
+  if (tel) return tel;
+  if (driver) return driver;
+  return "—";
+}
+
 /** Texte partageable (presse-papiers) pour un service du planning. */
 function buildServiceDetailsClipboardText(row: DailyServiceRow): string {
   const type = row.type.trim() || "—";
@@ -206,9 +233,13 @@ function buildServiceDetailsClipboardText(row: DailyServiceRow): string {
   const vol = row.vol.trim() || "—";
   const rdv = formatRdvForClipboard(row);
   const dest = row.destProv.trim() || "—";
-  const tel = row.tel.trim() || "—";
+  const tel = formatTelForClipboard(row);
+  const dateLine = formatServiceDateForClipboard(row.dateIso);
   return [
+    `📅 Date : ${dateLine}`,
+    "",
     `SERVICE ${type} - ${client}`,
+    "",
     `✈️ Vol : ${vol}`,
     `⏰ RDV : ${rdv}`,
     `📍 Dest/Prov : ${dest}`,
