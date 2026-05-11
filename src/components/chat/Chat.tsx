@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import Link from "next/link";
@@ -30,7 +31,15 @@ import {
   savePushSubscriptionToServer,
   subscribeChatPush,
 } from "@/lib/push/client-subscribe-chat";
+import {
+  subscribePlanningAuthSession,
+} from "@/lib/auth/planning-auth-session";
 import { CHAT_USERNAME_STORAGE_KEY } from "@/lib/chat/constants";
+import {
+  chatSendersMatch,
+  formatChatSenderNameForDisplay,
+  readChatSenderNameFromAuth,
+} from "@/lib/chat/identity";
 import { getSupabaseBrowserClient, type MessageRow } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { useChatPageViewport } from "@/components/chat/chat-page-viewport-context";
@@ -424,8 +433,44 @@ export function Chat({ variant }: ChatProps) {
     el.scrollTop = el.scrollHeight;
   }, [messages, variant]);
 
-  const trimmedName = usernameStore.value.trim();
+  const authDisplayName = useSyncExternalStore(
+    subscribePlanningAuthSession,
+    () => readChatSenderNameFromAuth(),
+    () => ""
+  );
+  const trimmedName = authDisplayName;
   const hasUsername = trimmedName.length > 0;
+  const [registeredAgentNames, setRegisteredAgentNames] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!authDisplayName) return;
+    persistUsername(authDisplayName);
+  }, [authDisplayName, persistUsername]);
+
+  useEffect(() => {
+    if (!isMounted) return;
+    let cancelled = false;
+    void fetch("/api/planning-auth/registry")
+      .then((res) => res.json())
+      .then((json: { registeredNames?: unknown }) => {
+        if (cancelled) return;
+        const raw = json?.registeredNames;
+        setRegisteredAgentNames(
+          Array.isArray(raw)
+            ? raw
+                .filter((n): n is string => typeof n === "string")
+                .map((n) => n.trim())
+                .filter(Boolean)
+            : []
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setRegisteredAgentNames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isMounted]);
 
   useLayoutEffect(() => {
     if (variant !== "page" || !hasUsername) return;
@@ -618,12 +663,15 @@ export function Chat({ variant }: ChatProps) {
   const participantNames = useMemo(() => {
     const s = new Set<string>();
     for (const m of messages) {
-      const n = m.sender_name.trim();
+      const n = formatChatSenderNameForDisplay(
+        m.sender_name,
+        registeredAgentNames
+      );
       if (n) s.add(n);
     }
     if (trimmedName) s.add(trimmedName);
     return Array.from(s).sort((a, b) => a.localeCompare(b, "fr"));
-  }, [messages, trimmedName]);
+  }, [messages, registeredAgentNames, trimmedName]);
 
   const mentionCtx = useMemo(
     () => getMentionContext(draft, selectionStart),
@@ -1018,25 +1066,8 @@ export function Chat({ variant }: ChatProps) {
           {hasUsername && !editingName ? (
             <>
               <p className="text-xs text-muted-foreground">
-                Prénom :{" "}
-                <span className="font-medium text-foreground">{trimmedName}</span>{" "}
-                <button
-                  type="button"
-                  className="text-primary underline-offset-4 hover:underline"
-                  onClick={() => {
-                    setEditingName(true);
-                  }}
-                >
-                  Changer de profil
-                </button>
-                <span className="text-muted-foreground"> · </span>
-                <button
-                  type="button"
-                  className="text-muted-foreground underline-offset-4 hover:text-destructive hover:underline"
-                  onClick={disconnectProfile}
-                >
-                  Se déconnecter
-                </button>
+                Profil :{" "}
+                <span className="font-medium text-foreground">{trimmedName}</span>
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Button
@@ -1207,7 +1238,11 @@ export function Chat({ variant }: ChatProps) {
             ) : null}
             {messages.map((m) => {
               const currentUsername = trimmedName;
-              const isMe = m.sender_name === currentUsername;
+              const senderLabel = formatChatSenderNameForDisplay(
+                m.sender_name,
+                registeredAgentNames
+              );
+              const isMe = chatSendersMatch(m.sender_name, currentUsername);
               const parent = m.reply_to_id
                 ? messages.find((p) => p.id === m.reply_to_id)
                 : undefined;
@@ -1250,7 +1285,10 @@ export function Chat({ variant }: ChatProps) {
                               isMe ? "text-white" : "text-zinc-900"
                             )}
                           >
-                            {parent.sender_name}
+                            {formatChatSenderNameForDisplay(
+                              parent.sender_name,
+                              registeredAgentNames
+                            )}
                           </p>
                           <p
                             className={cn(
@@ -1275,7 +1313,7 @@ export function Chat({ variant }: ChatProps) {
                       ) : null}
                       {!isMe ? (
                         <p className="mb-1 text-xs font-semibold text-zinc-700">
-                          {m.sender_name}
+                          {senderLabel}
                         </p>
                       ) : null}
                       {m.image_url?.trim() ? (
@@ -1462,7 +1500,11 @@ export function Chat({ variant }: ChatProps) {
               <div className="mb-2 flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">
                 <div className="min-w-0 flex-1 border-l-2 border-zinc-400 pl-2 dark:border-zinc-500">
                   <p className="text-xs font-semibold text-foreground">
-                    Réponse à {replyingTo.sender_name}
+                    Réponse à{" "}
+                    {formatChatSenderNameForDisplay(
+                      replyingTo.sender_name,
+                      registeredAgentNames
+                    )}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
                     {replySnippet(replyingTo)}

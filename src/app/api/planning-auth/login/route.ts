@@ -3,10 +3,7 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 
-import {
-  displayNameForPlanningAuthSlug,
-  slugFromDisplayName,
-} from "@/lib/auth/planning-auth-slugs";
+import { slugFromDisplayName } from "@/lib/auth/planning-auth-slugs";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
@@ -76,7 +73,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const displayName = displayNameForPlanningAuthSlug(slug) ?? dbName;
+  const displayName = dbName;
   const sessionToken = randomUUID();
 
   // Session multi-appareils : enregistre un token indépendant (ne déconnecte pas les autres).

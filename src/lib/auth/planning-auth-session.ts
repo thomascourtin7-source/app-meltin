@@ -58,6 +58,13 @@ export function readPlanningAuthSession(): PlanningAuthSession | null {
   );
 }
 
+export function subscribePlanningAuthSession(onStoreChange: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const onCustom = () => onStoreChange();
+  window.addEventListener(MELTIN_AUTH_SESSION_CHANGED_EVENT, onCustom);
+  return () => window.removeEventListener(MELTIN_AUTH_SESSION_CHANGED_EVENT, onCustom);
+}
+
 export function hasPlanningAuthSession(): boolean {
   return readPlanningAuthSession() != null;
 }
