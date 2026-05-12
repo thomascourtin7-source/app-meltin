@@ -36,7 +36,7 @@ import {
 } from "@/lib/planning/planning-finalized-storage";
 import {
   PLANNING_ASSIGNEE_OPTIONS,
-  PLANNING_URGENT_ASSIGNEE_SLUG,
+  planningBadgeAgentOptions,
 } from "@/lib/planning/planning-team";
 import { stableServiceRowKey } from "@/lib/planning/service-row-keys";
 import { cn } from "@/lib/utils";
@@ -65,19 +65,27 @@ function addDaysLocal(d: Date, delta: number): Date {
 }
 
 async function fetchPlanningRows(opts: {
-  spreadsheetId: string;
   dateIso: string;
-}): Promise<DailyServiceRow[]> {
+}): Promise<{ rows: DailyServiceRow[]; spreadsheetId: string }> {
   const res = await fetch(
-    `/api/planning-services?spreadsheetId=${encodeURIComponent(
-      opts.spreadsheetId
-    )}&date=${encodeURIComponent(opts.dateIso)}`
+    `/api/planning-services?date=${encodeURIComponent(opts.dateIso)}`
   );
-  const json = (await res.json()) as { rows?: DailyServiceRow[]; error?: string };
+  const json = (await res.json()) as {
+    rows?: DailyServiceRow[];
+    spreadsheetId?: string;
+    error?: string;
+    message?: string;
+  };
   if (!res.ok) {
+    if (json?.error === "GOOGLE_PERMISSION_DENIED" && json.message) {
+      throw new Error(json.message);
+    }
     throw new Error(json?.error || "Impossible de charger le planning.");
   }
-  return json.rows ?? [];
+  return {
+    rows: json.rows ?? [],
+    spreadsheetId: json.spreadsheetId?.trim() ?? "",
+  };
 }
 
 function loadAssigneeStore(): AssigneeStore {
@@ -115,12 +123,7 @@ export function PlanningIaClient() {
     DEFAULT_PLANNING_SPREADSHEET_ID;
 
   const agentLabels = useMemo(() => {
-    return PLANNING_ASSIGNEE_OPTIONS.filter(
-      (o) =>
-        o.value !== "__none__" &&
-        o.value !== PLANNING_URGENT_ASSIGNEE_SLUG &&
-        o.value !== "subcontracted"
-    ).map((o) => o.label);
+    return planningBadgeAgentOptions().map((o) => o.label);
   }, []);
 
   const [selected, setSelected] = useState<Record<string, boolean>>({});
@@ -178,10 +181,14 @@ export function PlanningIaClient() {
         formatLocalYmd(addDaysLocal(new Date(), 1))
       );
 
-      const rows = await fetchPlanningRows({
-        spreadsheetId,
-        dateIso: tomorrowIso,
-      });
+      const { rows, spreadsheetId: resolvedSpreadsheetId } =
+        await fetchPlanningRows({
+          dateIso: tomorrowIso,
+        });
+      const spreadsheetIdForStore = resolvedSpreadsheetId || spreadsheetId;
+      if (!spreadsheetIdForStore) {
+        throw new Error("Aucun Google Sheet configuré pour ce mois");
+      }
 
       const agents = selectedAgents
         .map((label) => {
@@ -202,7 +209,7 @@ export function PlanningIaClient() {
       });
 
       const store = loadAssigneeStore();
-      const sheetMap = { ...(store[spreadsheetId] ?? {}) };
+      const sheetMap = { ...(store[spreadsheetIdForStore] ?? {}) };
 
       for (const row of rows) {
         const rk = stableServiceRowKey(row);
@@ -212,7 +219,7 @@ export function PlanningIaClient() {
         }
       }
 
-      store[spreadsheetId] = sheetMap;
+      store[spreadsheetIdForStore] = sheetMap;
       saveAssigneeStore(store);
 
       clearPlanningFinalizedForServiceDate(getTomorrowPlanningDateKey());

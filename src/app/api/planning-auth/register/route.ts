@@ -7,6 +7,7 @@ import {
   displayNameForPlanningAuthSlug,
   isAllowedPlanningAuthSlug,
 } from "@/lib/auth/planning-auth-slugs";
+import { isPlanningAssignmentOnlySlug } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
   const password = typeof b.password === "string" ? b.password : "";
   const deviceId = typeof b.deviceId === "string" ? b.deviceId.trim() : "";
 
-  if (!slug || !isAllowedPlanningAuthSlug(slug)) {
+  if (!slug || !isAllowedPlanningAuthSlug(slug) || isPlanningAssignmentOnlySlug(slug)) {
     return NextResponse.json({ error: "Prénom non autorisé." }, { status: 400 });
   }
   if (password.length < 6) {

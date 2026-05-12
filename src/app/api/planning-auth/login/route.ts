@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 
 import { slugFromDisplayName } from "@/lib/auth/planning-auth-slugs";
+import { isPlanningAssignmentOnlySlug } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
   // Insensible à la casse : "test" ou "Test" doivent fonctionner.
   const { data: row, error: selErr } = await supabase
     .from("agents_auth")
-    .select("name, password")
+    .select("name, password, can_login")
     .ilike("name", nameRaw)
     .maybeSingle();
 
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
 
   if (
     !row ||
+    (row as { can_login?: unknown }).can_login === false ||
     typeof (row as { password?: unknown }).password !== "string"
   ) {
     return NextResponse.json(
@@ -66,7 +68,7 @@ export async function POST(request: Request) {
     : nameRaw;
 
   const slug = slugFromDisplayName(dbName);
-  if (!slug) {
+  if (!slug || isPlanningAssignmentOnlySlug(slug)) {
     return NextResponse.json(
       { error: "Prénom non reconnu pour cette application." },
       { status: 400 }

@@ -6,6 +6,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchDailyServicesFromSheet } from "@/lib/google/fetch-daily-services";
 import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
+import {
+  PLANNING_SOURCE_MISSING_ERROR,
+  resolveSpreadsheetIdsForGlobalImport,
+  type PlanningMonthRef,
+} from "@/lib/planning/planning-sources";
 import { formatPlanningDateForNotification } from "@/lib/planning/push-format";
 import {
   broadcastAlarmUncoveredPush,
@@ -1076,5 +1081,83 @@ export async function executePlanningCronCheck(
     ok: true,
     globalHashChanged: true,
     sent,
+  };
+}
+
+export type GlobalPlanningCronResult = PlanningCronResult & {
+  spreadsheetIds: string[];
+  missingMonths: PlanningMonthRef[];
+  results: Array<{ spreadsheetId: string; result: PlanningCronResult }>;
+};
+
+/** Import / synchro : mois courant + mois suivant via `planning_sources`. */
+export async function executeGlobalPlanningCronCheck(
+  anchorDateIso?: string
+): Promise<GlobalPlanningCronResult> {
+  const emptySent = { general: 0, assignee: 0, volRetire: 0, alarm: 0 };
+  const admin = getSupabaseAdmin();
+  if (!admin) {
+    return {
+      ok: false,
+      error: "SUPABASE_SERVICE_ROLE_KEY manquant",
+      globalHashChanged: false,
+      sent: emptySent,
+      spreadsheetIds: [],
+      missingMonths: [],
+      results: [],
+    };
+  }
+
+  const anchor =
+    anchorDateIso?.trim() ||
+    DateTime.now().setZone(ZONE).toISODate() ||
+    "";
+
+  const { spreadsheetIds, missingMonths } =
+    await resolveSpreadsheetIdsForGlobalImport(admin, anchor);
+
+  if (spreadsheetIds.length === 0) {
+    return {
+      ok: false,
+      error: PLANNING_SOURCE_MISSING_ERROR,
+      globalHashChanged: false,
+      sent: emptySent,
+      spreadsheetIds: [],
+      missingMonths,
+      results: [],
+    };
+  }
+
+  const results: Array<{ spreadsheetId: string; result: PlanningCronResult }> =
+    [];
+  let ok = true;
+  let globalHashChanged = false;
+  const sent = { general: 0, assignee: 0, volRetire: 0, alarm: 0 };
+
+  for (const spreadsheetId of spreadsheetIds) {
+    const result = await executePlanningCronCheck(spreadsheetId);
+    results.push({ spreadsheetId, result });
+    if (!result.ok) ok = false;
+    if (result.globalHashChanged) globalHashChanged = true;
+    sent.general += result.sent.general;
+    sent.assignee += result.sent.assignee;
+    sent.volRetire += result.sent.volRetire;
+    sent.alarm += result.sent.alarm;
+  }
+
+  const failed = results.find((entry) => !entry.result.ok);
+  const error =
+    missingMonths.length > 0
+      ? PLANNING_SOURCE_MISSING_ERROR
+      : failed?.result.error;
+
+  return {
+    ok: ok && missingMonths.length === 0,
+    error,
+    globalHashChanged,
+    sent,
+    spreadsheetIds,
+    missingMonths,
+    results,
   };
 }

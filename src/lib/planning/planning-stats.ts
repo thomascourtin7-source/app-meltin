@@ -3,6 +3,7 @@ import { DateTime } from "luxon";
 import {
   PLANNING_ASSIGNEE_OPTIONS,
   isUrgentAssignee,
+  planningBadgeAgentOptions,
   planningDisplayNameEquals,
 } from "@/lib/planning/planning-team";
 
@@ -124,19 +125,13 @@ export function canonicalAgentLabel(raw: string | null): string | null {
   if (!t) return null;
   for (const o of PLANNING_ASSIGNEE_OPTIONS) {
     if (o.value === "__none__" || isUrgentAssignee(o.value)) continue;
-    if (o.value === "subcontracted") continue;
     if (planningDisplayNameEquals(o.label, t)) return o.label;
   }
   return t;
 }
 
 export function defaultScoreAgentLabels(): string[] {
-  return PLANNING_ASSIGNEE_OPTIONS.filter(
-    (o) =>
-      o.value !== "__none__" &&
-      !isUrgentAssignee(o.value) &&
-      o.value !== "subcontracted"
-  ).map((o) => o.label);
+  return planningBadgeAgentOptions().map((o) => o.label);
 }
 
 export type PlanningScoreRow = {

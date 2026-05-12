@@ -1,11 +1,12 @@
 import {
   PLANNING_TEAM_REGISTER_OPTIONS,
+  isPlanningAssignmentOnlySlug,
   planningDisplayNameEquals,
 } from "@/lib/planning/planning-team";
 
-/** Comptes agents réels — hors libellés métiers d’assignation (ex. Sous-traité). */
+/** Comptes agents réels — hors entités assignables sans connexion. */
 export const PLANNING_AGENT_IDENTITY_OPTIONS = PLANNING_TEAM_REGISTER_OPTIONS.filter(
-  (o) => o.value !== "subcontracted"
+  (o) => !isPlanningAssignmentOnlySlug(o.value)
 );
 
 /** Slugs autorisés pour inscription / connexion. */

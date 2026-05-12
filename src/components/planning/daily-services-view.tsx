@@ -31,8 +31,6 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
-import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
-import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import { planningDayBucket } from "@/lib/planning/push-format";
 import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
@@ -40,6 +38,7 @@ import {
   DEFAULT_PLANNING_ASSIGNEE_SLUG,
   MAX_PLANNING_ASSIGNEES_PER_SERVICE,
   PLANNING_ASSIGNEE_OPTIONS,
+  planningBadgeAgentOptions,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
   PLANNING_URGENT_ASSIGNEE_SLUG,
   assigneeSlugFromNotifyLabel,
@@ -58,6 +57,11 @@ import {
 } from "@/lib/planning/service-row-keys";
 import { isPlanningFinalizedForServiceDate } from "@/lib/planning/planning-finalized-storage";
 import { computeConflictRowKeys } from "@/lib/planning/time-conflicts";
+import {
+  buildServiceCardDomId,
+  getChronologyIndexForAgentRow,
+  scrollToAgentBadgeTarget,
+} from "@/lib/planning/planning-agent-scroll";
 import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
@@ -254,6 +258,10 @@ function isAssigneeHighlighted(slug: string): boolean {
   );
 }
 
+function isServiceUnassigned(assignees: string[]): boolean {
+  return !assignees.some((slug) => isAssigneeHighlighted(slug));
+}
+
 type PlanningDebug = {
   range: string;
   rawRowCount: number;
@@ -267,6 +275,7 @@ type PlanningDebug = {
 type PlanningServicesPayload = {
   rows: DailyServiceRow[];
   fetchedAt: string;
+  spreadsheetId?: string | null;
   filterDateIso?: string | null;
   debug?: PlanningDebug;
 };
@@ -351,6 +360,16 @@ async function planningServicesFetcher(
   const res = await fetch(url);
   const data: unknown = await res.json();
   if (!res.ok) {
+    const body = data as { error?: unknown; message?: unknown };
+    if (
+      body &&
+      typeof body === "object" &&
+      body.error === "GOOGLE_PERMISSION_DENIED" &&
+      typeof body.message === "string"
+    ) {
+      throw new Error(body.message);
+    }
+
     const msg =
       data &&
       typeof data === "object" &&
@@ -480,6 +499,8 @@ type ServiceBlockProps = {
     serviceDateIso: string,
     hhmm: string | null
   ) => Promise<void>;
+  agentScrollAnchorIds?: string[];
+  showUnassignedTodayAlert?: boolean;
 };
 
 function serviceBlockMemoAreEqual(
@@ -498,10 +519,14 @@ function serviceBlockMemoAreEqual(
   if (prev.isPec !== next.isPec) return false;
   if (prev.hasPhoto !== next.hasPhoto) return false;
   if (prev.servicePhotoPreviewUrl !== next.servicePhotoPreviewUrl) return false;
+  if (prev.showUnassignedTodayAlert !== next.showUnassignedTodayAlert) return false;
   if (serviceBlockRowFingerprint(prev.row) !== serviceBlockRowFingerprint(next.row)) {
     return false;
   }
   if (!sameAssigneeSlugList(prev.assignees, next.assignees)) return false;
+  const prevAnchors = (prev.agentScrollAnchorIds ?? []).join("\u0001");
+  const nextAnchors = (next.agentScrollAnchorIds ?? []).join("\u0001");
+  if (prevAnchors !== nextAnchors) return false;
   return true;
 }
 
@@ -532,6 +557,8 @@ function ServiceBlockInner({
   planningReadOnly,
   serviceEtaHHMM = null,
   onEtaCommit,
+  agentScrollAnchorIds = [],
+  showUnassignedTodayAlert = false,
 }: ServiceBlockProps) {
   const assignees = Array.isArray(assigneesRaw) ? assigneesRaw : [];
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
@@ -834,21 +861,39 @@ function ServiceBlockInner({
       </div>
     ) : null;
 
+  const scrollAnchors =
+    agentScrollAnchorIds.length > 0 ? (
+      <>
+        {agentScrollAnchorIds.map((domId) => (
+          <span
+            key={domId}
+            id={domId}
+            className="block h-0 w-full overflow-hidden pointer-events-none"
+            aria-hidden
+          />
+        ))}
+      </>
+    ) : null;
+
+  const serviceCardSurfaceClass = cn(
+    "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border-2 px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+    showUnassignedTodayAlert
+      ? "border-red-500 bg-red-950/20 text-white"
+      : cn(
+          "bg-gradient-to-br from-[#0f172a] to-[#1e293b]",
+          isUrgent ? "border-red-600" : "border-[#D4AF37]",
+          isUrgent ? "shadow-[0_0_0_2px_rgba(212,175,55,0.25)]" : ""
+        ),
+    hasTimeConflict && showConflictUi && "ring-2 ring-red-500/60"
+  );
+
   if (isReportCompleted) {
     return (
       <div
         data-planning-service-card
-        className={cn(
-          "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border-2 bg-gradient-to-br from-[#0f172a] to-[#1e293b] px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5",
-          isUrgent ? "border-red-600" : "border-[#D4AF37]",
-          isUrgent
-            ? "shadow-[0_0_0_2px_rgba(212,175,55,0.25)]"
-            : "",
-          hasTimeConflict &&
-            showConflictUi &&
-            "ring-2 ring-red-500/60"
-        )}
+        className={serviceCardSurfaceClass}
       >
+        {scrollAnchors}
         {hasTimeConflict && showConflictUi ? (
           <div
             className="mb-3 flex items-center gap-1.5 text-xs font-medium text-red-200"
@@ -951,15 +996,9 @@ function ServiceBlockInner({
   return (
     <div
       data-planning-service-card
-      className={cn(
-        "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border-2 bg-gradient-to-br from-[#0f172a] to-[#1e293b] px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5 text-white",
-        isUrgent ? "border-red-600" : "border-[#D4AF37]",
-        isUrgent ? "shadow-[0_0_0_2px_rgba(212,175,55,0.25)]" : "",
-        hasTimeConflict &&
-          showConflictUi &&
-          "ring-2 ring-red-500/60"
-      )}
+      className={cn(serviceCardSurfaceClass, !showUnassignedTodayAlert && "text-white")}
     >
+      {scrollAnchors}
       {hasTimeConflict && showConflictUi ? (
         <div
           className="mb-3 flex items-center gap-1.5 text-xs font-medium text-red-200"
@@ -1467,12 +1506,6 @@ export function DailyServicesView() {
 
   const selectedKeyRef = useRef("");
 
-  const configuredId = useLocalSpreadsheetId();
-  const spreadsheetId =
-    process.env.NEXT_PUBLIC_PLANNING_SPREADSHEET_ID?.trim() ||
-    configuredId ||
-    DEFAULT_PLANNING_SPREADSHEET_ID;
-
   const [selectedDate, setSelectedDate] = useState(() =>
     formatLocalYmd(new Date())
   );
@@ -1542,9 +1575,9 @@ export function DailyServicesView() {
     if (!meName.trim() && meOnly) setMeOnly(false);
   }, [meName, meOnly]);
 
-  const swrKey = `/api/planning-services?spreadsheetId=${encodeURIComponent(
-    spreadsheetId
-  )}&date=${encodeURIComponent(normalizeCanonicalDateKey(selectedDate))}`;
+  const swrKey = `/api/planning-services?date=${encodeURIComponent(
+    normalizeCanonicalDateKey(selectedDate)
+  )}`;
 
   const {
     data: planningData,
@@ -1568,6 +1601,7 @@ export function DailyServicesView() {
   }
   const planningPayload =
     planningData ?? planningDisplayedRef.current ?? undefined;
+  const spreadsheetId = planningPayload?.spreadsheetId?.trim() ?? "";
 
   /** Dès qu’on a affiché un planning une fois, on ne remplace plus toute la vue par le loader (Realtime, revalidate, etc.). */
   const planningShellHydratedRef = useRef(false);
@@ -2109,12 +2143,7 @@ export function DailyServicesView() {
   const photoUrlByServiceId = reportExistence?.photoUrlByServiceId ?? {};
 
   const agentLabels = useMemo(() => {
-    return PLANNING_ASSIGNEE_OPTIONS.filter(
-      (o) =>
-        o.value !== "__none__" &&
-        o.value !== PLANNING_URGENT_ASSIGNEE_SLUG &&
-        o.value !== "subcontracted"
-    ).map((o) => o.label);
+    return planningBadgeAgentOptions().map((o) => o.label);
   }, []);
 
   type AgentStatus = "red" | "yellow" | "green" | "gray" | "black";
@@ -2196,6 +2225,29 @@ export function DailyServicesView() {
         return "bg-black dark:bg-neutral-200";
     }
   }
+
+  const handleAgentBadgeNavigate = useCallback(
+    (agentLabel: string) => {
+      const status = agentStatusByLabel[agentLabel] ?? "black";
+      scrollToAgentBadgeTarget({
+        agentLabel,
+        status,
+        rows: filtered,
+        assigneesByRowKey: assignees,
+        isCompletedByServiceId,
+        isPecByServiceId,
+        hasPhotoByServiceId,
+      });
+    },
+    [
+      agentStatusByLabel,
+      assignees,
+      filtered,
+      hasPhotoByServiceId,
+      isCompletedByServiceId,
+      isPecByServiceId,
+    ]
+  );
 
   const togglePec = useCallback(
     async (opts: { serviceId: string; next: boolean; row: DailyServiceRow }) => {
@@ -2799,11 +2851,31 @@ export function DailyServicesView() {
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {agentLabels.map((label) => {
               const status = agentStatusByLabel[label] ?? "black";
+              const isNavigable = status !== "black";
               return (
                 <Badge
                   key={label}
                   variant="outline"
-                  className="h-6 gap-2 rounded-full px-2.5 py-1 text-xs"
+                  className={cn(
+                    "h-6 gap-2 rounded-full px-2.5 py-1 text-xs",
+                    isNavigable && "cursor-pointer"
+                  )}
+                  role={isNavigable ? "button" : undefined}
+                  tabIndex={isNavigable ? 0 : undefined}
+                  onClick={
+                    isNavigable
+                      ? () => handleAgentBadgeNavigate(label)
+                      : undefined
+                  }
+                  onKeyDown={
+                    isNavigable
+                      ? (event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          handleAgentBadgeNavigate(label);
+                        }
+                      : undefined
+                  }
                 >
                   <span
                     className={cn(
@@ -2941,6 +3013,20 @@ export function DailyServicesView() {
               const assigneeList = normalizeAssigneeListFromStored(
                 assignees[rowKey]
               );
+              const agentScrollAnchorIds = assigneeList
+                .map((slug) => assigneeSlugToNotifyLabel(slug))
+                .filter((label): label is string => Boolean(label))
+                .map((label) =>
+                  buildServiceCardDomId(
+                    label,
+                    getChronologyIndexForAgentRow(
+                      label,
+                      row,
+                      filtered,
+                      assignees
+                    )
+                  )
+                );
               return (
                 <ServiceBlock
                   key={reportSid}
@@ -2948,6 +3034,10 @@ export function DailyServicesView() {
                   rowKey={rowKey}
                   reportServiceId={reportSid}
                   assignees={assigneeList}
+                  agentScrollAnchorIds={agentScrollAnchorIds}
+                  showUnassignedTodayAlert={
+                    isTodaySelected && isServiceUnassigned(assigneeList)
+                  }
                   meName={meName}
                   onAssigneesChange={setAssigneesForRow}
                   hasTimeConflict={conflictRowKeys.has(rowKey)}

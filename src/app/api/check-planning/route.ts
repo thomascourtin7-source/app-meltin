@@ -1,18 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { executePlanningCronCheck } from "@/lib/planning/cron/run-check-planning";
-import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
+import { executeGlobalPlanningCronCheck } from "@/lib/planning/cron/run-check-planning";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
-
-function resolveSpreadsheetId(): string {
-  return (
-    process.env.PLANNING_SPREADSHEET_ID?.trim() ||
-    process.env.NEXT_PUBLIC_PLANNING_SPREADSHEET_ID?.trim() ||
-    DEFAULT_PLANNING_SPREADSHEET_ID
-  );
-}
 
 function authorize(req: Request): boolean {
   const secret = process.env.CRON_SECRET?.trim();
@@ -38,8 +29,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Non autorisé." }, { status: 401 });
   }
 
-  const spreadsheetId = resolveSpreadsheetId();
-  const result = await executePlanningCronCheck(spreadsheetId);
+  const result = await executeGlobalPlanningCronCheck();
 
   if (!result.ok) {
     return NextResponse.json(result, { status: 503 });

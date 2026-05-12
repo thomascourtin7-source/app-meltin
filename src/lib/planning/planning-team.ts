@@ -25,12 +25,45 @@ export const PLANNING_ASSIGNEE_OPTIONS = [
   { value: "pravin", label: "Pravin" },
   { value: "deva", label: "Deva" },
   { value: "kumar", label: "Kumar" },
-  { value: "subcontracted", label: "Sous-traité" },
+  { value: "tij", label: "TIJ" },
+  { value: "aida", label: "AIDA" },
+  { value: "yaya", label: "YAYA" },
+  { value: "escale", label: "ESCALE" },
+  { value: "autre", label: "AUTRE" },
   {
     value: PLANNING_URGENT_ASSIGNEE_SLUG,
     label: PLANNING_URGENT_ASSIGNEE_DISPLAY,
   },
 ] as const;
+
+/** Agents internes (badges + droits admin planning). */
+export const PLANNING_INTERNAL_AGENT_SLUGS = [
+  "pravin",
+  "deva",
+  "kumar",
+  "thomas",
+  "simon",
+  "karthik",
+  "javed",
+  "elias",
+] as const;
+
+/** Entités assignables au planning sans compte de connexion. */
+export const PLANNING_ASSIGNMENT_ONLY_SLUGS = [
+  "tij",
+  "aida",
+  "yaya",
+  "escale",
+  "autre",
+] as const;
+
+export function isPlanningAssignmentOnlySlug(slug: string): boolean {
+  return (PLANNING_ASSIGNMENT_ONLY_SLUGS as readonly string[]).includes(slug);
+}
+
+export function isPlanningInternalAgentSlug(slug: string): boolean {
+  return (PLANNING_INTERNAL_AGENT_SLUGS as readonly string[]).includes(slug);
+}
 
 export type PlanningAssigneeSlug = (typeof PLANNING_ASSIGNEE_OPTIONS)[number]["value"];
 
@@ -44,7 +77,10 @@ export const KNOWN_PLANNING_ASSIGNEE_SLUGS: string[] =
 
 /** Noms proposés dans « S'enregistrer » (push ciblé = libellé enregistré côté serveur). */
 export const PLANNING_TEAM_REGISTER_OPTIONS = PLANNING_ASSIGNEE_OPTIONS.filter(
-  (o) => o.value !== "__none__" && o.value !== PLANNING_URGENT_ASSIGNEE_SLUG
+  (o) =>
+    o.value !== "__none__" &&
+    o.value !== PLANNING_URGENT_ASSIGNEE_SLUG &&
+    !isPlanningAssignmentOnlySlug(o.value)
 );
 
 /**
@@ -103,6 +139,15 @@ export function isUrgentAssignee(stored: string): boolean {
   return (
     stored === PLANNING_URGENT_ASSIGNEE_SLUG ||
     stored === PLANNING_URGENT_ASSIGNEE_DISPLAY
+  );
+}
+
+export function planningBadgeAgentOptions(): Array<{
+  value: PlanningAssigneeSlug;
+  label: string;
+}> {
+  return PLANNING_ASSIGNEE_OPTIONS.filter((o) =>
+    isPlanningInternalAgentSlug(o.value)
   );
 }
 
