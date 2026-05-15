@@ -49,18 +49,21 @@ export async function POST(request: Request) {
   const passwordHash = await bcrypt.hash(password, 10);
   const sessionToken = randomUUID();
 
-  const { error: insErr } = await supabase.from("agents_auth").insert({
-    name: displayName,
-    password: passwordHash,
-  });
+  const { data: existing, error: fetchErr } = await supabase
+    .from("agents_auth")
+    .select("name,password")
+    .ilike("name", displayName)
+    .maybeSingle();
 
-  if (insErr) {
-    const msg = (insErr.message ?? "").toLowerCase();
-    if (
-      insErr.code === "23505" ||
-      msg.includes("duplicate") ||
-      msg.includes("unique")
-    ) {
+  if (fetchErr) {
+    return NextResponse.json({ error: fetchErr.message }, { status: 500 });
+  }
+
+  if (existing) {
+    const storedPassword = (existing as { password?: unknown }).password;
+    const hasPassword =
+      typeof storedPassword === "string" && storedPassword.length > 0;
+    if (hasPassword) {
       return NextResponse.json(
         {
           error: "Ce compte est déjà utilisé sur un autre appareil.",
@@ -68,7 +71,42 @@ export async function POST(request: Request) {
         { status: 409 }
       );
     }
-    return NextResponse.json({ error: insErr.message }, { status: 500 });
+
+    const dbName =
+      typeof (existing as { name?: unknown }).name === "string"
+        ? (existing as { name: string }).name.trim()
+        : displayName;
+
+    const { error: updateErr } = await supabase
+      .from("agents_auth")
+      .update({ password: passwordHash })
+      .eq("name", dbName);
+
+    if (updateErr) {
+      return NextResponse.json({ error: updateErr.message }, { status: 500 });
+    }
+  } else {
+    const { error: insErr } = await supabase.from("agents_auth").insert({
+      name: displayName,
+      password: passwordHash,
+    });
+
+    if (insErr) {
+      const msg = (insErr.message ?? "").toLowerCase();
+      if (
+        insErr.code === "23505" ||
+        msg.includes("duplicate") ||
+        msg.includes("unique")
+      ) {
+        return NextResponse.json(
+          {
+            error: "Ce compte est déjà utilisé sur un autre appareil.",
+          },
+          { status: 409 }
+        );
+      }
+      return NextResponse.json({ error: insErr.message }, { status: 500 });
+    }
   }
 
   const { error: sessErr } = await supabase.from("agents_auth_sessions").insert({

@@ -3,7 +3,7 @@ import { DateTime } from "luxon";
 import {
   PLANNING_ASSIGNEE_OPTIONS,
   isUrgentAssignee,
-  planningBadgeAgentOptions,
+  displayAgents,
   planningDisplayNameEquals,
 } from "@/lib/planning/planning-team";
 
@@ -131,7 +131,7 @@ export function canonicalAgentLabel(raw: string | null): string | null {
 }
 
 export function defaultScoreAgentLabels(): string[] {
-  return planningBadgeAgentOptions().map((o) => o.label);
+  return displayAgents().map((o) => o.label);
 }
 
 export type PlanningScoreRow = {

@@ -37,8 +37,11 @@ import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
 import {
   DEFAULT_PLANNING_ASSIGNEE_SLUG,
   MAX_PLANNING_ASSIGNEES_PER_SERVICE,
-  PLANNING_ASSIGNEE_OPTIONS,
-  planningBadgeAgentOptions,
+  assignableAgents,
+  displayAgents,
+  isPlanningOperationalAgentSlug,
+  isPlanningSelectableAssigneeValue,
+  isServiceAssignedToSessionAgent,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
   PLANNING_URGENT_ASSIGNEE_SLUG,
   assigneeSlugFromNotifyLabel,
@@ -674,7 +677,7 @@ function ServiceBlockInner({
         return;
       }
       if (assigneeRowCount >= MAX_PLANNING_ASSIGNEES_PER_SERVICE) return;
-      if (!PLANNING_ASSIGNEE_OPTIONS?.length) {
+      if (!assignableAgents().length) {
         console.error("handleAddAssignee: liste des agents indisponible.");
         return;
       }
@@ -1019,15 +1022,13 @@ function ServiceBlockInner({
           {Array.from({ length: assigneeRowCount }, (_, slot) => {
             const rawSlot =
               assignees[slot] ?? DEFAULT_PLANNING_ASSIGNEE_SLUG;
-            const assignee = PLANNING_ASSIGNEE_OPTIONS.some(
-              (opt) => opt.value === rawSlot
-            )
+            const assignee = isPlanningSelectableAssigneeValue(rawSlot)
               ? rawSlot
               : DEFAULT_PLANNING_ASSIGNEE_SLUG;
             const triggerDisplayText =
               assignee === PLANNING_URGENT_ASSIGNEE_SLUG
                 ? PLANNING_URGENT_ASSIGNEE_DISPLAY
-                : PLANNING_ASSIGNEE_OPTIONS.find((opt) => opt.value === assignee)
+                : assignableAgents().find((opt) => opt.value === assignee)
                     ?.label || assignee;
             const showRemoveLine = slot > 0 && !planningReadOnly;
             const canAddMore =
@@ -1087,7 +1088,7 @@ function ServiceBlockInner({
                       >
                         {assignee === PLANNING_URGENT_ASSIGNEE_SLUG
                           ? PLANNING_URGENT_ASSIGNEE_DISPLAY
-                          : PLANNING_ASSIGNEE_OPTIONS.find(
+                          : assignableAgents().find(
                               (opt) => opt.value === assignee
                             )?.label || assignee}
                       </span>
@@ -1098,7 +1099,7 @@ function ServiceBlockInner({
                         ASSIGNEE_SELECT_EMOJI_FONT
                       )}
                     >
-                      {PLANNING_ASSIGNEE_OPTIONS.map((opt) => (
+                      {assignableAgents().map((opt) => (
                         <SelectItem
                           key={opt.value}
                           value={opt.value}
@@ -1513,6 +1514,7 @@ export function DailyServicesView() {
   const [calendarPressed, setCalendarPressed] = useState(false);
   const [meOnly, setMeOnly] = useState(false);
   const [meName, setMeName] = useState<string>("");
+  const [meSlug, setMeSlug] = useState<string>("");
   const isPlanningAdmin = usePlanningAdminClient();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -1539,12 +1541,19 @@ export function DailyServicesView() {
     const read = () => {
       const session = readPlanningAuthSession();
       const fromSession = session?.displayName?.trim() ?? "";
-      if (fromSession) return fromSession;
-      return (
-        window.localStorage.getItem(MELTIN_TEAM_REGISTER_NAME_KEY)?.trim() ?? ""
-      );
+      const slug = session?.slug?.trim().toLowerCase() ?? "";
+      if (fromSession && slug) {
+        return { name: fromSession, slug };
+      }
+      const legacyName =
+        window.localStorage.getItem(MELTIN_TEAM_REGISTER_NAME_KEY)?.trim() ?? "";
+      const legacySlug =
+        assigneeSlugFromNotifyLabel(legacyName)?.trim().toLowerCase() ?? "";
+      return { name: fromSession || legacyName, slug: legacySlug };
     };
-    setMeName(read());
+    const profile = read();
+    setMeName(profile.name);
+    setMeSlug(profile.slug);
 
     const onStorage = (e: StorageEvent) => {
       if (
@@ -1553,10 +1562,20 @@ export function DailyServicesView() {
       ) {
         return;
       }
-      setMeName(read());
+      const profile = read();
+      setMeName(profile.name);
+      setMeSlug(profile.slug);
     };
-    const onCustom = () => setMeName(read());
-    const onAuth = () => setMeName(read());
+    const onCustom = () => {
+      const profile = read();
+      setMeName(profile.name);
+      setMeSlug(profile.slug);
+    };
+    const onAuth = () => {
+      const profile = read();
+      setMeName(profile.name);
+      setMeSlug(profile.slug);
+    };
 
     window.addEventListener("storage", onStorage);
     window.addEventListener(MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT, onCustom);
@@ -1571,9 +1590,12 @@ export function DailyServicesView() {
     };
   }, []);
 
+  const showMeFilter =
+    Boolean(meSlug) && isPlanningOperationalAgentSlug(meSlug);
+
   useEffect(() => {
-    if (!meName.trim() && meOnly) setMeOnly(false);
-  }, [meName, meOnly]);
+    if ((!meName.trim() || !showMeFilter) && meOnly) setMeOnly(false);
+  }, [meName, meOnly, showMeFilter]);
 
   const swrKey = `/api/planning-services?date=${encodeURIComponent(
     normalizeCanonicalDateKey(selectedDate)
@@ -2008,18 +2030,13 @@ export function DailyServicesView() {
   }, [planningPayload?.rows, selectedKey]);
 
   const visibleRows = useMemo(() => {
-    const name = meName.trim();
-    if (!meOnly || !name) return filtered;
+    if (!meOnly) return filtered;
+    if (!showMeFilter) return [];
     return filtered.filter((row) => {
       const rowKey = stableServiceRowKey(row);
-      const list = normalizeAssigneeListFromStored(assignees[rowKey]);
-      for (const slug of list) {
-        const label = assigneeSlugToNotifyLabel(slug);
-        if (label && planningDisplayNameEquals(label, name)) return true;
-      }
-      return false;
+      return isServiceAssignedToSessionAgent(assignees[rowKey], meSlug);
     });
-  }, [assignees, filtered, meName, meOnly]);
+  }, [assignees, filtered, meOnly, meSlug, showMeFilter]);
 
   // Important: on charge les statuts (PEC / completed) pour TOUTE la journée affichée,
   // même si le filtre "Me" est actif (sinon les statuts agents seraient incomplets).
@@ -2143,7 +2160,7 @@ export function DailyServicesView() {
   const photoUrlByServiceId = reportExistence?.photoUrlByServiceId ?? {};
 
   const agentLabels = useMemo(() => {
-    return planningBadgeAgentOptions().map((o) => o.label);
+    return displayAgents().map((o) => o.label);
   }, []);
 
   type AgentStatus = "red" | "yellow" | "green" | "gray" | "black";
@@ -2948,33 +2965,29 @@ export function DailyServicesView() {
             </div>
           </div>
 
-          <Button
-            type="button"
-            variant="ghost"
-            className={cn(
-              dateNavButtonClass(Boolean(meOnly)),
-              "relative z-20 h-11 px-4 sm:h-9 sm:px-3",
-              !meName.trim() && "opacity-50"
-            )}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setMeOnly((v) => !v);
-            }}
-            disabled={!meName.trim()}
-            aria-pressed={meOnly}
-            title={
-              meName.trim()
-                ? `Afficher uniquement ${meName.trim()}`
-                : "Définissez votre nom via “S'enregistrer”"
-            }
-          >
-            Me
-          </Button>
+          {showMeFilter ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className={cn(
+                dateNavButtonClass(Boolean(meOnly)),
+                "relative z-20 h-11 px-4 sm:h-9 sm:px-3"
+              )}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMeOnly((v) => !v);
+              }}
+              aria-pressed={meOnly}
+              title={`Afficher uniquement ${meName.trim()}`}
+            >
+              Me
+            </Button>
+          ) : null}
         </div>
       </div>
 

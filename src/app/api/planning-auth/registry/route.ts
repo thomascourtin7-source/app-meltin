@@ -34,13 +34,18 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("agents_auth")
-    .select("name,can_login");
+    .select("name,can_login,password");
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  /** Comptes avec mot de passe défini (premier accès encore possible sinon). */
   const registeredNames = (data ?? [])
-    .filter((row) => (row as { can_login?: unknown }).can_login !== false)
+    .filter((row) => {
+      if ((row as { can_login?: unknown }).can_login === false) return false;
+      const password = (row as { password?: unknown }).password;
+      return typeof password === "string" && password.length > 0;
+    })
     .map((r: { name?: unknown }) =>
       typeof r.name === "string" ? r.name.trim() : ""
     )

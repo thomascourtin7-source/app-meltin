@@ -2,8 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   PLANNING_ASSIGNEE_OPTIONS,
+  authAgents,
   isPlanningAssignmentOnlySlug,
   isPlanningInternalAgentSlug,
+  isPlanningTechnicalAdminSlug,
 } from "@/lib/planning/planning-team";
 
 type AgentAuthSeed = {
@@ -21,12 +23,15 @@ function buildAgentAuthSeeds(): AgentAuthSeed[] {
     if (option.value === "__none__" || option.value === "emoji_alert") continue;
 
     const assignmentOnly = isPlanningAssignmentOnlySlug(option.value);
+    const technicalAdmin = isPlanningTechnicalAdminSlug(option.value);
     const internalAgent = isPlanningInternalAgentSlug(option.value);
+    const canLogin = authAgents().some((o) => o.value === option.value);
     seeds.push({
       name: option.label,
       email: null,
-      role: assignmentOnly ? "agent" : internalAgent ? "admin" : "agent",
-      can_login: !assignmentOnly,
+      role:
+        assignmentOnly ? "agent" : technicalAdmin || internalAgent ? "admin" : "agent",
+      can_login: canLogin,
       password: null,
     });
   }

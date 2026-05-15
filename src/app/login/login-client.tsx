@@ -24,8 +24,7 @@ import {
   getOrCreatePlanningDeviceId,
   persistPlanningAuthSession,
 } from "@/lib/auth/planning-auth-session";
-import { PLANNING_AGENT_IDENTITY_OPTIONS } from "@/lib/auth/planning-auth-slugs";
-import { planningDisplayNameEquals } from "@/lib/planning/planning-team";
+import { authAgents, planningDisplayNameEquals } from "@/lib/planning/planning-team";
 import { subscribeChatPush } from "@/lib/push/client-subscribe-chat";
 import { ensureServiceWorkerRegistered } from "@/lib/push/register-sw";
 
@@ -68,7 +67,7 @@ export function LoginClient() {
 
   const signupOptions = useMemo(() => {
     const names = registeredNames ?? [];
-    return PLANNING_AGENT_IDENTITY_OPTIONS.filter(
+    return authAgents().filter(
       (o) => !names.some((n) => planningDisplayNameEquals(n, o.label))
     );
   }, [registeredNames]);

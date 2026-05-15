@@ -36,7 +36,7 @@ import {
 } from "@/lib/planning/planning-finalized-storage";
 import {
   PLANNING_ASSIGNEE_OPTIONS,
-  planningBadgeAgentOptions,
+  displayAgents,
 } from "@/lib/planning/planning-team";
 import { stableServiceRowKey } from "@/lib/planning/service-row-keys";
 import { cn } from "@/lib/utils";
@@ -123,7 +123,7 @@ export function PlanningIaClient() {
     DEFAULT_PLANNING_SPREADSHEET_ID;
 
   const agentLabels = useMemo(() => {
-    return planningBadgeAgentOptions().map((o) => o.label);
+    return displayAgents().map((o) => o.label);
   }, []);
 
   const [selected, setSelected] = useState<Record<string, boolean>>({});

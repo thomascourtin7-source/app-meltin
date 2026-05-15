@@ -17,6 +17,7 @@ export const PLANNING_URGENT_ASSIGNEE_VALUE = PLANNING_URGENT_ASSIGNEE_SLUG;
 export const PLANNING_ASSIGNEE_OPTIONS = [
   { value: "__none__", label: "Non assigné" },
   { value: "javed", label: "Javed" },
+  { value: "javed_ordo", label: "JAVED ORDI" },
   { value: "thomas", label: "Thomas" },
   { value: "test", label: "Test" },
   { value: "simon", label: "Simon" },
@@ -48,6 +49,9 @@ export const PLANNING_INTERNAL_AGENT_SLUGS = [
   "elias",
 ] as const;
 
+/** Comptes admin techniques (connexion OK, jamais assignés ni badge opérationnel). */
+export const PLANNING_TECHNICAL_ADMIN_SLUGS = ["javed_ordo"] as const;
+
 /** Entités assignables au planning sans compte de connexion. */
 export const PLANNING_ASSIGNMENT_ONLY_SLUGS = [
   "tij",
@@ -65,6 +69,15 @@ export function isPlanningInternalAgentSlug(slug: string): boolean {
   return (PLANNING_INTERNAL_AGENT_SLUGS as readonly string[]).includes(slug);
 }
 
+export function isPlanningTechnicalAdminSlug(slug: string): boolean {
+  return (PLANNING_TECHNICAL_ADMIN_SLUGS as readonly string[]).includes(slug);
+}
+
+/** Agents opérationnels (badges couleur, filtre « Me »). */
+export function isPlanningOperationalAgentSlug(slug: string): boolean {
+  return isPlanningInternalAgentSlug(slug) && !isPlanningTechnicalAdminSlug(slug);
+}
+
 export type PlanningAssigneeSlug = (typeof PLANNING_ASSIGNEE_OPTIONS)[number]["value"];
 
 export const DEFAULT_PLANNING_ASSIGNEE_SLUG: PlanningAssigneeSlug = "__none__";
@@ -80,7 +93,8 @@ export const PLANNING_TEAM_REGISTER_OPTIONS = PLANNING_ASSIGNEE_OPTIONS.filter(
   (o) =>
     o.value !== "__none__" &&
     o.value !== PLANNING_URGENT_ASSIGNEE_SLUG &&
-    !isPlanningAssignmentOnlySlug(o.value)
+    !isPlanningAssignmentOnlySlug(o.value) &&
+    !isPlanningTechnicalAdminSlug(o.value)
 );
 
 /**
@@ -142,13 +156,75 @@ export function isUrgentAssignee(stored: string): boolean {
   );
 }
 
-export function planningBadgeAgentOptions(): Array<{
+export type PlanningAgentOption = {
   value: PlanningAssigneeSlug;
   label: string;
-}> {
+};
+
+/** 8 agents internes opérationnels — badges navigation en haut de page. */
+export function displayAgents(): PlanningAgentOption[] {
   return PLANNING_ASSIGNEE_OPTIONS.filter((o) =>
-    isPlanningInternalAgentSlug(o.value)
+    isPlanningOperationalAgentSlug(o.value)
   );
+}
+
+/**
+ * Menu d’assignation des services : agents internes + sous-traitants (+ non assigné, urgence).
+ * Exclut les comptes admin techniques (ex. JAVED ORDI).
+ */
+export function assignableAgents(): PlanningAgentOption[] {
+  return PLANNING_ASSIGNEE_OPTIONS.filter((o) => {
+    if (isPlanningTechnicalAdminSlug(o.value)) return false;
+    return (
+      o.value === DEFAULT_PLANNING_ASSIGNEE_SLUG ||
+      isUrgentAssignee(o.value) ||
+      isPlanningOperationalAgentSlug(o.value) ||
+      isPlanningAssignmentOnlySlug(o.value)
+    );
+  });
+}
+
+/** Comptes avec connexion (page login / premier accès). Inclut JAVED ORDI. */
+export function authAgents(): PlanningAgentOption[] {
+  return PLANNING_ASSIGNEE_OPTIONS.filter(
+    (o) =>
+      o.value !== DEFAULT_PLANNING_ASSIGNEE_SLUG &&
+      !isUrgentAssignee(o.value) &&
+      !isPlanningAssignmentOnlySlug(o.value)
+  );
+}
+
+export function isPlanningAuthAgentSlug(slug: string): boolean {
+  return authAgents().some((o) => o.value === slug);
+}
+
+/** @deprecated Utiliser {@link displayAgents}. */
+export const planningBadgeAgentOptions = displayAgents;
+
+/** @deprecated Utiliser {@link assignableAgents}. */
+export const planningAssignableOptions = assignableAgents;
+
+export function isPlanningSelectableAssigneeValue(value: string): boolean {
+  if (value === DEFAULT_PLANNING_ASSIGNEE_SLUG || isUrgentAssignee(value)) {
+    return true;
+  }
+  if (isPlanningTechnicalAdminSlug(value)) return false;
+  return (
+    isPlanningOperationalAgentSlug(value) || isPlanningAssignmentOnlySlug(value)
+  );
+}
+
+/**
+ * Filtre « Mes accueils » : slug session agent opérationnel explicitement assigné.
+ */
+export function isServiceAssignedToSessionAgent(
+  assigneesRaw: unknown,
+  sessionSlug: string | null | undefined
+): boolean {
+  const slug = sessionSlug?.trim().toLowerCase() ?? "";
+  if (!slug || !isPlanningOperationalAgentSlug(slug)) return false;
+  const list = normalizeAssigneeListFromStored(assigneesRaw);
+  return list.some((entry) => entry === slug);
 }
 
 /**
@@ -156,7 +232,11 @@ export function planningBadgeAgentOptions(): Array<{
  * Retourne null si non assigné ou urgence (pas de push nominatif).
  */
 export function assigneeSlugToNotifyLabel(slug: string): string | null {
-  if (slug === DEFAULT_PLANNING_ASSIGNEE_SLUG || isUrgentAssignee(slug)) {
+  if (
+    slug === DEFAULT_PLANNING_ASSIGNEE_SLUG ||
+    isUrgentAssignee(slug) ||
+    isPlanningTechnicalAdminSlug(slug)
+  ) {
     return null;
   }
   const opt = PLANNING_ASSIGNEE_OPTIONS.find((o) => o.value === slug);
@@ -182,7 +262,11 @@ export function assigneeSlugFromNotifyLabel(label: string): string | null {
   if (!t) return null;
   const key = normKey(t);
   for (const o of PLANNING_ASSIGNEE_OPTIONS) {
-    if (o.value === DEFAULT_PLANNING_ASSIGNEE_SLUG || isUrgentAssignee(o.value)) {
+    if (
+      o.value === DEFAULT_PLANNING_ASSIGNEE_SLUG ||
+      isUrgentAssignee(o.value) ||
+      isPlanningTechnicalAdminSlug(o.value)
+    ) {
       continue;
     }
     if (normKey(o.label) === key) return o.value;
@@ -197,7 +281,10 @@ export function assigneeSlugFromNotifyLabel(label: string): string | null {
 export function matchSheetAssigneeToTeamLabel(raw: string): string | null {
   const key = normKey(raw);
   if (!key) return null;
-  for (const o of PLANNING_TEAM_REGISTER_OPTIONS) {
+  for (const o of assignableAgents()) {
+    if (o.value === DEFAULT_PLANNING_ASSIGNEE_SLUG || isUrgentAssignee(o.value)) {
+      continue;
+    }
     if (normKey(o.label) === key || normKey(o.value) === key) {
       return o.label;
     }

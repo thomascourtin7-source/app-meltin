@@ -1,17 +1,15 @@
 import {
-  PLANNING_TEAM_REGISTER_OPTIONS,
-  isPlanningAssignmentOnlySlug,
+  authAgents,
   planningDisplayNameEquals,
 } from "@/lib/planning/planning-team";
 
-/** Comptes agents réels — hors entités assignables sans connexion. */
-export const PLANNING_AGENT_IDENTITY_OPTIONS = PLANNING_TEAM_REGISTER_OPTIONS.filter(
-  (o) => !isPlanningAssignmentOnlySlug(o.value)
-);
+/** Comptes pouvant se connecter (agents opérationnels + admins techniques). */
+export const PLANNING_AGENT_IDENTITY_OPTIONS = authAgents();
 
 /** Slugs autorisés pour inscription / connexion. */
-export const PLANNING_AUTH_ALLOWED_SLUGS: string[] =
-  PLANNING_AGENT_IDENTITY_OPTIONS.map((o) => o.value);
+export const PLANNING_AUTH_ALLOWED_SLUGS: string[] = PLANNING_AGENT_IDENTITY_OPTIONS.map(
+  (o) => o.value
+);
 
 export function isAllowedPlanningAuthSlug(slug: string): boolean {
   return PLANNING_AUTH_ALLOWED_SLUGS.includes(slug);

@@ -50,7 +50,8 @@ where lower(name) in (
   'simon',
   'karthik',
   'javed',
-  'elias'
+  'elias',
+  'javed ordi'
 );
 
 update public.agents_auth
@@ -64,5 +65,6 @@ where can_login = true
     'simon',
     'karthik',
     'javed',
-    'elias'
+    'elias',
+    'javed ordi'
   );

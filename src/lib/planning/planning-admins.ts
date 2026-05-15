@@ -10,6 +10,7 @@ export const ADMINS = [
   "Karthik",
   "Javed",
   "Elias",
+  "JAVED ORDI",
 ] as const;
 
 export function isPlanningAdminDisplayName(name: string): boolean {
