@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 
@@ -102,6 +102,84 @@ async function jsonFetcher<T>(url: string): Promise<T> {
   return data as T;
 }
 
+function isLikelyNetworkError(error: unknown): boolean {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return true;
+  }
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    error.name === "TypeError" ||
+    msg.includes("failed to fetch") ||
+    msg.includes("network") ||
+    msg.includes("load failed") ||
+    msg.includes("connexion")
+  );
+}
+
+function classifySubmitError(error: unknown): {
+  message: string;
+  retryable: boolean;
+} {
+  if (isLikelyNetworkError(error)) {
+    return {
+      message:
+        "Connexion instable ou interrompue. Vérifiez le réseau puis réessayez.",
+      retryable: true,
+    };
+  }
+  const message =
+    error instanceof Error ? error.message : "Erreur inconnue lors de l’envoi.";
+  return { message, retryable: false };
+}
+
+async function fetchReportSnapshot(
+  spreadsheetId: string,
+  serviceId: string
+): Promise<ServiceReportRow | null> {
+  const snapRes = await fetch(
+    `/api/service-reports?spreadsheetId=${encodeURIComponent(
+      spreadsheetId
+    )}&serviceId=${encodeURIComponent(serviceId)}`
+  );
+  const snapJson = (await snapRes.json()) as {
+    report: ServiceReportRow | null;
+    error?: string;
+  };
+  if (!snapRes.ok) {
+    throw new Error(snapJson?.error || "Impossible de relire le rapport.");
+  }
+  return snapJson.report ?? null;
+}
+
+async function persistCompletedReport(
+  payload: Partial<ServiceReportRow>
+): Promise<ServiceReportRow> {
+  const saveRes = await fetch("/api/service-reports", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const saveJson: unknown = await saveRes.json();
+  if (!saveRes.ok) {
+    const msg =
+      saveJson &&
+      typeof saveJson === "object" &&
+      "error" in saveJson &&
+      typeof (saveJson as { error: unknown }).error === "string"
+        ? (saveJson as { error: string }).error
+        : "Enregistrement impossible.";
+    throw new Error(msg);
+  }
+  const saved = (saveJson as { report?: ServiceReportRow }).report;
+  if (!saved?.completed_at) {
+    throw new Error(
+      "Le serveur n’a pas confirmé la fin du rapport. Réessayez."
+    );
+  }
+  return saved;
+}
+
 export default function RapportServicePage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -170,8 +248,41 @@ export default function RapportServicePage() {
   const [endOfServiceEdit, setEndOfServiceEdit] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitRetryable, setSubmitRetryable] = useState(false);
+  const submitLockRef = useRef(false);
+  const redirectScheduledRef = useRef(false);
+
+  const resetReportFormState = useCallback(() => {
+    setPax(null);
+    setImmigrationSpeed("");
+    setImmigrationSecuritySpeed("");
+    setComments("");
+    setIsEditingHours(false);
+    setMeetingTimeEdit("");
+    setEndOfServiceEdit("");
+    setSubmitError(null);
+    setSubmitRetryable(false);
+  }, []);
+
+  const redirectToPlanning = useCallback(
+    (dateKey: string) => {
+      if (redirectScheduledRef.current) return;
+      redirectScheduledRef.current = true;
+      try {
+        sessionStorage.setItem("meltin_service_report_saved_flash", "1");
+      } catch {
+        /* ignore */
+      }
+      const path = dateKey
+        ? `/planning?date=${encodeURIComponent(dateKey)}`
+        : "/planning";
+      router.replace(path);
+    },
+    [router]
+  );
 
   useEffect(() => {
+    if (isSubmitting || redirectScheduledRef.current) return;
     if (!existingReport) return;
     setPax(existingReport.pax ?? null);
     setImmigrationSpeed(existingReport.immigration_speed ?? "");
@@ -179,7 +290,7 @@ export default function RapportServicePage() {
     setComments(existingReport.comments ?? "");
     setMeetingTimeEdit(timeToTimeInputValue(existingReport.meeting_time));
     setEndOfServiceEdit(timeToTimeInputValue(existingReport.end_of_service));
-  }, [existingReport]);
+  }, [existingReport, isSubmitting]);
 
   const pageTitle = serviceRow?.client?.trim() || "Rapport de service";
   const primaryAssignee = useMemo(() => {
@@ -191,7 +302,10 @@ export default function RapportServicePage() {
   }, [planningData?.assigneesByServiceId, serviceRow]);
 
   async function handleEnd(): Promise<void> {
+    if (submitLockRef.current || redirectScheduledRef.current) return;
+
     setSubmitError(null);
+    setSubmitRetryable(false);
     if (!spreadsheetId) {
       setSubmitError("spreadsheetId manquant.");
       return;
@@ -201,51 +315,22 @@ export default function RapportServicePage() {
       return;
     }
 
+    submitLockRef.current = true;
     setIsSubmitting(true);
+
     const dateKeyForPlanning = (
       serviceRow.dateIso ? normalizeCanonicalDateKey(serviceRow.dateIso) : dateIso
     ).trim();
-    let optimisticCompletionApplied = false;
-    if (spreadsheetId && dateKeyForPlanning) {
-      patchServiceReportsSwCaches(swrMutate, {
-        spreadsheetId,
-        dateKey: dateKeyForPlanning,
-        serviceId,
-        isCompleted: true,
-      });
-      optimisticCompletionApplied = true;
-    }
-    let reportPersistedAsComplete = false;
+
     try {
-      const snapRes = await fetch(
-        `/api/service-reports?spreadsheetId=${encodeURIComponent(
-          spreadsheetId
-        )}&serviceId=${encodeURIComponent(serviceId)}`
-      );
-      const snapJson = (await snapRes.json()) as {
-        report: ServiceReportRow | null;
-        error?: string;
-      };
-      if (!snapRes.ok) {
-        throw new Error(snapJson?.error || "Impossible de relire le rapport.");
-      }
-      const latest = snapJson.report ?? existingReport;
+      const latest =
+        (await fetchReportSnapshot(spreadsheetId, serviceId)) ?? existingReport;
       const automaticMeetingTime = latest?.meeting_time ?? null;
       const automaticEndOfService = latest?.end_of_service ?? null;
       const manualMeetingTime = postgresTimeFromTimeInput(meetingTimeEdit);
       const manualEndOfService = postgresTimeFromTimeInput(endOfServiceEdit);
       const meeting_time = manualMeetingTime ?? automaticMeetingTime;
       const end_of_service = manualEndOfService ?? automaticEndOfService;
-
-      console.log("[report hours] manual override before save", {
-        automaticMeetingTime,
-        automaticEndOfService,
-        manualMeetingTime,
-        manualEndOfService,
-        meeting_time,
-        end_of_service,
-        isEditingHours,
-      });
 
       const payload: Partial<ServiceReportRow> = {
         spreadsheet_id: spreadsheetId,
@@ -262,20 +347,16 @@ export default function RapportServicePage() {
         assignee_name: primaryAssignee,
         report_kind: reportKind,
         completed_at: new Date().toISOString(),
-
         meeting_time,
         end_of_service,
         photo_url: latest?.photo_url ?? null,
-        is_pec:
-          typeof latest?.is_pec === "boolean" ? latest.is_pec : false,
-
+        is_pec: typeof latest?.is_pec === "boolean" ? latest.is_pec : false,
         pax,
         comments: comments || null,
         immigration_speed:
           reportKind === "arrival" ? immigrationSpeed || null : null,
         immigration_security_speed:
           reportKind !== "arrival" ? immigrationSecuritySpeed || null : null,
-
         deplanning: null,
         service_started_at: null,
         travel_class: null,
@@ -292,64 +373,47 @@ export default function RapportServicePage() {
         place_end_of_service: null,
       };
 
-      const saveRes = await fetch("/api/service-reports", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const saveJson: unknown = await saveRes.json();
-      if (!saveRes.ok) {
-        const msg =
-          saveJson &&
-          typeof saveJson === "object" &&
-          "error" in saveJson &&
-          typeof (saveJson as { error: unknown }).error === "string"
-            ? (saveJson as { error: string }).error
-            : "Enregistrement impossible.";
-        throw new Error(msg);
-      }
+      const saved = await persistCompletedReport(payload);
 
-      const saved = (saveJson as { report: ServiceReportRow }).report;
-      reportPersistedAsComplete = true;
-
-      const doc = await generateServiceReportPdf(
-        serviceReportSnapshotToPdfData({
-          row: saved,
-          reportKind,
-          title: "Rapport de service",
-        })
-      );
-
-      doc.save(
-        defaultReportFilename({
-          serviceClient: saved.service_client,
-          serviceDateIso: saved.service_date,
-        })
-      );
-
-      try {
-        sessionStorage.setItem("meltin_service_report_saved_flash", "1");
-      } catch {
-        /* ignore */
-      }
-      router.push("/planning");
-    } catch (e) {
-      if (
-        optimisticCompletionApplied &&
-        !reportPersistedAsComplete &&
-        spreadsheetId &&
-        dateKeyForPlanning
-      ) {
+      if (spreadsheetId && dateKeyForPlanning) {
         patchServiceReportsSwCaches(swrMutate, {
           spreadsheetId,
           dateKey: dateKeyForPlanning,
           serviceId,
-          isCompleted: false,
+          isCompleted: true,
         });
       }
-      setSubmitError(e instanceof Error ? e.message : "Erreur inconnue.");
+
+      resetReportFormState();
+
+      try {
+        const doc = await generateServiceReportPdf(
+          serviceReportSnapshotToPdfData({
+            row: saved,
+            reportKind,
+            title: "Rapport de service",
+          })
+        );
+        doc.save(
+          defaultReportFilename({
+            serviceClient: saved.service_client,
+            serviceDateIso: saved.service_date,
+          })
+        );
+      } catch (pdfError) {
+        console.error("[rapport] PDF non généré après enregistrement", pdfError);
+      }
+
+      redirectToPlanning(dateKeyForPlanning);
+    } catch (e) {
+      const { message, retryable } = classifySubmitError(e);
+      setSubmitError(message);
+      setSubmitRetryable(retryable);
     } finally {
-      setIsSubmitting(false);
+      submitLockRef.current = false;
+      if (!redirectScheduledRef.current) {
+        setIsSubmitting(false);
+      }
     }
   }
 
@@ -568,7 +632,8 @@ export default function RapportServicePage() {
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push("/planning")}
+            onClick={() => router.replace("/planning")}
+            disabled={isSubmitting}
           >
             Retour planning
           </Button>
@@ -594,8 +659,23 @@ export default function RapportServicePage() {
       </Card>
 
       {submitError ? (
-        <div className="mt-4 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-          {submitError}
+        <div
+          className="mt-4 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+          role="alert"
+        >
+          <p>{submitError}</p>
+          {submitRetryable ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => void handleEnd()}
+              disabled={isSubmitting}
+            >
+              Réessayer
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </div>
