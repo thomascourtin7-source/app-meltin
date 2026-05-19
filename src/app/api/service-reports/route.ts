@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveRequestUrl } from "@/lib/http/resolve-request-url";
+import { isValidBagsStatus } from "@/lib/reports/transit-bags-status";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 type ServiceReportRow = {
@@ -41,6 +42,7 @@ type ServiceReportRow = {
   vip_lounge: boolean | null;
   boarding_end_of_service: string | null;
   transit_bags: string | null;
+  bags_status: string | null;
   is_pec: boolean | null;
   completed_at: string | null;
   photo_url: string | null;
@@ -120,11 +122,35 @@ export async function POST(request: Request) {
     );
   }
 
+  const reportKind =
+    typeof b.report_kind === "string" ? b.report_kind.trim().toLowerCase() : "";
+  const isCompleting = b.completed_at != null && b.completed_at !== "";
+  const bagsStatusRaw =
+    typeof b.bags_status === "string" ? b.bags_status.trim() : "";
+
+  if (isCompleting && reportKind === "transit") {
+    if (!isValidBagsStatus(bagsStatusRaw)) {
+      return NextResponse.json(
+        {
+          error:
+            "Statut bagages requis pour un rapport Transit (bags_status).",
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   const payload = {
     ...b,
     spreadsheet_id: spreadsheetId,
     service_id: serviceId,
     updated_at: new Date().toISOString(),
+    bags_status:
+      reportKind === "transit"
+        ? isValidBagsStatus(bagsStatusRaw)
+          ? bagsStatusRaw
+          : null
+        : null,
   };
 
   const { data, error: upErr } = await supabase

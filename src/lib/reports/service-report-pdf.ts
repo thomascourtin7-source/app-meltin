@@ -2,6 +2,10 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import { formatTimeForDisplay } from "@/lib/reports/report-time";
+import {
+  bagsStatusDisplayLabel,
+  readBagsStatusFromReport,
+} from "@/lib/reports/transit-bags-status";
 
 /**
  * Données PDF destinées au client.
@@ -39,6 +43,7 @@ export type ServiceReportPdfData = {
   vipLounge?: boolean | null;
   boardingEndOfService?: string | null;
   transitBags?: string | null;
+  bagsStatus?: string | null;
   endOfService?: string | null;
   placeEndOfService?: string | null;
   comments?: string | null;
@@ -116,6 +121,8 @@ export type ServiceReportRowSnapshotForPdf = {
   immigration_speed?: string | null;
   immigration_security_speed?: string | null;
   comments?: string | null;
+  bags_status?: string | null;
+  transit_bags?: string | null;
 };
 
 /**
@@ -154,6 +161,7 @@ export function serviceReportSnapshotToPdfData(opts: {
     immigrationSpeed: r.immigration_speed,
     immigrationSecuritySpeed: r.immigration_security_speed,
     comments: r.comments,
+    bagsStatus: readBagsStatusFromReport(r) || null,
   };
 }
 
@@ -227,6 +235,9 @@ export async function generateServiceReportPdf(
   const reportDetails: Array<[string, string]> = [
     ["PAX", data.pax != null ? String(data.pax) : "—"],
     [immigrationLabel, immigrationValue || "—"],
+    ...(kind === "transit"
+      ? [["BAGAGES (BAGS)", bagsStatusDisplayLabel(data.bagsStatus) || "—"] as [string, string]]
+      : []),
     ["COMMENTS", clean(data.comments) || "—"],
   ];
 

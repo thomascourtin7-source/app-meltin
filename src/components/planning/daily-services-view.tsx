@@ -126,6 +126,7 @@ type ServiceReportRow = {
   vip_lounge: boolean | null;
   boarding_end_of_service: string | null;
   transit_bags: string | null;
+  bags_status: string | null;
   end_of_service: string | null;
   place_end_of_service: string | null;
   comments: string | null;

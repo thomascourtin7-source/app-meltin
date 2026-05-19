@@ -42,6 +42,7 @@ alter table public.service_reports
   add column if not exists vip_lounge boolean,
   add column if not exists boarding_end_of_service text,
   add column if not exists transit_bags text,
+  add column if not exists bags_status text,
   add column if not exists is_pec boolean not null default false,
   add column if not exists completed_at timestamptz,
   add column if not exists photo_url text;

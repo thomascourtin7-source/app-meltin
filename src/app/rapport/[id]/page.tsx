@@ -40,6 +40,10 @@ import {
   postgresTimeFromTimeInput,
   timeToTimeInputValue,
 } from "@/lib/reports/report-time";
+import {
+  readBagsStatusFromReport,
+  TRANSIT_BAGS_STATUS_OPTIONS,
+} from "@/lib/reports/transit-bags-status";
 
 type PlanningServicesPayload = {
   rows: DailyServiceRow[];
@@ -84,6 +88,7 @@ type ServiceReportRow = {
   vip_lounge: boolean | null;
   boarding_end_of_service: string | null;
   transit_bags: string | null;
+  bags_status: string | null;
   is_pec: boolean | null;
   completed_at: string | null;
   photo_url: string | null;
@@ -243,6 +248,7 @@ export default function RapportServicePage() {
   const [immigrationSecuritySpeed, setImmigrationSecuritySpeed] =
     useState<string>("");
   const [comments, setComments] = useState<string>("");
+  const [bagsStatus, setBagsStatus] = useState<string>("");
   const [isEditingHours, setIsEditingHours] = useState(false);
   const [meetingTimeEdit, setMeetingTimeEdit] = useState("");
   const [endOfServiceEdit, setEndOfServiceEdit] = useState("");
@@ -257,6 +263,7 @@ export default function RapportServicePage() {
     setImmigrationSpeed("");
     setImmigrationSecuritySpeed("");
     setComments("");
+    setBagsStatus("");
     setIsEditingHours(false);
     setMeetingTimeEdit("");
     setEndOfServiceEdit("");
@@ -288,6 +295,7 @@ export default function RapportServicePage() {
     setImmigrationSpeed(existingReport.immigration_speed ?? "");
     setImmigrationSecuritySpeed(existingReport.immigration_security_speed ?? "");
     setComments(existingReport.comments ?? "");
+    setBagsStatus(readBagsStatusFromReport(existingReport));
     setMeetingTimeEdit(timeToTimeInputValue(existingReport.meeting_time));
     setEndOfServiceEdit(timeToTimeInputValue(existingReport.end_of_service));
   }, [existingReport, isSubmitting]);
@@ -312,6 +320,10 @@ export default function RapportServicePage() {
     }
     if (!serviceRow) {
       setSubmitError("Service introuvable pour ce rapport.");
+      return;
+    }
+    if (reportKind === "transit" && !bagsStatus.trim()) {
+      setSubmitError("Veuillez sélectionner le statut bagages (Bagages).");
       return;
     }
 
@@ -370,6 +382,7 @@ export default function RapportServicePage() {
         vip_lounge: null,
         boarding_end_of_service: null,
         transit_bags: null,
+        bags_status: reportKind === "transit" ? bagsStatus.trim() : null,
         place_end_of_service: null,
       };
 
@@ -421,6 +434,10 @@ export default function RapportServicePage() {
     () => Array.from({ length: 10 }, (_, i) => i + 1),
     []
   );
+
+  const transitBagsMissing = reportKind === "transit" && !bagsStatus.trim();
+  const endDisabled =
+    isSubmitting || planningLoading || !serviceRow || transitBagsMissing;
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6">
       <Card>
@@ -617,6 +634,39 @@ export default function RapportServicePage() {
               </div>
             )}
 
+            {reportKind === "transit" ? (
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>
+                  Bagages (Bags) <span className="text-destructive">*</span>
+                </Label>
+                <Select
+                  value={bagsStatus || undefined}
+                  onValueChange={(v) => {
+                    setBagsStatus(v ?? "");
+                    if (v) {
+                      setSubmitError(null);
+                      setSubmitRetryable(false);
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    className="w-full"
+                    aria-required
+                    aria-invalid={transitBagsMissing}
+                  >
+                    <SelectValue placeholder="Choisir le statut bagages…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TRANSIT_BAGS_STATUS_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+
             <div className="space-y-1.5 sm:col-span-2">
               <Label>COMMENTS</Label>
               <Textarea
@@ -650,7 +700,7 @@ export default function RapportServicePage() {
             <Button
               type="button"
               onClick={handleEnd}
-              disabled={isSubmitting || planningLoading || !serviceRow}
+              disabled={endDisabled}
             >
               {isSubmitting ? "Enregistrement…" : "END"}
             </Button>
