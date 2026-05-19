@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { resolveRequestUrl } from "@/lib/http/resolve-request-url";
+import {
+  applyPecFieldsToServiceReportPayload,
+  resolvePecStatusFromBody,
+} from "@/lib/reports/report-pec-payload";
 import { isValidBagsStatus } from "@/lib/reports/transit-bags-status";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -44,6 +48,7 @@ type ServiceReportRow = {
   transit_bags: string | null;
   bags_status: string | null;
   is_pec: boolean | null;
+  pec_status: string | null;
   completed_at: string | null;
   photo_url: string | null;
 };
@@ -140,7 +145,7 @@ export async function POST(request: Request) {
     }
   }
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     ...b,
     spreadsheet_id: spreadsheetId,
     service_id: serviceId,
@@ -152,6 +157,14 @@ export async function POST(request: Request) {
           : null
         : null,
   };
+
+  const pecStatus = resolvePecStatusFromBody(b);
+  if (pecStatus !== null) {
+    applyPecFieldsToServiceReportPayload(payload, {
+      pecStatus,
+      reportKind,
+    });
+  }
 
   const { data, error: upErr } = await supabase
     .from("service_reports")

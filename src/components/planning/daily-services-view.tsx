@@ -79,6 +79,11 @@ import {
 } from "@/lib/reports/service-report-pdf";
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
 import { formatLocalTimeHHMMSS } from "@/lib/reports/report-time";
+import {
+  nextPecStatus,
+  pecStatusButtonLabel,
+  type PecStatus,
+} from "@/lib/planning/pec-status";
 import { detectServiceReportKind } from "@/lib/planning/service-kind";
 import {
   SERVICE_REPORTS_SWR_KEY_0,
@@ -481,11 +486,11 @@ type ServiceBlockProps = {
   hasTimeConflict?: boolean;
   showConflictUi?: boolean;
   isReportCompleted: boolean;
-  isPec: boolean;
+  pecStatus: PecStatus;
   hasPhoto: boolean;
   /** Miniature après prise de vue (image déjà redressée côté client). */
   servicePhotoPreviewUrl?: string | null;
-  onTogglePec: (opts: { serviceId: string; next: boolean }) => Promise<void>;
+  onCyclePecStatus: (opts: { serviceId: string }) => Promise<void>;
   onCapturePhoto: (opts: {
     serviceId: string;
     row: DailyServiceRow;
@@ -520,7 +525,7 @@ function serviceBlockMemoAreEqual(
   if (prev.hasTimeConflict !== next.hasTimeConflict) return false;
   if (prev.showConflictUi !== next.showConflictUi) return false;
   if (prev.isReportCompleted !== next.isReportCompleted) return false;
-  if (prev.isPec !== next.isPec) return false;
+  if (prev.pecStatus !== next.pecStatus) return false;
   if (prev.hasPhoto !== next.hasPhoto) return false;
   if (prev.servicePhotoPreviewUrl !== next.servicePhotoPreviewUrl) return false;
   if (prev.showUnassignedTodayAlert !== next.showUnassignedTodayAlert) return false;
@@ -550,10 +555,10 @@ function ServiceBlockInner({
   hasTimeConflict = false,
   showConflictUi = false,
   isReportCompleted,
-  isPec,
+  pecStatus,
   hasPhoto,
   servicePhotoPreviewUrl = null,
-  onTogglePec,
+  onCyclePecStatus,
   onCapturePhoto,
   onOpenReportForm,
   onDownloadReportPdf,
@@ -1190,7 +1195,11 @@ function ServiceBlockInner({
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-white">
             <PlanningPhoneRichText text={row.client.trim() || "—"} tone="inherit" />
-            {isPec ? " 🟠" : ""}
+            {pecStatus === "pec"
+              ? " 🟢"
+              : pecStatus === "en_place"
+                ? " 🟠"
+                : ""}
           </h2>
           {showDepartureEtaControl ? (
             <DepartureEtaButton
@@ -1280,43 +1289,49 @@ function ServiceBlockInner({
             </span>
             <PlanningPhoneRichText text={typeLine || "—"} tone="inherit" />
             <span className="relative inline-flex items-center">
-              <label
+              <button
+                type="button"
+                disabled={!canAction}
+                aria-pressed={pecStatus !== "vide"}
+                aria-label={`Statut PEC : ${pecStatus === "vide" ? "vide" : pecStatus === "en_place" ? "en place" : "PEC"}`}
                 className={cn(
-                  "inline-flex items-center gap-2 text-xs font-medium text-slate-200",
-                  !canAction && "opacity-45"
+                  "inline-flex min-h-8 min-w-[5.5rem] items-center justify-center rounded-md border px-2.5 py-1 text-xs font-bold uppercase tracking-wide transition-colors",
+                  pecStatus === "vide" &&
+                    "border-slate-500/80 bg-slate-800/40 text-slate-300 hover:bg-slate-700/50",
+                  pecStatus === "en_place" &&
+                    "border-amber-400 bg-amber-500 text-amber-950 shadow-sm hover:bg-amber-400",
+                  pecStatus === "pec" &&
+                    "border-emerald-500 bg-emerald-600 text-white shadow-sm hover:bg-emerald-500",
+                  !canAction && "cursor-not-allowed opacity-45"
                 )}
                 title={
                   !canAction && hasNamedAssignee
                     ? "Réservé à l’agent assigné à ce service"
-                    : undefined
+                    : "Cliquer pour changer : vide → EN PLACE → PEC → vide"
                 }
-              >
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-orange-500 disabled:opacity-70"
-                  checked={Boolean(isPec)}
-                  disabled={!canAction}
-                  onChange={(e) => {
-                    const next = e.target.checked;
-                    if (!canAction) {
-                      showLockedHint();
-                      return;
+                onClick={() => {
+                  if (!canAction) {
+                    showLockedHint();
+                    return;
+                  }
+                  const next = nextPecStatus(pecStatus);
+                  if (next === "en_place" || next === "pec") {
+                    ensureSelfAssignedIfUnassigned();
+                  }
+                  onCyclePecStatus({ serviceId: reportServiceId }).catch(
+                    (err) => {
+                      console.error(err);
+                      window.alert(
+                        err instanceof Error
+                          ? err.message
+                          : "Mise à jour PEC impossible."
+                      );
                     }
-                    if (next) ensureSelfAssignedIfUnassigned();
-                    onTogglePec({ serviceId: reportServiceId, next }).catch(
-                      (err) => {
-                        console.error(err);
-                        window.alert(
-                          err instanceof Error
-                            ? err.message
-                            : "Mise à jour PEC impossible."
-                        );
-                      }
-                    );
-                  }}
-                />
-                PEC
-              </label>
+                  );
+                }}
+              >
+                {pecStatusButtonLabel(pecStatus)}
+              </button>
               {!canAction && hasNamedAssignee ? (
                 <button
                   type="button"
@@ -1443,9 +1458,24 @@ async function fetchReportExistence(opts: {
         : "Erreur service reports.";
     throw new Error(msg);
   }
-  const parsed = data as ReportsData & { photoUrlByServiceId?: unknown };
+  const parsed = data as ReportsData & {
+    photoUrlByServiceId?: unknown;
+    pecStatusByServiceId?: unknown;
+  };
   if (!parsed.photoUrlByServiceId || typeof parsed.photoUrlByServiceId !== "object") {
     parsed.photoUrlByServiceId = {};
+  }
+  if (
+    !parsed.pecStatusByServiceId ||
+    typeof parsed.pecStatusByServiceId !== "object"
+  ) {
+    parsed.pecStatusByServiceId = {};
+  }
+  for (const id of opts.serviceIds) {
+    const status = (parsed.pecStatusByServiceId as Record<string, PecStatus>)[id];
+    if (status === "vide" || status === "en_place" || status === "pec") continue;
+    (parsed.pecStatusByServiceId as Record<string, PecStatus>)[id] =
+      parsed.isPecByServiceId?.[id] ? "pec" : "vide";
   }
   return parsed as ReportsData;
 }
@@ -2157,6 +2187,7 @@ export function DailyServicesView() {
 
   const isCompletedByServiceId = reportExistence?.isCompletedByServiceId ?? {};
   const isPecByServiceId = reportExistence?.isPecByServiceId ?? {};
+  const pecStatusByServiceId = reportExistence?.pecStatusByServiceId ?? {};
   const hasPhotoByServiceId = reportExistence?.hasPhotoByServiceId ?? {};
   const photoUrlByServiceId = reportExistence?.photoUrlByServiceId ?? {};
 
@@ -2267,41 +2298,44 @@ export function DailyServicesView() {
     ]
   );
 
-  const togglePec = useCallback(
-    async (opts: { serviceId: string; next: boolean; row: DailyServiceRow }) => {
+  const cyclePecStatus = useCallback(
+    async (opts: { serviceId: string; row: DailyServiceRow }) => {
       const kind = detectServiceReportKind(opts.row.type);
+      const current: PecStatus = pecStatusByServiceId[opts.serviceId] ?? "vide";
+      const next = nextPecStatus(current);
+
       const optimistic = {
         ...(reportExistence ?? {
           hasReport: {},
           isPecByServiceId: {},
+          pecStatusByServiceId: {},
           isCompletedByServiceId: {},
           hasPhotoByServiceId: {},
           photoUrlByServiceId: {},
         }),
+        pecStatusByServiceId: {
+          ...(reportExistence?.pecStatusByServiceId ?? {}),
+          [opts.serviceId]: next,
+        },
         isPecByServiceId: {
           ...(reportExistence?.isPecByServiceId ?? {}),
-          [opts.serviceId]: opts.next,
+          [opts.serviceId]: next === "pec",
         },
       };
       void mutateReports(optimistic, { revalidate: false });
 
-      const body: Record<string, unknown> = {
-        spreadsheet_id: spreadsheetId,
-        service_id: opts.serviceId,
-        service_date: opts.row.dateIso,
-        service_client: opts.row.client,
-        service_type: opts.row.type,
-        report_kind: kind,
-        is_pec: opts.next,
-      };
-      if (kind === "departure") {
-        body.meeting_time = opts.next ? formatLocalTimeHHMMSS() : null;
-      }
-
       const res = await fetch("/api/service-reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          spreadsheet_id: spreadsheetId,
+          service_id: opts.serviceId,
+          service_date: opts.row.dateIso,
+          service_client: opts.row.client,
+          service_type: opts.row.type,
+          report_kind: kind,
+          pec_status: next,
+        }),
       });
       const json = (await res.json()) as { report?: unknown; error?: string };
       if (!res.ok) {
@@ -2310,7 +2344,13 @@ export function DailyServicesView() {
       }
       void mutateReports();
     },
-    [detectServiceReportKind, mutateReports, reportExistence, spreadsheetId]
+    [
+      detectServiceReportKind,
+      mutateReports,
+      pecStatusByServiceId,
+      reportExistence,
+      spreadsheetId,
+    ]
   );
 
   const capturePhoto = useCallback(
@@ -2341,6 +2381,7 @@ export function DailyServicesView() {
         ...(reportExistence ?? {
           hasReport: {},
           isPecByServiceId: {},
+          pecStatusByServiceId: {},
           isCompletedByServiceId: {},
           hasPhotoByServiceId: {},
           photoUrlByServiceId: {},
@@ -2464,6 +2505,7 @@ export function DailyServicesView() {
       const base = reportExistence ?? {
         hasReport: {},
         isPecByServiceId: {},
+        pecStatusByServiceId: {},
         isCompletedByServiceId: {},
         hasPhotoByServiceId: {},
         photoUrlByServiceId: {},
@@ -2472,6 +2514,10 @@ export function DailyServicesView() {
         ...base,
         hasReport: { ...base.hasReport, [opts.serviceId]: false },
         isPecByServiceId: { ...base.isPecByServiceId, [opts.serviceId]: false },
+        pecStatusByServiceId: {
+          ...base.pecStatusByServiceId,
+          [opts.serviceId]: "vide",
+        },
         isCompletedByServiceId: {
           ...base.isCompletedByServiceId,
           [opts.serviceId]: false,
@@ -3057,13 +3103,13 @@ export function DailyServicesView() {
                   hasTimeConflict={conflictRowKeys.has(rowKey)}
                   showConflictUi={prepModeActive}
                   isReportCompleted={Boolean(isCompletedByServiceId[reportSid])}
-                  isPec={Boolean(isPecByServiceId[reportSid])}
+                  pecStatus={pecStatusByServiceId[reportSid] ?? "vide"}
                   hasPhoto={Boolean(hasPhotoByServiceId[reportSid])}
                   servicePhotoPreviewUrl={
                     photoUrlByServiceId[reportSid] ?? null
                   }
-                  onTogglePec={async ({ serviceId, next }) =>
-                    togglePec({ serviceId, next, row })
+                  onCyclePecStatus={async ({ serviceId }) =>
+                    cyclePecStatus({ serviceId, row })
                   }
                   onCapturePhoto={async ({ serviceId, row: r, file }) =>
                     capturePhoto({ serviceId, row: r, file })

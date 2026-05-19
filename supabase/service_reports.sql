@@ -44,6 +44,7 @@ alter table public.service_reports
   add column if not exists transit_bags text,
   add column if not exists bags_status text,
   add column if not exists is_pec boolean not null default false,
+  add column if not exists pec_status text,
   add column if not exists completed_at timestamptz,
   add column if not exists photo_url text;
 

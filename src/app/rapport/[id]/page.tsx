@@ -37,6 +37,7 @@ import {
   postgresTimeFromTimeInput,
   timeToTimeInputValue,
 } from "@/lib/reports/report-time";
+import { pecStatusFromStored, pecStatusToIsPec } from "@/lib/planning/pec-status";
 import {
   readBagsStatusFromReport,
   TRANSIT_BAGS_STATUS_OPTIONS,
@@ -87,6 +88,7 @@ type ServiceReportRow = {
   transit_bags: string | null;
   bags_status: string | null;
   is_pec: boolean | null;
+  pec_status: string | null;
   completed_at: string | null;
   photo_url: string | null;
 };
@@ -389,7 +391,8 @@ export default function RapportServicePage() {
         meeting_time,
         end_of_service,
         photo_url: latest?.photo_url ?? null,
-        is_pec: typeof latest?.is_pec === "boolean" ? latest.is_pec : false,
+        pec_status: latest ? pecStatusFromStored(latest) : "vide",
+        is_pec: latest ? pecStatusToIsPec(pecStatusFromStored(latest)) : false,
         pax,
         comments: comments || null,
         immigration_speed:

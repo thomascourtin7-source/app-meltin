@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { pecStatusFromStored, pecStatusToIsPec } from "@/lib/planning/pec-status";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
 
   const { data, error } = await supabase
     .from("service_reports")
-    .select("service_id,is_pec,completed_at,photo_url")
+    .select("service_id,is_pec,pec_status,completed_at,photo_url")
     .eq("spreadsheet_id", spreadsheetId)
     .in("service_id", serviceIds);
 
@@ -55,22 +56,27 @@ export async function POST(request: Request) {
 
   const existing = new Set<string>();
   const isPecByServiceId: Record<string, boolean> = {};
+  const pecStatusByServiceId: Record<string, "vide" | "en_place" | "pec"> = {};
   const isCompletedByServiceId: Record<string, boolean> = {};
   const hasPhotoByServiceId: Record<string, boolean> = {};
   const photoUrlByServiceId: Record<string, string | null> = {};
-  for (const id of serviceIds) isPecByServiceId[id] = false;
+  for (const id of serviceIds) {
+    isPecByServiceId[id] = false;
+    pecStatusByServiceId[id] = "vide";
+  }
   for (const id of serviceIds) isCompletedByServiceId[id] = false;
   for (const id of serviceIds) hasPhotoByServiceId[id] = false;
   for (const id of serviceIds) photoUrlByServiceId[id] = null;
 
   for (const row of data ?? []) {
     const sid = (row as { service_id?: unknown }).service_id;
-    const isPec = (row as { is_pec?: unknown }).is_pec;
     const completedAt = (row as { completed_at?: unknown }).completed_at;
     const photoUrl = (row as { photo_url?: unknown }).photo_url;
     if (typeof sid !== "string") continue;
     existing.add(sid);
-    if (typeof isPec === "boolean") isPecByServiceId[sid] = isPec;
+    const pecStatus = pecStatusFromStored(row as { pec_status?: string; is_pec?: boolean });
+    pecStatusByServiceId[sid] = pecStatus;
+    isPecByServiceId[sid] = pecStatusToIsPec(pecStatus);
     // Rapport « terminé » côté planning (PDF client, masquage ETA) : `completed_at` renseigné.
     // Si une colonne `is_completed` est ajoutée plus tard, l’OR ici avec la même sémantique.
     if (typeof completedAt === "string" && completedAt.trim()) {
@@ -88,6 +94,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     hasReport,
     isPecByServiceId,
+    pecStatusByServiceId,
     isCompletedByServiceId,
     hasPhotoByServiceId,
     photoUrlByServiceId,

@@ -1,3 +1,5 @@
+import type { PecStatus } from "@/lib/planning/pec-status";
+
 /**
  * Clé SWR partagée avec `DailyServicesView` pour les statuts rapports (PEC, complété, photo…).
  */
@@ -6,6 +8,7 @@ export const SERVICE_REPORTS_SWR_KEY_0 = "serviceReports" as const;
 export type ServiceReportsSwrBundle = {
   hasReport: Record<string, boolean>;
   isPecByServiceId: Record<string, boolean>;
+  pecStatusByServiceId: Record<string, PecStatus>;
   isCompletedByServiceId: Record<string, boolean>;
   hasPhotoByServiceId: Record<string, boolean>;
   photoUrlByServiceId: Record<string, string | null>;
@@ -55,6 +58,18 @@ export function patchServiceReportsSwCaches(
           ...current.isCompletedByServiceId,
           [serviceId]: isCompleted,
         },
+        ...(isCompleted
+          ? {}
+          : {
+              pecStatusByServiceId: {
+                ...current.pecStatusByServiceId,
+                [serviceId]: "vide" as const,
+              },
+              isPecByServiceId: {
+                ...current.isPecByServiceId,
+                [serviceId]: false,
+              },
+            }),
       };
     },
     { revalidate: false }
