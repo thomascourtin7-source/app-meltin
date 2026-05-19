@@ -66,9 +66,13 @@ async function tryFetchLogoDataUrl(): Promise<string | null> {
   }
 }
 
+const IMAGE_FETCH_TIMEOUT_MS = 8_000;
+
 async function tryFetchImageDataUrl(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
     const blob = await res.blob();
     const dataUrl: string = await new Promise((resolve, reject) => {

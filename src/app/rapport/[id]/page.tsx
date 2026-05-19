@@ -26,9 +26,6 @@ import {
   type ServiceReportKind,
 } from "@/lib/planning/service-kind";
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
-import {
-  assigneeSlugToNotifyLabel,
-} from "@/lib/planning/planning-team";
 import { patchServiceReportsSwCaches } from "@/lib/planning/service-reports-swr";
 import {
   defaultReportFilename,
@@ -136,6 +133,45 @@ function classifySubmitError(error: unknown): {
   const message =
     error instanceof Error ? error.message : "Erreur inconnue lors de l’envoi.";
   return { message, retryable: false };
+}
+
+const REPORT_PDF_MAX_WAIT_MS = 4_000;
+
+async function tryDownloadReportPdf(
+  saved: ServiceReportRow,
+  reportKind: ServiceReportKind
+): Promise<void> {
+  const pdfTask = (async () => {
+    const doc = await generateServiceReportPdf(
+      serviceReportSnapshotToPdfData({
+        row: saved,
+        reportKind,
+        title: "Rapport de service",
+      })
+    );
+    doc.save(
+      defaultReportFilename({
+        serviceClient: saved.service_client,
+        serviceDateIso: saved.service_date,
+      })
+    );
+  })();
+
+  await Promise.race([
+    pdfTask,
+    new Promise<void>((resolve) => {
+      window.setTimeout(resolve, REPORT_PDF_MAX_WAIT_MS);
+    }),
+  ]);
+}
+
+function leaveReportPageForPlanning(): void {
+  try {
+    sessionStorage.setItem("meltin_service_report_saved_flash", "1");
+  } catch {
+    /* ignore */
+  }
+  window.location.assign("/planning");
 }
 
 async function fetchReportSnapshot(
@@ -255,6 +291,7 @@ export default function RapportServicePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitRetryable, setSubmitRetryable] = useState(false);
+  const [isLeavingPage, setIsLeavingPage] = useState(false);
   const submitLockRef = useRef(false);
   const redirectScheduledRef = useRef(false);
 
@@ -271,22 +308,12 @@ export default function RapportServicePage() {
     setSubmitRetryable(false);
   }, []);
 
-  const redirectToPlanning = useCallback(
-    (dateKey: string) => {
-      if (redirectScheduledRef.current) return;
-      redirectScheduledRef.current = true;
-      try {
-        sessionStorage.setItem("meltin_service_report_saved_flash", "1");
-      } catch {
-        /* ignore */
-      }
-      const path = dateKey
-        ? `/planning?date=${encodeURIComponent(dateKey)}`
-        : "/planning";
-      router.replace(path);
-    },
-    [router]
-  );
+  const redirectToPlanning = useCallback(() => {
+    if (redirectScheduledRef.current) return;
+    redirectScheduledRef.current = true;
+    setIsLeavingPage(true);
+    window.setTimeout(() => leaveReportPageForPlanning(), 0);
+  }, []);
 
   useEffect(() => {
     if (isSubmitting || redirectScheduledRef.current) return;
@@ -388,45 +415,34 @@ export default function RapportServicePage() {
 
       const saved = await persistCompletedReport(payload);
 
-      if (spreadsheetId && dateKeyForPlanning) {
-        patchServiceReportsSwCaches(swrMutate, {
-          spreadsheetId,
-          dateKey: dateKeyForPlanning,
-          serviceId,
-          isCompleted: true,
-        });
+      try {
+        if (spreadsheetId && dateKeyForPlanning) {
+          patchServiceReportsSwCaches(swrMutate, {
+            spreadsheetId,
+            dateKey: dateKeyForPlanning,
+            serviceId,
+            isCompleted: true,
+          });
+        }
+      } catch (cacheError) {
+        console.warn("[rapport] Mise à jour cache planning ignorée", cacheError);
       }
 
-      resetReportFormState();
-
       try {
-        const doc = await generateServiceReportPdf(
-          serviceReportSnapshotToPdfData({
-            row: saved,
-            reportKind,
-            title: "Rapport de service",
-          })
-        );
-        doc.save(
-          defaultReportFilename({
-            serviceClient: saved.service_client,
-            serviceDateIso: saved.service_date,
-          })
-        );
+        await tryDownloadReportPdf(saved, reportKind);
       } catch (pdfError) {
         console.error("[rapport] PDF non généré après enregistrement", pdfError);
       }
 
-      redirectToPlanning(dateKeyForPlanning);
+      resetReportFormState();
+      redirectToPlanning();
     } catch (e) {
       const { message, retryable } = classifySubmitError(e);
       setSubmitError(message);
       setSubmitRetryable(retryable);
     } finally {
       submitLockRef.current = false;
-      if (!redirectScheduledRef.current) {
-        setIsSubmitting(false);
-      }
+      setIsSubmitting(false);
     }
   }
 
@@ -439,8 +455,22 @@ export default function RapportServicePage() {
   const endDisabled =
     isSubmitting || planningLoading || !serviceRow || transitBagsMissing;
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6">
-      <Card>
+    <div className="relative mx-auto w-full max-w-3xl px-4 py-6">
+      {isSubmitting || isLeavingPage ? (
+        <div
+          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-background/60"
+          aria-hidden
+        >
+          <p className="text-sm font-medium text-muted-foreground">
+            {isLeavingPage ? "Retour au planning…" : "Enregistrement…"}
+          </p>
+        </div>
+      ) : null}
+      <Card
+        className={
+          isSubmitting || isLeavingPage ? "pointer-events-none opacity-80" : undefined
+        }
+      >
         <CardHeader className="border-b">
           <CardTitle className="text-xl font-semibold tracking-tight">
             {pageTitle}
