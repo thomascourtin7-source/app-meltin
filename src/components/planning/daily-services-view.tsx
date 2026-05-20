@@ -78,6 +78,7 @@ import {
   serviceReportSnapshotToPdfData,
 } from "@/lib/reports/service-report-pdf";
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
+import { isPlanningSuperAdminSession } from "@/lib/planning/planning-super-admins";
 import { formatLocalTimeHHMMSS } from "@/lib/reports/report-time";
 import {
   nextPecStatus,
@@ -398,9 +399,11 @@ async function planningServicesFetcher(
 function DepartureEtaButton({
   etaHHMM,
   onCommit,
+  disabled = false,
 }: {
   etaHHMM: string | null;
   onCommit: (hhmm: string | null) => Promise<void>;
+  disabled?: boolean;
 }) {
   const lastSentRef = useRef<string>("");
   const etaPropRef = useRef<string | null>(etaHHMM);
@@ -412,6 +415,7 @@ function DepartureEtaButton({
 
   const persistEta = useCallback(
     async (raw: string) => {
+      if (disabled) return;
       const v = raw.trim();
       if (!v || !/^\d{2}:\d{2}$/.test(v)) return;
       if (lastSentRef.current === v) return;
@@ -422,7 +426,7 @@ function DepartureEtaButton({
         lastSentRef.current = etaPropRef.current?.trim() ?? "";
       }
     },
-    [onCommit]
+    [disabled, onCommit]
   );
 
   const hasEta = Boolean(etaHHMM?.trim());
@@ -431,10 +435,17 @@ function DepartureEtaButton({
     <div
       className={cn(
         "relative z-[60] box-border flex h-10 min-w-[11rem] shrink-0 touch-manipulation items-center justify-center gap-1 rounded-lg border-2 border-[#D4AF37] bg-[#D4AF37] px-2",
-        "shadow-md transition-[transform,box-shadow] focus-within:ring-2 focus-within:ring-[#D4AF37]/80"
+        "shadow-md transition-[transform,box-shadow] focus-within:ring-2 focus-within:ring-[#D4AF37]/80",
+        disabled && "pointer-events-none opacity-45"
       )}
       style={{ touchAction: "manipulation" }}
-      title={hasEta ? `ETA : ${etaHHMM}` : "Choisir l’heure ETA"}
+      title={
+        disabled
+          ? "Réservé à l’agent assigné à ce service"
+          : hasEta
+            ? `ETA : ${etaHHMM}`
+            : "Choisir l’heure ETA"
+      }
     >
       <span className="pointer-events-none shrink-0 text-base font-bold leading-none tracking-tight text-[#0a192f]">
         ETA&nbsp;:
@@ -452,6 +463,7 @@ function DepartureEtaButton({
           type="time"
           step={60}
           autoComplete="off"
+          disabled={disabled}
           aria-label="Heure d’arrivée estimée (ETA)"
           className={cn(
             "planning-eta-time-input relative z-[1] m-0 box-border h-8 min-w-[4.5rem] flex-1 cursor-pointer rounded bg-transparent px-0 text-center text-base font-bold tabular-nums leading-none outline-none focus-visible:outline-none",
@@ -476,6 +488,8 @@ type ServiceBlockProps = {
   rowKey: string;
   reportServiceId: string;
   assignees: string[];
+  /** Admin + (Javed, JAVED ORDI) : actions service même sans assignation personnelle. */
+  planningSuperAdminBypass: boolean;
   /** Profil courant (« S’enregistrer »), pour permissions photo / PEC. */
   meName: string;
   onAssigneesChange: (
@@ -520,6 +534,7 @@ function serviceBlockMemoAreEqual(
   if (prev.reportServiceId !== next.reportServiceId) return false;
   if (prev.serviceEtaHHMM !== next.serviceEtaHHMM) return false;
   if (prev.onEtaCommit !== next.onEtaCommit) return false;
+  if (prev.planningSuperAdminBypass !== next.planningSuperAdminBypass) return false;
   if (prev.meName !== next.meName) return false;
   if (prev.planningReadOnly !== next.planningReadOnly) return false;
   if (prev.hasTimeConflict !== next.hasTimeConflict) return false;
@@ -550,6 +565,7 @@ function ServiceBlockInner({
   rowKey,
   reportServiceId,
   assignees: assigneesRaw,
+  planningSuperAdminBypass,
   meName,
   onAssigneesChange,
   hasTimeConflict = false,
@@ -768,8 +784,8 @@ function ServiceBlockInner({
     [assignees]
   );
 
-  /** Photo / PEC : tout le monde suit cette règle — assigné(s) réel(s) uniquement ; si aucun, ouvert à tous. */
-  const canAction = useMemo(() => {
+  /** Photo / PEC / rapport / ETA départ : assigné(s) réel(s) ; si aucun, ouvert à tous. Admin + contourne. */
+  const canActionAsAssignee = useMemo(() => {
     if (!hasNamedAssignee) return true;
     const me = meName.trim();
     if (!me) return false;
@@ -778,6 +794,8 @@ function ServiceBlockInner({
       return label != null && planningDisplayNameEquals(label, me);
     });
   }, [assignees, hasNamedAssignee, meName]);
+
+  const canAction = planningSuperAdminBypass || canActionAsAssignee;
 
   const ensureSelfAssignedIfUnassigned = useCallback(() => {
     if (planningReadOnly) return;
@@ -1205,6 +1223,7 @@ function ServiceBlockInner({
             <DepartureEtaButton
               etaHHMM={serviceEtaHHMM}
               onCommit={handleDepartureEtaCommit}
+              disabled={!canAction}
             />
           ) : null}
         </div>
@@ -1409,7 +1428,11 @@ function ServiceBlockInner({
         <Button
           type="button"
           variant="outline"
-          className="w-full border-2 border-[#D4AF37] bg-[#D4AF37] text-[#0a192f] font-bold hover:bg-[#D4AF37]/90"
+          disabled={!canAction}
+          className={cn(
+            "w-full border-2 border-[#D4AF37] bg-[#D4AF37] text-[#0a192f] font-bold hover:bg-[#D4AF37]/90",
+            !canAction && "cursor-not-allowed opacity-45"
+          )}
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1417,6 +1440,10 @@ function ServiceBlockInner({
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (!canAction) {
+              showLockedHint();
+              return;
+            }
             void onOpenReportForm({ serviceId: reportServiceId }).catch((err) => {
               console.error(err);
               window.alert(
@@ -1547,6 +1574,10 @@ export function DailyServicesView() {
   const [meName, setMeName] = useState<string>("");
   const [meSlug, setMeSlug] = useState<string>("");
   const isPlanningAdmin = usePlanningAdminClient();
+  const planningSuperAdminBypass = useMemo(
+    () => isPlanningSuperAdminSession({ slug: meSlug, displayName: meName }),
+    [meSlug, meName]
+  );
 
   const [isLoading, setIsLoading] = useState(false);
   const planningValidatedBannerTimerRef = useRef<ReturnType<
@@ -3098,6 +3129,7 @@ export function DailyServicesView() {
                   showUnassignedTodayAlert={
                     isTodaySelected && isServiceUnassigned(assigneeList)
                   }
+                  planningSuperAdminBypass={planningSuperAdminBypass}
                   meName={meName}
                   onAssigneesChange={setAssigneesForRow}
                   hasTimeConflict={conflictRowKeys.has(rowKey)}
