@@ -6,7 +6,8 @@ create table if not exists public.services (
   spreadsheet_id text not null,
   service_id text not null,
 
-  is_pec boolean not null default false
+  is_pec boolean not null default false,
+  is_starred boolean not null default false
 );
 
 create unique index if not exists services_spreadsheet_service_uidx

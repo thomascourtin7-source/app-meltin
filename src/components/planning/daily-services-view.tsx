@@ -18,6 +18,7 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Star,
   UserCircle,
   X,
 } from "lucide-react";
@@ -101,6 +102,59 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { setPlanningAssigneesRealtimeChannel } from "@/lib/planning/planning-assignees-realtime";
 
 const FORCE_REFRESH_EVENT = "meltin_planning_force_refresh";
+
+type ServicesFlagsPayload = {
+  isStarredByServiceId: Record<string, boolean>;
+};
+
+function ClientVipStarControl({
+  isStarred,
+  interactive,
+  onToggle,
+}: {
+  isStarred: boolean;
+  interactive: boolean;
+  onToggle: () => void;
+}) {
+  const icon = (
+    <Star
+      aria-hidden
+      className="size-6 shrink-0"
+      fill={isStarred ? "#FFD700" : "transparent"}
+      stroke={isStarred ? "#FFD700" : "rgba(248, 250, 252, 0.45)"}
+      strokeWidth={2}
+    />
+  );
+
+  if (!interactive) {
+    return (
+      <span
+        className="pointer-events-none inline-flex shrink-0 select-none p-0.5"
+        title={isStarred ? "Client VIP" : "Client non marqué VIP"}
+        aria-label={isStarred ? "Client marqué VIP" : "Pas VIP"}
+      >
+        {icon}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="inline-flex shrink-0 rounded-md p-0.5 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FFD700]/50"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onToggle();
+      }}
+      title={isStarred ? "Retirer le marquage VIP" : "Marquer ce client VIP"}
+      aria-label={isStarred ? "Retirer VIP" : "Marquer VIP"}
+      aria-pressed={isStarred}
+    >
+      {icon}
+    </button>
+  );
+}
 
 type ServiceReportRow = {
   service_client: string;
@@ -490,6 +544,11 @@ type ServiceBlockProps = {
   assignees: string[];
   /** Admin + (Javed, JAVED ORDI) : actions service même sans assignation personnelle. */
   planningSuperAdminBypass: boolean;
+  /** Favori VIP (`services.is_starred`), visible par tous. */
+  isStarred: boolean;
+  /** Seuls Javed / JAVED ORDI peuvent basculer l’étoile. */
+  vipStarInteractive: boolean;
+  onToggleVipStar: (opts: { serviceId: string }) => Promise<void>;
   /** Profil courant (« S’enregistrer »), pour permissions photo / PEC. */
   meName: string;
   onAssigneesChange: (
@@ -535,6 +594,8 @@ function serviceBlockMemoAreEqual(
   if (prev.serviceEtaHHMM !== next.serviceEtaHHMM) return false;
   if (prev.onEtaCommit !== next.onEtaCommit) return false;
   if (prev.planningSuperAdminBypass !== next.planningSuperAdminBypass) return false;
+  if (prev.isStarred !== next.isStarred) return false;
+  if (prev.vipStarInteractive !== next.vipStarInteractive) return false;
   if (prev.meName !== next.meName) return false;
   if (prev.planningReadOnly !== next.planningReadOnly) return false;
   if (prev.hasTimeConflict !== next.hasTimeConflict) return false;
@@ -551,6 +612,7 @@ function serviceBlockMemoAreEqual(
   const prevAnchors = (prev.agentScrollAnchorIds ?? []).join("\u0001");
   const nextAnchors = (next.agentScrollAnchorIds ?? []).join("\u0001");
   if (prevAnchors !== nextAnchors) return false;
+  if (prev.onToggleVipStar !== next.onToggleVipStar) return false;
   return true;
 }
 
@@ -566,6 +628,9 @@ function ServiceBlockInner({
   reportServiceId,
   assignees: assigneesRaw,
   planningSuperAdminBypass,
+  isStarred,
+  vipStarInteractive,
+  onToggleVipStar,
   meName,
   onAssigneesChange,
   hasTimeConflict = false,
@@ -952,7 +1017,7 @@ function ServiceBlockInner({
         </div>
 
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-white">
               <PlanningPhoneRichText
                 text={row.client.trim() || "—"}
@@ -960,6 +1025,18 @@ function ServiceBlockInner({
               />{" "}
               ✅
             </h2>
+            <ClientVipStarControl
+              isStarred={isStarred}
+              interactive={vipStarInteractive}
+              onToggle={() => {
+                void onToggleVipStar({ serviceId: reportServiceId }).catch((err) => {
+                  console.error(err);
+                  window.alert(
+                    err instanceof Error ? err.message : "Mise à jour VIP impossible."
+                  );
+                });
+              }}
+            />
           </div>
           <Button
             type="button"
@@ -1210,15 +1287,29 @@ function ServiceBlockInner({
       </div>
 
       <div className="space-y-0">
-        <div className="mb-3 flex flex-wrap items-center gap-3">
-          <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-white">
-            <PlanningPhoneRichText text={row.client.trim() || "—"} tone="inherit" />
-            {pecStatus === "pec"
-              ? " 🟢"
-              : pecStatus === "en_place"
-                ? " 🟠"
-                : ""}
-          </h2>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <h2 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-white">
+              <PlanningPhoneRichText text={row.client.trim() || "—"} tone="inherit" />
+              {pecStatus === "pec"
+                ? " 🟢"
+                : pecStatus === "en_place"
+                  ? " 🟠"
+                  : ""}
+            </h2>
+            <ClientVipStarControl
+              isStarred={isStarred}
+              interactive={vipStarInteractive}
+              onToggle={() => {
+                void onToggleVipStar({ serviceId: reportServiceId }).catch((err) => {
+                  console.error(err);
+                  window.alert(
+                    err instanceof Error ? err.message : "Mise à jour VIP impossible."
+                  );
+                });
+              }}
+            />
+          </div>
           {showDepartureEtaControl ? (
             <DepartureEtaButton
               etaHHMM={serviceEtaHHMM}
@@ -1554,6 +1645,9 @@ export function DailyServicesView() {
     undefined
   );
   const mutateReportsRef = useRef<KeyedMutator<ReportsData> | undefined>(undefined);
+  const mutateServicesFlagsRef = useRef<
+    KeyedMutator<ServicesFlagsPayload> | undefined
+  >(undefined);
   const mutateAssignmentsRef = useRef<
     KeyedMutator<PlanningAssignmentsPayload> | undefined
   >(undefined);
@@ -1783,6 +1877,115 @@ export function DailyServicesView() {
     }
   );
   mutateAssignmentsRef.current = mutateAssignments;
+
+  const loadServicesFlagsBatch = useCallback(
+    async (
+      sheetId: string,
+      serviceIds: string[]
+    ): Promise<ServicesFlagsPayload> => {
+      const res = await fetch("/api/services/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spreadsheetId: sheetId, serviceIds }),
+      });
+      const json: unknown = await res.json();
+      if (!res.ok) {
+        const msg =
+          json &&
+          typeof json === "object" &&
+          "error" in json &&
+          typeof (json as { error?: unknown }).error === "string"
+            ? (json as { error: string }).error
+            : "Impossible de charger les favoris VIP.";
+        throw new Error(msg);
+      }
+      const p = json as { isStarredByServiceId?: unknown };
+      const isStarredByServiceId: Record<string, boolean> = {};
+      for (const id of serviceIds) {
+        isStarredByServiceId[id] = false;
+      }
+      if (p.isStarredByServiceId && typeof p.isStarredByServiceId === "object") {
+        for (const [k, v] of Object.entries(
+          p.isStarredByServiceId as Record<string, unknown>
+        )) {
+          isStarredByServiceId[k] = v === true;
+        }
+      }
+      return { isStarredByServiceId };
+    },
+    []
+  );
+
+  const servicesFlagsKey = useMemo(() => {
+    if (!spreadsheetId) return null;
+    if (serviceIdsForAssignments.length === 0) return null;
+    return [
+      "servicesFlags",
+      spreadsheetId,
+      selectedKey,
+      serviceIdsForAssignments.join("||"),
+    ] as const;
+  }, [selectedKey, serviceIdsForAssignments, spreadsheetId]);
+
+  const {
+    data: servicesFlagsData,
+    mutate: mutateServicesFlags,
+  } = useSWR<ServicesFlagsPayload>(
+    servicesFlagsKey,
+    () => loadServicesFlagsBatch(spreadsheetId, serviceIdsForAssignments),
+    {
+      refreshInterval: 0,
+      revalidateOnFocus: true,
+      keepPreviousData: true,
+    }
+  );
+  mutateServicesFlagsRef.current = mutateServicesFlags;
+
+  const toggleVipStar = useCallback(
+    async (opts: { serviceId: string }) => {
+      if (!planningSuperAdminBypass) return;
+      if (!spreadsheetId) {
+        throw new Error("spreadsheetId manquant.");
+      }
+      const sid = opts.serviceId;
+      const prev = servicesFlagsData?.isStarredByServiceId?.[sid] ?? false;
+      const next = !prev;
+      void mutateServicesFlags(
+        (cur) => ({
+          isStarredByServiceId: {
+            ...(cur?.isStarredByServiceId ?? {}),
+            [sid]: next,
+          },
+        }),
+        { revalidate: false }
+      );
+      try {
+        const res = await fetch("/api/services", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            spreadsheet_id: spreadsheetId,
+            service_id: sid,
+            is_starred: next,
+          }),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok) {
+          throw new Error(json?.error || "Sauvegarde VIP impossible.");
+        }
+        void mutateServicesFlags(undefined, { revalidate: true });
+      } catch (e) {
+        void mutateServicesFlags(undefined, { revalidate: true });
+        throw e;
+      }
+    },
+    [
+      mutateServicesFlags,
+      planningSuperAdminBypass,
+      servicesFlagsData?.isStarredByServiceId,
+      spreadsheetId,
+    ]
+  );
 
   /** Snapshot pour rollback ETA (sans second fetch SWR). */
   etaSnapshotRef.current = assignmentsData?.etaTimeByServiceId ?? {};
@@ -2191,6 +2394,7 @@ export function DailyServicesView() {
     void mutatePlanningRef.current?.(undefined, { revalidate: true });
     void mutateReportsRef.current?.(undefined, { revalidate: true });
     void mutateAssignmentsRef.current?.(undefined, { revalidate: true });
+    void mutateServicesFlagsRef.current?.(undefined, { revalidate: true });
   }, []);
 
   /** Refresh manuel (bouton dans le header). */
@@ -2221,6 +2425,7 @@ export function DailyServicesView() {
   const pecStatusByServiceId = reportExistence?.pecStatusByServiceId ?? {};
   const hasPhotoByServiceId = reportExistence?.hasPhotoByServiceId ?? {};
   const photoUrlByServiceId = reportExistence?.photoUrlByServiceId ?? {};
+  const isStarredByServiceId = servicesFlagsData?.isStarredByServiceId ?? {};
 
   const agentLabels = useMemo(() => {
     return displayAgents().map((o) => o.label);
@@ -3130,6 +3335,9 @@ export function DailyServicesView() {
                     isTodaySelected && isServiceUnassigned(assigneeList)
                   }
                   planningSuperAdminBypass={planningSuperAdminBypass}
+                  isStarred={Boolean(isStarredByServiceId[reportSid])}
+                  vipStarInteractive={planningSuperAdminBypass}
+                  onToggleVipStar={toggleVipStar}
                   meName={meName}
                   onAssigneesChange={setAssigneesForRow}
                   hasTimeConflict={conflictRowKeys.has(rowKey)}

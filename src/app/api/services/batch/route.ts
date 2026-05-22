@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
   const { data, error } = await supabase
     .from("services")
-    .select("service_id,is_pec")
+    .select("service_id,is_pec,is_starred")
     .eq("spreadsheet_id", spreadsheetId)
     .in("service_id", serviceIds);
 
@@ -56,17 +56,24 @@ export async function POST(request: Request) {
   }
 
   const isPecByServiceId: Record<string, boolean> = {};
+  const isStarredByServiceId: Record<string, boolean> = {};
   for (const id of serviceIds) {
     isPecByServiceId[id] = false;
+    isStarredByServiceId[id] = false;
   }
   for (const row of data ?? []) {
     const sid = (row as { service_id?: unknown }).service_id;
     const isPec = (row as { is_pec?: unknown }).is_pec;
-    if (typeof sid === "string" && typeof isPec === "boolean") {
+    const isStarred = (row as { is_starred?: unknown }).is_starred;
+    if (typeof sid !== "string") continue;
+    if (typeof isPec === "boolean") {
       isPecByServiceId[sid] = isPec;
+    }
+    if (typeof isStarred === "boolean") {
+      isStarredByServiceId[sid] = isStarred;
     }
   }
 
-  return NextResponse.json({ isPecByServiceId });
+  return NextResponse.json({ isPecByServiceId, isStarredByServiceId });
 }
 

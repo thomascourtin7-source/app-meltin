@@ -11,6 +11,7 @@ type ServiceRow = {
   service_id: string;
   is_pec: boolean;
   eta_time: string | null;
+  is_starred: boolean;
 };
 
 function supabaseOrError() {
@@ -90,7 +91,7 @@ export async function POST(request: Request) {
 
   const { data: existing } = await supabase
     .from("services")
-    .select("eta_time")
+    .select("eta_time,is_starred")
     .eq("spreadsheet_id", spreadsheetId)
     .eq("service_id", serviceId)
     .maybeSingle();
@@ -101,6 +102,85 @@ export async function POST(request: Request) {
     is_pec: isPec,
     eta_time:
       (existing as { eta_time?: string | null } | null)?.eta_time ?? null,
+    is_starred:
+      typeof (existing as { is_starred?: unknown } | null)?.is_starred ===
+      "boolean"
+        ? (existing as { is_starred: boolean }).is_starred
+        : false,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error: upErr } = await supabase
+    .from("services")
+    .upsert(payload, { onConflict: "spreadsheet_id,service_id" })
+    .select("*")
+    .single();
+
+  if (upErr) {
+    return NextResponse.json({ error: upErr.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ service: data as ServiceRow });
+}
+
+/** Mise à jour partielle (ex. étoile VIP) sans exiger `is_pec`. */
+export async function PATCH(request: Request) {
+  const { supabase, error } = supabaseOrError();
+  if (error) return error;
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Body JSON invalide." }, { status: 400 });
+  }
+
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Body JSON invalide." }, { status: 400 });
+  }
+
+  const spreadsheetId =
+    typeof (body as { spreadsheet_id?: unknown }).spreadsheet_id === "string"
+      ? ((body as { spreadsheet_id: string }).spreadsheet_id || "").trim()
+      : "";
+  const serviceId =
+    typeof (body as { service_id?: unknown }).service_id === "string"
+      ? ((body as { service_id: string }).service_id || "").trim()
+      : "";
+  const starredRaw = (body as { is_starred?: unknown }).is_starred;
+  const isStarred = typeof starredRaw === "boolean" ? starredRaw : null;
+
+  if (!spreadsheetId || !serviceId || isStarred === null) {
+    return NextResponse.json(
+      {
+        error:
+          "Champs requis manquants (spreadsheet_id, service_id, is_starred boolean).",
+      },
+      { status: 400 }
+    );
+  }
+
+  const { data: existing, error: readErr } = await supabase
+    .from("services")
+    .select("is_pec,eta_time,is_starred")
+    .eq("spreadsheet_id", spreadsheetId)
+    .eq("service_id", serviceId)
+    .maybeSingle();
+
+  if (readErr) {
+    return NextResponse.json({ error: readErr.message }, { status: 500 });
+  }
+
+  const ex = existing as
+    | { is_pec?: boolean; eta_time?: string | null; is_starred?: boolean }
+    | null;
+
+  const payload = {
+    spreadsheet_id: spreadsheetId,
+    service_id: serviceId,
+    is_pec: typeof ex?.is_pec === "boolean" ? ex.is_pec : false,
+    eta_time: ex?.eta_time ?? null,
+    is_starred: isStarred,
     updated_at: new Date().toISOString(),
   };
 
