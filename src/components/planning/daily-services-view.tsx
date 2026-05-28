@@ -2120,6 +2120,19 @@ export function DailyServicesView() {
     const cache = assigneesListCacheRef.current;
     const usedKeys = new Set<string>();
     const next: Record<string, string[]> = {};
+
+    /**
+     * Anti-contamination du filtre « Me » : les clés legacy (sans heure RDV)
+     * peuvent être partagées par plusieurs lignes (même client/vol/date).
+     * On ne les autorise comme repli que si elles désignent une SEULE ligne.
+     */
+    const lookupIdRefCount = new Map<string, number>();
+    for (const row of rows) {
+      for (const id of serviceLookupIdsFromRow(row)) {
+        lookupIdRefCount.set(id, (lookupIdRefCount.get(id) ?? 0) + 1);
+      }
+    }
+
     for (const row of rows) {
       const rowKey = stableServiceRowKey(row);
       usedKeys.add(rowKey);
@@ -2128,10 +2141,18 @@ export function DailyServicesView() {
       if (Object.prototype.hasOwnProperty.call(assigneesDraftByRowKey, rowKey)) {
         slugs = normalizeAssigneeListFromStored(assigneesDraftByRowKey[rowKey]);
       } else {
-        const lookupIds = serviceLookupIdsFromRow(row);
-        const fromDb = lookupIds
-          .map((id) => mapByServiceId[id])
-          .find((name) => typeof name === "string" && name.length > 0);
+        const preciseId = serviceReportIdFromRow(row);
+        const fromDb = serviceLookupIdsFromRow(row)
+          .map((id) => {
+            const name = mapByServiceId[id];
+            if (typeof name !== "string" || name.length === 0) return null;
+            // Clé précise (date+vol+RDV) : toujours fiable.
+            if (id === preciseId) return name;
+            // Clé legacy : seulement si elle ne référence qu’une ligne (non ambiguë).
+            if ((lookupIdRefCount.get(id) ?? 0) > 1) return null;
+            return name;
+          })
+          .find((name): name is string => typeof name === "string");
         if (fromDb) {
           slugs = parseAssigneeNameToSlugs(fromDb);
         } else {
