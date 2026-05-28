@@ -58,9 +58,12 @@ import {
   normalizeAssigneeStoredValue,
 } from "@/lib/planning/planning-team";
 import {
-  serviceUrgencyIdentityKey,
+  collectSnapshotIdentityKeys,
+  findRowForStoredIdentityKey,
+  rowKnownInIdentitySet,
   stableServiceRowKey,
 } from "@/lib/planning/service-row-keys";
+import { shouldPreserveExistingAssignee } from "@/lib/planning/planning-assignee-guard";
 import { isPlanningFinalizedForServiceDate } from "@/lib/planning/planning-finalized-storage";
 import { computeConflictRowKeys } from "@/lib/planning/time-conflicts";
 import {
@@ -204,7 +207,7 @@ type ServiceReportRow = {
 const DEFAULT_ASSIGNEE = DEFAULT_PLANNING_ASSIGNEE_SLUG;
 
 /** Snapshots des identités « vues » par jour (détection des nouvelles lignes). */
-const PLANNING_ROW_SNAPSHOT_KEY = "meltin_planning_row_snapshot_v1";
+const PLANNING_ROW_SNAPSHOT_KEY = "meltin_planning_row_snapshot_v2";
 
 type SnapshotStore = Record<string, Record<string, string[]>>;
 
@@ -2902,8 +2905,22 @@ export function DailyServicesView() {
               planningDisplayedRef.current?.rows ??
               planningPayload?.rows ??
               [];
-            const row = rows.find((r) => stableServiceRowKey(r) === keyTrim);
+            const row = findRowForStoredIdentityKey(rows, keyTrim);
             if (!row || !serviceReportIdFromRow(row)?.trim?.()) {
+              clearDraft();
+              return;
+            }
+
+            const lookupIds = serviceLookupIdsFromRow(row);
+            const existingFromDb = lookupIds
+              .map((id) => assignmentsData?.assigneesByServiceId?.[id])
+              .find((name) => typeof name === "string" && name.length > 0);
+            if (
+              shouldPreserveExistingAssignee({
+                existingAgentName: existingFromDb,
+                incomingSlugs: safe,
+              })
+            ) {
               clearDraft();
               return;
             }
@@ -2958,6 +2975,7 @@ export function DailyServicesView() {
                 serviceId: sidSavedForPost,
                 serviceDate: row.dateIso,
                 assigneeSlugs: safe,
+                lookupIds,
               }),
             });
 
@@ -2985,6 +3003,33 @@ export function DailyServicesView() {
                 rawText,
               });
               window.alert(msg);
+              clearDraft();
+              return;
+            }
+
+            let savePayload: {
+              preserved?: boolean;
+              assignment?: { agent_name?: string | null };
+            } = {};
+            try {
+              savePayload = (await res.json()) as typeof savePayload;
+            } catch {
+              /* corps vide */
+            }
+            if (savePayload.preserved) {
+              const kept = savePayload.assignment?.agent_name?.trim();
+              if (kept) {
+                void mutateAssignments(
+                  (prev) => ({
+                    assigneesByServiceId: {
+                      ...(prev?.assigneesByServiceId ?? {}),
+                      [sidSavedForPost]: kept,
+                    },
+                    etaTimeByServiceId: prev?.etaTimeByServiceId ?? {},
+                  }),
+                  { revalidate: false }
+                );
+              }
               clearDraft();
               return;
             }
@@ -3090,6 +3135,7 @@ export function DailyServicesView() {
     },
     [
       assignees,
+      assignmentsData?.assigneesByServiceId,
       mutateAssignments,
       planningPayload?.rows,
       selectedDate,
@@ -3108,45 +3154,58 @@ export function DailyServicesView() {
     const todayKey = normalizeCanonicalDateKey(formatLocalYmd(new Date()));
     if (normalizeCanonicalDateKey(selectedDate) !== todayKey) return;
 
-    const identityToStables = new Map<string, Set<string>>();
-    for (const row of rows) {
-      const id = serviceUrgencyIdentityKey(row);
-      const sk = stableServiceRowKey(row);
-      if (!identityToStables.has(id)) identityToStables.set(id, new Set());
-      identityToStables.get(id)!.add(sk);
-    }
-
-    const currentIdentities = [...identityToStables.keys()];
-
     const snapshots = loadSnapshotStore();
     const prev = snapshots[spreadsheetId]?.[todayKey] ?? [];
+    const prevSet = new Set(prev);
+
+    const mapByServiceId = assignmentsData?.assigneesByServiceId ?? {};
+
+    const mergedIdentityKeys = new Set<string>(prev);
+    for (const row of rows) {
+      for (const key of collectSnapshotIdentityKeys(row)) {
+        mergedIdentityKeys.add(key);
+      }
+    }
 
     if (prev.length === 0) {
       snapshots[spreadsheetId] = {
         ...(snapshots[spreadsheetId] ?? {}),
-        [todayKey]: currentIdentities,
+        [todayKey]: [...mergedIdentityKeys],
       };
       saveSnapshotStore(snapshots);
       return;
     }
 
-    const prevSet = new Set(prev);
-    const newIdentities = currentIdentities.filter((id) => !prevSet.has(id));
+    const genuinelyNewRows = rows.filter(
+      (row) => !rowKnownInIdentitySet(row, prevSet)
+    );
 
-    for (const id of newIdentities) {
-      for (const stableKey of identityToStables.get(id) ?? []) {
-        if (!isPlanningAdmin) continue;
-        const current = normalizeAssigneeListFromStored(assignees[stableKey]);
-        if (
-          current.every((s) => s === DEFAULT_PLANNING_ASSIGNEE_SLUG) &&
-          !current.some(isUrgentAssignee)
-        ) {
-          setAssigneesForRow(stableKey, [URGENT_ASSIGNEE]);
-        }
+    for (const row of genuinelyNewRows) {
+      if (!isPlanningAdmin) continue;
+      const stableKey = stableServiceRowKey(row);
+      const lookupIds = serviceLookupIdsFromRow(row);
+      const fromDb = lookupIds
+        .map((id) => mapByServiceId[id])
+        .find((name) => typeof name === "string" && name.length > 0);
+      if (
+        fromDb &&
+        shouldPreserveExistingAssignee({
+          existingAgentName: fromDb,
+          incomingSlugs: [URGENT_ASSIGNEE],
+        })
+      ) {
+        continue;
+      }
+      const current = normalizeAssigneeListFromStored(assignees[stableKey]);
+      if (
+        current.every((s) => s === DEFAULT_PLANNING_ASSIGNEE_SLUG) &&
+        !current.some(isUrgentAssignee)
+      ) {
+        setAssigneesForRow(stableKey, [URGENT_ASSIGNEE]);
       }
     }
 
-    const mergedIdentities = [...new Set([...prev, ...currentIdentities])];
+    const mergedIdentities = [...mergedIdentityKeys];
     snapshots[spreadsheetId] = {
       ...(snapshots[spreadsheetId] ?? {}),
       [todayKey]: mergedIdentities,
@@ -3155,6 +3214,7 @@ export function DailyServicesView() {
 
   }, [
     assignees,
+    assignmentsData?.assigneesByServiceId,
     planningPayload?.rows,
     planningPayload?.fetchedAt,
     isPlanningAdmin,

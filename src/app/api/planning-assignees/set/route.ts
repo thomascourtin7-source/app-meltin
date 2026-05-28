@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requirePlanningAdminBearer } from "@/lib/auth/planning-admin-server";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
+import { shouldPreserveExistingAssignee } from "@/lib/planning/planning-assignee-guard";
 import { serializeAssigneeSlugsToName } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -9,6 +10,8 @@ type Body = {
   serviceId?: unknown;
   serviceDate?: unknown;
   assigneeSlugs?: unknown;
+  /** Anciens `service_id` possibles (repli sans doublon). */
+  lookupIds?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -59,20 +62,74 @@ export async function POST(request: Request) {
     ? b.assigneeSlugs.filter((x): x is string => typeof x === "string")
     : [];
 
-  const assigneeName = serializeAssigneeSlugsToName(slugs);
+  const lookupIdsRaw = (b as Body).lookupIds;
+  const lookupIds = [
+    serviceId,
+    ...(Array.isArray(lookupIdsRaw)
+      ? lookupIdsRaw.filter((x): x is string => typeof x === "string")
+      : []),
+  ]
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const uniqueLookupIds = [...new Set(lookupIds)];
 
-  const { data: existingEta } = await supabase
-    .from("planning_assignments")
-    .select("eta_time")
-    .eq("service_id", serviceId)
-    .maybeSingle();
+  let existingAgentName: string | null = null;
+  let existingEta: string | null = null;
+  let matchedLegacyServiceId: string | null = null;
+
+  for (const id of uniqueLookupIds) {
+    const { data: row } = await supabase
+      .from("planning_assignments")
+      .select("agent_name,eta_time")
+      .eq("service_id", id)
+      .maybeSingle();
+    if (!row) continue;
+    const agent = (row as { agent_name?: string | null }).agent_name ?? null;
+    const eta = (row as { eta_time?: string | null }).eta_time ?? null;
+    if (eta && !existingEta) existingEta = eta;
+    if (agent?.trim()) {
+      existingAgentName = agent;
+      matchedLegacyServiceId = id;
+      if (shouldPreserveExistingAssignee({
+        existingAgentName: agent,
+        incomingSlugs: slugs,
+      })) {
+        break;
+      }
+    }
+  }
+
+  if (
+    shouldPreserveExistingAssignee({
+      existingAgentName,
+      incomingSlugs: slugs,
+    })
+  ) {
+    console.warn(
+      "[planning-assignees/set] assignation conservée (anti-effacement)",
+      {
+        serviceId,
+        matchedLegacyServiceId,
+      }
+    );
+    return NextResponse.json({
+      ok: true,
+      preserved: true,
+      assignment: {
+        service_id: serviceId,
+        agent_name: existingAgentName,
+        eta_time: existingEta,
+      },
+    });
+  }
+
+  const assigneeName = serializeAssigneeSlugsToName(slugs);
 
   const payload = {
     service_id: serviceId,
     service_date: serviceDate,
     agent_name: assigneeName,
-    eta_time:
-      (existingEta as { eta_time?: string | null } | null)?.eta_time ?? null,
+    eta_time: existingEta,
     updated_at: new Date().toISOString(),
   };
 

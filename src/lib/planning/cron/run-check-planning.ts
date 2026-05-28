@@ -20,7 +20,11 @@ import { notifyPlanningAssigneeSubscribers } from "@/lib/push/notify-planning-as
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { matchSheetAssigneeToTeamLabel } from "@/lib/planning/planning-team";
 import {
-  serviceUrgencyIdentityKey,
+  collectSnapshotIdentityKeys,
+  identityKeysEquivalent,
+  PLANNING_IDENTITY_ALGO_VERSION,
+  resolveCurrentStableKeyForStoredKey,
+  rowMatchesStoredIdentityKey,
   stableServiceRowKey,
 } from "@/lib/planning/service-row-keys";
 
@@ -75,6 +79,8 @@ type SnapshotV6 = {
    * Sert à filtrer les notifs “Rajout” au redémarrage / déploiement.
    */
   firstSeenAtByDate: Record<string, Record<string, string>>;
+  /** Incrémenté quand l’algo date+vol+RDV change (migration sans spam). */
+  identityVersion?: number;
 };
 
 function sha256Hex(s: string): string {
@@ -98,13 +104,26 @@ function buildIdentitiesByDate(
   for (const row of rows) {
     const dk = normalizeCanonicalDateKey(row.dateIso);
     if (!m[dk]) m[dk] = new Set();
-    m[dk].add(serviceUrgencyIdentityKey(row));
+    for (const key of collectSnapshotIdentityKeys(row)) {
+      m[dk].add(key);
+    }
   }
   const out: Record<string, string[]> = {};
   for (const [dk, set] of Object.entries(m)) {
     out[dk] = [...set].sort();
   }
   return out;
+}
+
+function prevHashesHasAlias(
+  prevHashes: Record<string, string>,
+  row: DailyServiceRow
+): boolean {
+  for (const prevKey of Object.keys(prevHashes)) {
+    if (rowMatchesStoredIdentityKey(row, prevKey)) return true;
+    if (identityKeysEquivalent(prevKey, stableServiceRowKey(row))) return true;
+  }
+  return false;
 }
 
 function hashGlobal(byDate: Record<string, Record<string, string>>): string {
@@ -304,6 +323,10 @@ function parseSnapshot(raw: unknown): ParsedSnapshot | null {
     o.firstSeenAtByDate !== null
       ? (o.firstSeenAtByDate as Record<string, Record<string, string>>)
       : {};
+  const identityVersion =
+    o.v === 6 && typeof o.identityVersion === "number"
+      ? o.identityVersion
+      : 1;
   return {
     isLegacyV3,
     isLegacyV4,
@@ -316,6 +339,7 @@ function parseSnapshot(raw: unknown): ParsedSnapshot | null {
       rowHashes,
       rowSummaries,
       firstSeenAtByDate,
+      identityVersion,
     },
   };
 }
@@ -336,6 +360,7 @@ function buildSnapshotV6(
     rowHashes,
     rowSummaries,
     firstSeenAtByDate,
+    identityVersion: PLANNING_IDENTITY_ALGO_VERSION,
   };
 }
 
@@ -656,19 +681,27 @@ export async function executePlanningCronCheck(
     const prevMap = prevFirstSeen[dk] ?? {};
     const prevRowHashes =
       prev && "rowHashes" in prev && prev.rowHashes ? (prev.rowHashes[dk] ?? {}) : {};
+    const dayRows = rows.filter(
+      (r) => normalizeCanonicalDateKey(r.dateIso) === dk
+    );
     for (const stableKey of Object.keys(map)) {
       const existing = prevMap[stableKey];
       if (existing) {
         firstSeenAtByDate[dk][stableKey] = existing;
         continue;
       }
-      // Migration / changement d’algo : si la clé existait déjà auparavant, la considérer “ancienne”.
+      const row =
+        dayRows.find((r) => stableServiceRowKey(r) === stableKey) ?? null;
       if (prevRowHashes && stableKey in prevRowHashes) {
         firstSeenAtByDate[dk][stableKey] =
           nowParis.minus({ hours: 1 }).toISO() ?? new Date(0).toISOString();
         continue;
       }
-      // Vrai nouveau service.
+      if (row && prevRowHashes && prevHashesHasAlias(prevRowHashes, row)) {
+        firstSeenAtByDate[dk][stableKey] =
+          nowParis.minus({ hours: 1 }).toISO() ?? new Date(0).toISOString();
+        continue;
+      }
       firstSeenAtByDate[dk][stableKey] =
         nowParis.toISO() ?? new Date().toISOString();
     }
@@ -741,6 +774,29 @@ export async function executePlanningCronCheck(
     };
   }
 
+  const prevIdentityVersion =
+    "identityVersion" in prev && typeof prev.identityVersion === "number"
+      ? prev.identityVersion
+      : 1;
+  if (prevIdentityVersion !== PLANNING_IDENTITY_ALGO_VERSION) {
+    await persistPlanningState(
+      admin,
+      spreadsheetId,
+      nextSnap,
+      `migration-identity-v${prevIdentityVersion}→v${PLANNING_IDENTITY_ALGO_VERSION}`
+    );
+    console.log(
+      `${LOG_PREFIX} migration algo identité sans notifications`,
+      { prevIdentityVersion, next: PLANNING_IDENTITY_ALGO_VERSION }
+    );
+    return {
+      ok: true,
+      migratedSnapshot: true,
+      globalHashChanged: true,
+      sent: emptySent,
+    };
+  }
+
   if (prev.globalHash === globalHash) {
     await persistPlanningState(
       admin,
@@ -783,6 +839,13 @@ export async function executePlanningCronCheck(
     const firstSeen = (firstSeenAtByDate?.[dk] ?? {}) as Record<string, string>;
     for (const stableKey of Object.keys(nextHashes)) {
       if (stableKey in prevHashes) continue;
+      const rowForKey =
+        rows.find(
+          (r) =>
+            normalizeCanonicalDateKey(r.dateIso) === dk &&
+            stableServiceRowKey(r) === stableKey
+        ) ?? null;
+      if (rowForKey && prevHashesHasAlias(prevHashes, rowForKey)) continue;
       const seenAt = firstSeen[stableKey] ?? "";
       if (!isRecentFirstSeen(seenAt, nowParis)) {
         // Redémarrage / resync : ne pas spammer pour les services déjà présents.
@@ -821,8 +884,16 @@ export async function executePlanningCronCheck(
       const prevLabel = labelFromSheetRaw(prevRaw);
       if (!prevLabel) continue;
 
-      const nextExists = stableKey in nextMap;
-      const nextRaw = nextExists ? (nextMap[stableKey] ?? "").trim() : "";
+      const resolvedKey = resolveCurrentStableKeyForStoredKey(
+        stableKey,
+        dateKey,
+        rows,
+        nextMap
+      );
+      const nextExists = resolvedKey != null;
+      const nextRaw = resolvedKey
+        ? (nextMap[resolvedKey] ?? "").trim()
+        : "";
       const nextLabel = nextRaw !== "" ? labelFromSheetRaw(nextRaw) : null;
       const stillSame =
         nextExists && nextLabel !== null && nextLabel === prevLabel;
@@ -902,7 +973,7 @@ export async function executePlanningCronCheck(
     if (!sheetRowAlarmCandidateRaw(nextRaw)) continue;
     if (sheetRowAlarmCandidateRaw(prevRaw)) continue;
 
-    const id = serviceUrgencyIdentityKey(row);
+    const id = stableServiceRowKey(row);
     const allowed = await canSendAlarmToday(spreadsheetId, id);
     if (!allowed) {
       console.log(`${LOG_PREFIX} alarme déjà envoyée aujourd’hui pour service`, id.slice(0, 60));
@@ -942,7 +1013,7 @@ export async function executePlanningCronCheck(
         const deltaMs = now.toMillis() - trigger.toMillis();
         if (deltaMs < 0 || deltaMs > REMINDER_WINDOW_MS) continue;
 
-        const identityKey = serviceUrgencyIdentityKey(row);
+        const identityKey = stableServiceRowKey(row);
         const reminderKind = `rdv1_${kind}_${leadMin}m`;
         const allowed = await canSendReminderToday(
           spreadsheetId,

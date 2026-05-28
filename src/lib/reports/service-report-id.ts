@@ -12,24 +12,19 @@ function normPart(v: unknown): string {
     .replace(/\s+/g, " ");
 }
 
-/**
- * Ancien `service_id` (date + type + client + vol) — conservé pour retrouver
- * les assignations / rapports déjà en base avant la clé date+vol+RDV.
- */
+/** Ancien `service_id` (date + type + client + vol). */
 export function legacyServiceReportIdFromRow(row: DailyServiceRow): string {
   const kind = detectServiceReportKind(row.type);
   const date = normalizeCanonicalDateKey(normPart(row.dateIso));
   return [date, kind, normPart(row.client), normPart(row.vol)].join("|");
 }
 
-/**
- * Identifiant Supabase d’une mission : date + vol + heure RDV (stable si la ligne bouge dans le Sheet).
- */
+/** Identifiant Supabase canonique : date + vol + RDV normalisés. */
 export function serviceReportIdFromRow(row: DailyServiceRow): string {
   return serviceMissionIdentityKey(row);
 }
 
-/** Tous les identifiants possibles pour une ligne (nouveau + anciens formats). */
+/** Tous les identifiants possibles pour charger / retrouver une mission en base. */
 export function serviceLookupIdsFromRow(row: DailyServiceRow): string[] {
   const ids = [
     serviceReportIdFromRow(row),
