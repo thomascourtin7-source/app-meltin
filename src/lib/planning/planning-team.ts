@@ -227,6 +227,32 @@ export function isServiceAssignedToSessionAgent(
   return list.some((entry) => entry === slug);
 }
 
+/** Libellés affichés dans la barre de filtre agent (JAVED ORDI / test). */
+export const PLANNING_AGENT_FILTER_BAR_LABELS = [
+  "Javed",
+  "Thomas",
+  "Simon",
+  "Karthik",
+  "Elias",
+  "Pravin",
+  "Deva",
+  "Kumar",
+] as const;
+
+/** Filtre planning : service assigné à l’agent (libellé affiché). */
+export function isServiceAssignedToAgentLabel(
+  assigneesRaw: unknown,
+  agentLabel: string
+): boolean {
+  const target = agentLabel.trim();
+  if (!target) return false;
+  const list = normalizeAssigneeListFromStored(assigneesRaw);
+  return list.some((slug) => {
+    const label = assigneeSlugToNotifyLabel(slug);
+    return label != null && planningDisplayNameEquals(label, target);
+  });
+}
+
 /**
  * Libellé pour notifications push (`user_name` en base) : même chaîne que le prénom chat.
  * Retourne null si non assigné ou urgence (pas de push nominatif).

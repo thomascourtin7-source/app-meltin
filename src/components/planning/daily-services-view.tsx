@@ -42,7 +42,9 @@ import {
   displayAgents,
   isPlanningOperationalAgentSlug,
   isPlanningSelectableAssigneeValue,
+  isServiceAssignedToAgentLabel,
   isServiceAssignedToSessionAgent,
+  PLANNING_AGENT_FILTER_BAR_LABELS,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
   PLANNING_URGENT_ASSIGNEE_SLUG,
   assigneeSlugFromNotifyLabel,
@@ -80,6 +82,7 @@ import {
 } from "@/lib/reports/service-report-pdf";
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
 import {
+  isPlanningAgentFilterBarSession,
   isPlanningSuperAdminSession,
   isPlanningVipStarEditorSession,
 } from "@/lib/planning/planning-super-admins";
@@ -1668,6 +1671,7 @@ export function DailyServicesView() {
   const datePickerRef = useRef<HTMLInputElement>(null);
   const [calendarPressed, setCalendarPressed] = useState(false);
   const [meOnly, setMeOnly] = useState(false);
+  const [agentFilterLabel, setAgentFilterLabel] = useState<string | null>(null);
   const [meName, setMeName] = useState<string>("");
   const [meSlug, setMeSlug] = useState<string>("");
   const isPlanningAdmin = usePlanningAdminClient();
@@ -1677,6 +1681,10 @@ export function DailyServicesView() {
   );
   const vipStarEditorSession = useMemo(
     () => isPlanningVipStarEditorSession({ slug: meSlug, displayName: meName }),
+    [meSlug, meName]
+  );
+  const showAgentFilterBar = useMemo(
+    () => isPlanningAgentFilterBarSession({ slug: meSlug, displayName: meName }),
     [meSlug, meName]
   );
 
@@ -1759,6 +1767,10 @@ export function DailyServicesView() {
   useEffect(() => {
     if ((!meName.trim() || !showMeFilter) && meOnly) setMeOnly(false);
   }, [meName, meOnly, showMeFilter]);
+
+  useEffect(() => {
+    if (!showAgentFilterBar && agentFilterLabel) setAgentFilterLabel(null);
+  }, [showAgentFilterBar, agentFilterLabel]);
 
   const swrKey = `/api/planning-services?date=${encodeURIComponent(
     normalizeCanonicalDateKey(selectedDate)
@@ -2160,6 +2172,14 @@ export function DailyServicesView() {
   /** Nouvelle date ⇒ nouvelle clé SWR : fetch implicite, sans `mutate()` forcé (évite doubles requêtes / flash UI). */
   const selectPlanningDate = useCallback((ymd: string) => {
     setSelectedDate(normalizeCanonicalDateKey(ymd));
+    setAgentFilterLabel(null);
+  }, []);
+
+  const handleAgentFilterChipClick = useCallback((label: string) => {
+    setMeOnly(false);
+    setAgentFilterLabel((current) =>
+      current != null && planningDisplayNameEquals(current, label) ? null : label
+    );
   }, []);
 
   /**
@@ -2302,13 +2322,22 @@ export function DailyServicesView() {
   }, [planningPayload?.rows, selectedKey]);
 
   const visibleRows = useMemo(() => {
-    if (!meOnly) return filtered;
-    if (!showMeFilter) return [];
-    return filtered.filter((row) => {
-      const rowKey = stableServiceRowKey(row);
-      return isServiceAssignedToSessionAgent(assignees[rowKey], meSlug);
-    });
-  }, [assignees, filtered, meOnly, meSlug, showMeFilter]);
+    if (meOnly) {
+      if (!showMeFilter) return [];
+      return filtered.filter((row) => {
+        const rowKey = stableServiceRowKey(row);
+        return isServiceAssignedToSessionAgent(assignees[rowKey], meSlug);
+      });
+    }
+    if (agentFilterLabel?.trim()) {
+      const label = agentFilterLabel.trim();
+      return filtered.filter((row) => {
+        const rowKey = stableServiceRowKey(row);
+        return isServiceAssignedToAgentLabel(assignees[rowKey], label);
+      });
+    }
+    return filtered;
+  }, [agentFilterLabel, assignees, filtered, meOnly, meSlug, showMeFilter]);
 
   // Important: on charge les statuts (PEC / completed) pour TOUTE la journée affichée,
   // même si le filtre "Me" est actif (sinon les statuts agents seraient incomplets).
@@ -3270,6 +3299,7 @@ export function DailyServicesView() {
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                setAgentFilterLabel(null);
                 setMeOnly((v) => !v);
               }}
               aria-pressed={meOnly}
@@ -3277,6 +3307,47 @@ export function DailyServicesView() {
             >
               Me
             </Button>
+          ) : null}
+
+          {showAgentFilterBar ? (
+            <div
+              className="flex w-full flex-wrap items-center gap-2 border-t border-border/60 pt-2 sm:w-auto sm:border-t-0 sm:pt-0"
+              role="group"
+              aria-label="Filtrer par agent"
+            >
+              {PLANNING_AGENT_FILTER_BAR_LABELS.map((label) => {
+                const isActive =
+                  agentFilterLabel != null &&
+                  planningDisplayNameEquals(agentFilterLabel, label);
+                return (
+                  <Badge
+                    key={label}
+                    variant="outline"
+                    role="button"
+                    tabIndex={0}
+                    className={cn(
+                      "h-7 cursor-pointer rounded-full border border-border/80 bg-muted/40 px-3 py-1 text-xs font-normal text-foreground shadow-none transition-colors hover:bg-muted/60",
+                      isActive &&
+                        "border-neutral-950 bg-background ring-2 ring-neutral-950 ring-offset-1 dark:border-neutral-50 dark:ring-neutral-50"
+                    )}
+                    aria-pressed={isActive}
+                    title={
+                      isActive
+                        ? `Afficher tout le planning (filtre : ${label})`
+                        : `Afficher uniquement ${label}`
+                    }
+                    onClick={() => handleAgentFilterChipClick(label)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      handleAgentFilterChipClick(label);
+                    }}
+                  >
+                    <span className="max-w-[9rem] truncate">{label}</span>
+                  </Badge>
+                );
+              })}
+            </div>
           ) : null}
         </div>
       </div>
@@ -3295,7 +3366,11 @@ export function DailyServicesView() {
         </div>
       ) : visibleRows.length === 0 ? (
         <p className="rounded-xl border border-dashed px-4 py-12 text-center text-muted-foreground">
-          {meOnly ? "Aucun service assigné à vous" : "Aucun planning pour cette journée"}
+          {meOnly
+            ? "Aucun service assigné à vous"
+            : agentFilterLabel?.trim()
+              ? `Aucun service assigné à ${agentFilterLabel.trim()}`
+              : "Aucun planning pour cette journée"}
         </p>
       ) : (
         <>
