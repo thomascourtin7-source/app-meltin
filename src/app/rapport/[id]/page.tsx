@@ -25,7 +25,10 @@ import {
   detectServiceReportKind,
   type ServiceReportKind,
 } from "@/lib/planning/service-kind";
-import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
+import {
+  serviceLookupIdsFromRow,
+  serviceReportIdFromRow,
+} from "@/lib/reports/service-report-id";
 import { patchServiceReportsSwCaches } from "@/lib/planning/service-reports-swr";
 import {
   defaultReportFilename,
@@ -251,7 +254,9 @@ export default function RapportServicePage() {
 
   const serviceRow = useMemo(() => {
     const rows = planningData?.rows ?? [];
-    return rows.find((r) => serviceReportIdFromRow(r) === serviceId) ?? null;
+    return (
+      rows.find((r) => serviceLookupIdsFromRow(r).includes(serviceId)) ?? null
+    );
   }, [planningData?.rows, serviceId]);
 
   const detectedKind: ServiceReportKind = useMemo(() => {

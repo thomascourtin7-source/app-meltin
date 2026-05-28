@@ -80,7 +80,10 @@ import {
   generateServiceReportPdf,
   serviceReportSnapshotToPdfData,
 } from "@/lib/reports/service-report-pdf";
-import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
+import {
+  serviceLookupIdsFromRow,
+  serviceReportIdFromRow,
+} from "@/lib/reports/service-report-id";
 import {
   isPlanningAgentFilterBarSession,
   isPlanningSuperAdminSession,
@@ -1823,7 +1826,9 @@ export function DailyServicesView() {
 
   const serviceIdsForAssignments = useMemo(() => {
     const rows = planningPayload?.rows ?? [];
-    return [...new Set(rows.map((r) => serviceReportIdFromRow(r)).filter(Boolean))];
+    return [
+      ...new Set(rows.flatMap((r) => serviceLookupIdsFromRow(r)).filter(Boolean)),
+    ];
   }, [planningPayload?.rows]);
 
   const serviceIdsForAssignmentsRef = useRef<string[]>([]);
@@ -2120,8 +2125,10 @@ export function DailyServicesView() {
       if (Object.prototype.hasOwnProperty.call(assigneesDraftByRowKey, rowKey)) {
         slugs = normalizeAssigneeListFromStored(assigneesDraftByRowKey[rowKey]);
       } else {
-        const serviceId = serviceReportIdFromRow(row);
-        const fromDb = mapByServiceId[serviceId];
+        const lookupIds = serviceLookupIdsFromRow(row);
+        const fromDb = lookupIds
+          .map((id) => mapByServiceId[id])
+          .find((name) => typeof name === "string" && name.length > 0);
         if (fromDb) {
           slugs = parseAssigneeNameToSlugs(fromDb);
         } else {
@@ -2695,8 +2702,8 @@ export function DailyServicesView() {
 
   const openReportForm = useCallback(
     async (opts: { serviceId: string }) => {
-      const row = filtered.find(
-        (r) => serviceReportIdFromRow(r) === opts.serviceId
+      const row = filtered.find((r) =>
+        serviceLookupIdsFromRow(r).includes(opts.serviceId)
       );
       if (row) {
         const res = await fetch("/api/service-reports", {
