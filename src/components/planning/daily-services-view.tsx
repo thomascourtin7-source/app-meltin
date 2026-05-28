@@ -79,7 +79,10 @@ import {
   serviceReportSnapshotToPdfData,
 } from "@/lib/reports/service-report-pdf";
 import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
-import { isPlanningSuperAdminSession } from "@/lib/planning/planning-super-admins";
+import {
+  isPlanningSuperAdminSession,
+  isPlanningVipStarEditorSession,
+} from "@/lib/planning/planning-super-admins";
 import { formatLocalTimeHHMMSS } from "@/lib/reports/report-time";
 import {
   nextPecStatus,
@@ -546,7 +549,7 @@ type ServiceBlockProps = {
   planningSuperAdminBypass: boolean;
   /** Favori VIP (`services.is_starred`), visible par tous. */
   isStarred: boolean;
-  /** Seuls Javed / JAVED ORDI peuvent basculer l’étoile. */
+  /** Javed, JAVED ORDI et Thomas peuvent basculer l’étoile VIP. */
   vipStarInteractive: boolean;
   onToggleVipStar: (opts: { serviceId: string }) => Promise<void>;
   /** Profil courant (« S’enregistrer »), pour permissions photo / PEC. */
@@ -1672,6 +1675,10 @@ export function DailyServicesView() {
     () => isPlanningSuperAdminSession({ slug: meSlug, displayName: meName }),
     [meSlug, meName]
   );
+  const vipStarEditorSession = useMemo(
+    () => isPlanningVipStarEditorSession({ slug: meSlug, displayName: meName }),
+    [meSlug, meName]
+  );
 
   const [isLoading, setIsLoading] = useState(false);
   const planningValidatedBannerTimerRef = useRef<ReturnType<
@@ -1943,7 +1950,7 @@ export function DailyServicesView() {
 
   const toggleVipStar = useCallback(
     async (opts: { serviceId: string }) => {
-      if (!planningSuperAdminBypass) return;
+      if (!vipStarEditorSession) return;
       if (!spreadsheetId) {
         throw new Error("spreadsheetId manquant.");
       }
@@ -1981,7 +1988,7 @@ export function DailyServicesView() {
     },
     [
       mutateServicesFlags,
-      planningSuperAdminBypass,
+      vipStarEditorSession,
       servicesFlagsData?.isStarredByServiceId,
       spreadsheetId,
     ]
@@ -3336,7 +3343,7 @@ export function DailyServicesView() {
                   }
                   planningSuperAdminBypass={planningSuperAdminBypass}
                   isStarred={Boolean(isStarredByServiceId[reportSid])}
-                  vipStarInteractive={planningSuperAdminBypass}
+                  vipStarInteractive={vipStarEditorSession}
                   onToggleVipStar={toggleVipStar}
                   meName={meName}
                   onAssigneesChange={setAssigneesForRow}
