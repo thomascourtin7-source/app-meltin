@@ -1795,15 +1795,52 @@ export function DailyServicesView() {
   });
   mutatePlanningRef.current = mutate;
 
-  /** Dernier planning affiché : évite l’écran « Chargement… » pendant un re-render / revalidation. */
+  const selectedKeyForPayload = normalizeCanonicalDateKey(selectedDate);
+
+  /**
+   * Le payload appartient-il bien à la date sélectionnée ?
+   * `filterDateIso` est renvoyé par l’API ; en mode date unique il est toujours présent.
+   */
+  const payloadMatchesSelectedDate = useCallback(
+    (payload: PlanningServicesPayload | undefined): boolean => {
+      if (!payload) return false;
+      const f = payload.filterDateIso?.trim();
+      if (f) {
+        return normalizeCanonicalDateKey(f) === selectedKeyForPayload;
+      }
+      // Repli (réponse API sans filterDateIso) : toutes les lignes doivent être de la date.
+      const rows = payload.rows ?? [];
+      if (rows.length === 0) return true;
+      return rows.every(
+        (r) => normalizeCanonicalDateKey(r.dateIso) === selectedKeyForPayload
+      );
+    },
+    [selectedKeyForPayload]
+  );
+
+  /**
+   * Dernier planning affiché : évite l’écran « Chargement… » pendant un re-render / revalidation.
+   * IMPORTANT : on ne conserve que si la date correspond, sinon les services de la veille
+   * « bavent » sur la date suivante pendant la transition (keepPreviousData).
+   */
   const planningDisplayedRef = useRef<PlanningServicesPayload | undefined>(
     undefined
   );
-  if (planningData != null) {
+  if (planningData != null && payloadMatchesSelectedDate(planningData)) {
     planningDisplayedRef.current = planningData;
   }
+
+  // Réinitialisation stricte : aucune donnée d’une autre date ne doit transparaître.
+  const planningDataForDate = payloadMatchesSelectedDate(planningData)
+    ? planningData
+    : undefined;
+  const planningFallbackForDate = payloadMatchesSelectedDate(
+    planningDisplayedRef.current
+  )
+    ? planningDisplayedRef.current
+    : undefined;
   const planningPayload =
-    planningData ?? planningDisplayedRef.current ?? undefined;
+    planningDataForDate ?? planningFallbackForDate ?? undefined;
   const spreadsheetId = planningPayload?.spreadsheetId?.trim() ?? "";
 
   /** Dès qu’on a affiché un planning une fois, on ne remplace plus toute la vue par le loader (Realtime, revalidate, etc.). */
@@ -3451,6 +3488,11 @@ export function DailyServicesView() {
           role="alert"
         >
           {error instanceof Error ? error.message : "Erreur inconnue."}
+        </div>
+      ) : planningPayload == null ? (
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed py-20 text-muted-foreground">
+          <Loader2 className="size-5 animate-spin" aria-hidden />
+          Chargement du planning…
         </div>
       ) : visibleRows.length === 0 ? (
         <p className="rounded-xl border border-dashed px-4 py-12 text-center text-muted-foreground">
