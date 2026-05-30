@@ -1951,8 +1951,11 @@ export function DailyServicesView() {
     assignmentsKey,
     () => loadAssignmentsBatch(serviceIdsForAssignments),
     {
-      refreshInterval: 0,
-      revalidateOnFocus: false,
+      // Filet de sécurité si un événement Realtime est manqué : l’agent distant
+      // converge même sans toucher l’écran, et au retour sur l’app (après push).
+      refreshInterval: 20000,
+      revalidateOnFocus: true,
+      revalidateOnReconnect: true,
       keepPreviousData: true,
     }
   );
@@ -2510,11 +2513,15 @@ export function DailyServicesView() {
    * Les assignations suivent Supabase Realtime — pas de re-fetch automatique forcé sur ce bloc.
    */
   const refreshAll = useCallback(() => {
+    // Purge + re-fetch frais de TOUTES les clés SWR de la vue (assignations,
+    // planning, rapports, flags) : on ignore le cache local et le dedup SWR
+    // pour récupérer instantanément l’état 100 % à jour de Supabase.
+    void globalMutate(() => true, undefined, { revalidate: true });
     void mutatePlanningRef.current?.(undefined, { revalidate: true });
     void mutateReportsRef.current?.(undefined, { revalidate: true });
     void mutateAssignmentsRef.current?.(undefined, { revalidate: true });
     void mutateServicesFlagsRef.current?.(undefined, { revalidate: true });
-  }, []);
+  }, [globalMutate]);
 
   /** Refresh manuel (bouton dans le header). */
   useEffect(() => {
