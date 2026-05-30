@@ -61,7 +61,6 @@ import {
   collectSnapshotIdentityKeys,
   findRowForStoredIdentityKey,
   rowKnownInIdentitySet,
-  stableServiceRowKey,
 } from "@/lib/planning/service-row-keys";
 import { shouldPreserveExistingAssignee } from "@/lib/planning/planning-assignee-guard";
 import { isPlanningFinalizedForServiceDate } from "@/lib/planning/planning-finalized-storage";
@@ -256,6 +255,23 @@ function dateNavButtonClass(active: boolean): string {
       ? "bg-neutral-950 text-white hover:bg-neutral-900 dark:bg-neutral-50 dark:text-neutral-950 dark:hover:bg-neutral-200"
       : "bg-muted text-foreground hover:bg-muted/80"
   );
+}
+
+/**
+ * Clé UI UNIQUE par carte de service (affichage + filtres + drafts + conflits).
+ * Inclut le client et le type pour ne JAMAIS confondre deux services distincts
+ * partageant le même vol et la même heure (sinon collision dans la map d’assignations).
+ * Distincte du `service_id` Supabase (date|vol|RDV) utilisé pour la persistance.
+ */
+function serviceRowUiKey(row: DailyServiceRow): string {
+  return [
+    normalizeCanonicalDateKey(String(row.dateIso ?? "").trim()),
+    String(row.client ?? "").trim().toLowerCase(),
+    String(row.type ?? "").trim().toLowerCase(),
+    String(row.vol ?? "").trim().toLowerCase(),
+    String(row.rdv1 ?? "").trim().toLowerCase(),
+    String(row.rdv2 ?? "").trim().toLowerCase(),
+  ].join("\u0001");
 }
 
 /** Vol + créneaux RDV sur une seule ligne lisible. */
@@ -2171,7 +2187,7 @@ export function DailyServicesView() {
     }
 
     for (const row of rows) {
-      const rowKey = stableServiceRowKey(row);
+      const rowKey = serviceRowUiKey(row);
       usedKeys.add(rowKey);
 
       let slugs: string[];
@@ -2392,17 +2408,16 @@ export function DailyServicesView() {
   const visibleRows = useMemo(() => {
     if (meOnly) {
       if (!showMeFilter) return [];
-      return filtered.filter((row) => {
-        const rowKey = stableServiceRowKey(row);
-        return isServiceAssignedToSessionAgent(assignees[rowKey], meSlug);
-      });
+      return filtered.filter((row) =>
+        // Filtre sur la liste EXACTE affichée par la carte (même clé UI).
+        isServiceAssignedToSessionAgent(assignees[serviceRowUiKey(row)], meSlug)
+      );
     }
     if (agentFilterLabel?.trim()) {
       const label = agentFilterLabel.trim();
-      return filtered.filter((row) => {
-        const rowKey = stableServiceRowKey(row);
-        return isServiceAssignedToAgentLabel(assignees[rowKey], label);
-      });
+      return filtered.filter((row) =>
+        isServiceAssignedToAgentLabel(assignees[serviceRowUiKey(row)], label)
+      );
     }
     return filtered;
   }, [agentFilterLabel, assignees, filtered, meOnly, meSlug, showMeFilter]);
@@ -2547,7 +2562,7 @@ export function DailyServicesView() {
       ReturnType<typeof detectServiceReportKind>
     >();
     for (const row of filtered) {
-      const rowKey = stableServiceRowKey(row);
+      const rowKey = serviceRowUiKey(row);
       const list = normalizeAssigneeListFromStored(assignees[rowKey]);
       const serviceId = serviceReportIdFromRow(row);
       reportKindByServiceId.set(
@@ -2908,7 +2923,7 @@ export function DailyServicesView() {
       return;
     }
     const rowKeysAndRows = visibleRows.map((row) => ({
-      rowKey: stableServiceRowKey(row),
+      rowKey: serviceRowUiKey(row),
       row,
     }));
     setConflictRowKeys(computeConflictRowKeys(rowKeysAndRows, assignees));
@@ -2963,25 +2978,15 @@ export function DailyServicesView() {
               planningDisplayedRef.current?.rows ??
               planningPayload?.rows ??
               [];
-            const row = findRowForStoredIdentityKey(rows, keyTrim);
+            const row =
+              rows.find((r) => serviceRowUiKey(r) === keyTrim) ??
+              findRowForStoredIdentityKey(rows, keyTrim);
             if (!row || !serviceReportIdFromRow(row)?.trim?.()) {
               clearDraft();
               return;
             }
 
             const lookupIds = serviceLookupIdsFromRow(row);
-            const existingFromDb = lookupIds
-              .map((id) => assignmentsData?.assigneesByServiceId?.[id])
-              .find((name) => typeof name === "string" && name.length > 0);
-            if (
-              shouldPreserveExistingAssignee({
-                existingAgentName: existingFromDb,
-                incomingSlugs: safe,
-              })
-            ) {
-              clearDraft();
-              return;
-            }
 
             const token = readPlanningAuthSession()?.token;
             if (!token) {
@@ -3065,66 +3070,28 @@ export function DailyServicesView() {
               return;
             }
 
-            let savePayload: {
-              preserved?: boolean;
-              assignment?: { agent_name?: string | null };
-            } = {};
-            try {
-              savePayload = (await res.json()) as typeof savePayload;
-            } catch {
-              /* corps vide */
-            }
-            if (savePayload.preserved) {
-              const kept = savePayload.assignment?.agent_name?.trim();
-              if (kept) {
-                void mutateAssignments(
-                  (prev) => ({
-                    assigneesByServiceId: {
-                      ...(prev?.assigneesByServiceId ?? {}),
-                      [sidSavedForPost]: kept,
-                    },
-                    etaTimeByServiceId: prev?.etaTimeByServiceId ?? {},
-                  }),
-                  { revalidate: false }
-                );
-              }
-              clearDraft();
-              return;
-            }
-
             await mutateReportsRef.current?.(undefined, { revalidate: true });
 
             const sidSaved = sidSavedForPost;
             void mutateAssignments(
               (prev) => {
-                const baseAssign = prev?.assigneesByServiceId ?? {};
+                const baseAssign = { ...(prev?.assigneesByServiceId ?? {}) };
                 const baseEta = { ...(prev?.etaTimeByServiceId ?? {}) };
-                let nextAssignment: string | undefined;
-                if (agentNameMerged == null || !agentNameMerged.trim()) {
-                  nextAssignment = undefined;
-                } else {
-                  nextAssignment = agentNameMerged;
-                }
-                const prevAssignment = baseAssign[sidSaved];
-                const unchanged =
-                  (prevAssignment === undefined &&
-                    nextAssignment === undefined) ||
-                  prevAssignment === nextAssignment;
-                if (unchanged) {
-                  return {
-                    assigneesByServiceId: baseAssign,
-                    etaTimeByServiceId: baseEta,
-                  };
-                }
+                const nextAssignment =
+                  agentNameMerged == null || !agentNameMerged.trim()
+                    ? undefined
+                    : agentNameMerged;
 
-                const nextMap = { ...baseAssign };
-                if (nextAssignment === undefined) {
-                  delete nextMap[sidSaved];
-                } else {
-                  nextMap[sidSaved] = nextAssignment;
+                // Purge stricte : retire l’assignation sous TOUTES les clés
+                // (canonique + legacy) pour que l’ancien agent disparaisse partout.
+                for (const id of lookupIds) {
+                  delete baseAssign[id];
+                }
+                if (nextAssignment !== undefined) {
+                  baseAssign[sidSaved] = nextAssignment;
                 }
                 return {
-                  assigneesByServiceId: nextMap,
+                  assigneesByServiceId: baseAssign,
                   etaTimeByServiceId: baseEta,
                 };
               },
@@ -3240,7 +3207,7 @@ export function DailyServicesView() {
 
     for (const row of genuinelyNewRows) {
       if (!isPlanningAdmin) continue;
-      const stableKey = stableServiceRowKey(row);
+      const stableKey = serviceRowUiKey(row);
       const lookupIds = serviceLookupIdsFromRow(row);
       const fromDb = lookupIds
         .map((id) => mapByServiceId[id])
@@ -3516,7 +3483,7 @@ export function DailyServicesView() {
           ) : null}
           <div className="w-full">
             {visibleRows.map((row) => {
-              const rowKey = stableServiceRowKey(row);
+              const rowKey = serviceRowUiKey(row);
               const reportSid = serviceReportIdFromRow(row);
               const assigneeList = normalizeAssigneeListFromStored(
                 assignees[rowKey]
@@ -3537,7 +3504,7 @@ export function DailyServicesView() {
                 );
               return (
                 <ServiceBlock
-                  key={reportSid}
+                  key={rowKey}
                   row={row}
                   rowKey={rowKey}
                   reportServiceId={reportSid}

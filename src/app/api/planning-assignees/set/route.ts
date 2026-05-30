@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import { requirePlanningAdminBearer } from "@/lib/auth/planning-admin-server";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
-import { shouldPreserveExistingAssignee } from "@/lib/planning/planning-assignee-guard";
 import { serializeAssigneeSlugsToName } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -73,56 +72,24 @@ export async function POST(request: Request) {
     .filter(Boolean);
   const uniqueLookupIds = [...new Set(lookupIds)];
 
-  let existingAgentName: string | null = null;
+  // Action MANUELLE (admin vérifié) : autoritaire. On écrit EXACTEMENT le choix.
+  // On récupère l’ETA existante (sous la clé canonique ou une ancienne clé) pour ne pas la perdre.
   let existingEta: string | null = null;
-  let matchedLegacyServiceId: string | null = null;
+  const legacyServiceIds = uniqueLookupIds.filter((id) => id !== serviceId);
 
   for (const id of uniqueLookupIds) {
     const { data: row } = await supabase
       .from("planning_assignments")
-      .select("agent_name,eta_time")
+      .select("eta_time")
       .eq("service_id", id)
       .maybeSingle();
     if (!row) continue;
-    const agent = (row as { agent_name?: string | null }).agent_name ?? null;
     const eta = (row as { eta_time?: string | null }).eta_time ?? null;
     if (eta && !existingEta) existingEta = eta;
-    if (agent?.trim()) {
-      existingAgentName = agent;
-      matchedLegacyServiceId = id;
-      if (shouldPreserveExistingAssignee({
-        existingAgentName: agent,
-        incomingSlugs: slugs,
-      })) {
-        break;
-      }
-    }
   }
 
-  if (
-    shouldPreserveExistingAssignee({
-      existingAgentName,
-      incomingSlugs: slugs,
-    })
-  ) {
-    console.warn(
-      "[planning-assignees/set] assignation conservée (anti-effacement)",
-      {
-        serviceId,
-        matchedLegacyServiceId,
-      }
-    );
-    return NextResponse.json({
-      ok: true,
-      preserved: true,
-      assignment: {
-        service_id: serviceId,
-        agent_name: existingAgentName,
-        eta_time: existingEta,
-      },
-    });
-  }
-
+  // `serializeAssigneeSlugsToName` renvoie `null` si plus aucun agent réel
+  // (retrait/croix) : aucune virgule vide ni nom résiduel.
   const assigneeName = serializeAssigneeSlugsToName(slugs);
 
   const payload = {
@@ -132,6 +99,21 @@ export async function POST(request: Request) {
     eta_time: existingEta,
     updated_at: new Date().toISOString(),
   };
+
+  // Nettoyage : supprime toute ancienne ligne (clés legacy) pour ne laisser
+  // AUCUNE trace d’un agent précédent sous un autre `service_id`.
+  if (legacyServiceIds.length > 0) {
+    const { error: cleanupError } = await supabase
+      .from("planning_assignments")
+      .delete()
+      .in("service_id", legacyServiceIds);
+    if (cleanupError) {
+      console.warn("[planning-assignees/set] nettoyage legacy", {
+        message: cleanupError.message,
+        legacyServiceIds,
+      });
+    }
+  }
 
   // Une ligne par `service_id` (index UNIQUE) : upsert remplace `agent_name` par la chaîne sérialisée.
   const { data, error } = await supabase
