@@ -88,25 +88,54 @@ self.addEventListener("push", function (event) {
 
 self.addEventListener("notificationclick", function (event) {
   event.notification.close();
-  var url = "/";
-  if (
-    event.notification.data &&
-    typeof event.notification.data === "object" &&
-    event.notification.data.url
-  ) {
-    url = String(event.notification.data.url);
+
+  var data =
+    event.notification && typeof event.notification.data === "object"
+      ? event.notification.data
+      : {};
+  var url = typeof data.url === "string" && data.url ? data.url : "/";
+
+  // Le service ciblé (et sa date) est transporté dans l'URL d'ouverture
+  // (?serviceId=…&date=…). On l'extrait pour permettre un routage direct.
+  var serviceId = "";
+  var serviceDate = "";
+  try {
+    var parsed = new URL(url, self.location.origin);
+    serviceId = parsed.searchParams.get("serviceId") || "";
+    serviceDate = parsed.searchParams.get("date") || "";
+  } catch (e) {
+    /* URL relative invalide : on garde les valeurs vides */
   }
+
   event.waitUntil(
     clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then(function (clientList) {
         var i;
+        var routingMessage = {
+          type: "planning-notification-click",
+          url: url,
+          serviceId: serviceId,
+          date: serviceDate,
+          at: Date.now(),
+        };
+
+        // App déjà ouverte : on informe chaque fenêtre du service à afficher
+        // (routage in-app sans rechargement) puis on en place une au premier plan.
         for (i = 0; i < clientList.length; i++) {
-          var c = clientList[i];
-          if (c.focus) {
-            return c.focus();
+          try {
+            clientList[i].postMessage(routingMessage);
+          } catch (e) {
+            /* ignore */
           }
         }
+        for (i = 0; i < clientList.length; i++) {
+          if (clientList[i].focus) {
+            return clientList[i].focus();
+          }
+        }
+
+        // Aucune fenêtre ouverte : on ouvre directement sur l'URL ciblée.
         if (clients.openWindow) {
           return clients.openWindow(url);
         }

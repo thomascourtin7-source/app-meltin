@@ -42,7 +42,19 @@ export async function POST(req: Request) {
           : null
       : null;
 
-  const result = await broadcastAlarmUncoveredPush({ rdv });
+  const serviceId =
+    body && typeof body === "object" &&
+    typeof (body as { serviceId?: unknown }).serviceId === "string"
+      ? ((body as { serviceId: string }).serviceId || "").trim()
+      : null;
+
+  const date =
+    body && typeof body === "object" &&
+    typeof (body as { date?: unknown }).date === "string"
+      ? ((body as { date: string }).date || "").trim()
+      : null;
+
+  const result = await broadcastAlarmUncoveredPush({ rdv, serviceId, date });
 
   return NextResponse.json({ ok: true, skipped: false, ...result });
 }

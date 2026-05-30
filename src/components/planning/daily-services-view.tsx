@@ -1011,6 +1011,7 @@ function ServiceBlockInner({
     return (
       <div
         data-planning-service-card
+        data-service-id={reportServiceId}
         className={serviceCardSurfaceClass}
       >
         {scrollAnchors}
@@ -1128,6 +1129,7 @@ function ServiceBlockInner({
   return (
     <div
       data-planning-service-card
+      data-service-id={reportServiceId}
       className={cn(serviceCardSurfaceClass, !showUnassignedTodayAlert && "text-white")}
     >
       {scrollAnchors}
@@ -1723,6 +1725,16 @@ export function DailyServicesView() {
   const [conflictRowKeys, setConflictRowKeys] = useState<Set<string>>(
     () => new Set()
   );
+
+  /**
+   * Service à mettre en avant suite au clic sur une notification push
+   * (deep-link `?serviceId=…&date=…`). Une fois la bonne date chargée et la
+   * carte présente dans le DOM, on défile jusqu'à elle puis on l'ouvre.
+   */
+  const [pendingFocus, setPendingFocus] = useState<{
+    serviceId: string;
+    date: string;
+  } | null>(null);
 
   /** Brouillon local : affichage immédiat des lignes d’assignation avant la réponse API. */
   const [assigneesDraftByRowKey, setAssigneesDraftByRowKey] = useState<
@@ -2425,6 +2437,152 @@ export function DailyServicesView() {
     return filtered;
   }, [agentFilterLabel, assignees, filtered, meOnly, meSlug, showMeFilter]);
 
+  /**
+   * Reçoit un clic de notification (deep-link). Bascule sur la date du service,
+   * neutralise les filtres susceptibles de masquer la carte (« Me », filtre agent)
+   * et mémorise la cible pour le défilement/ouverture une fois la carte rendue.
+   */
+  const focusServiceFromNotification = useCallback(
+    (input: { serviceId: string; date?: string }) => {
+      const serviceId = (input.serviceId ?? "").trim();
+      if (!serviceId) return;
+
+      const rawDate = (input.date ?? "").trim();
+      let targetDate = "";
+      if (rawDate === "today") targetDate = todayYmd;
+      else if (rawDate === "tomorrow") targetDate = tomorrowYmd;
+      else if (rawDate) targetDate = normalizeCanonicalDateKey(rawDate);
+
+      if (targetDate) {
+        setSelectedDate(targetDate);
+      }
+      // On retire tout filtre qui pourrait cacher le service ciblé.
+      setMeOnly(false);
+      setAgentFilterLabel(null);
+      setPendingFocus({ serviceId, date: targetDate });
+    },
+    [todayYmd, tomorrowYmd]
+  );
+
+  /**
+   * Source du deep-link :
+   *  1. URL d'ouverture (`?serviceId=…&date=…`) lorsque l'app démarre suite au clic ;
+   *  2. message du Service Worker (`planning-notification-click`) si l'app était déjà ouverte.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const serviceId = sp.get("serviceId");
+      if (serviceId) {
+        focusServiceFromNotification({
+          serviceId,
+          date: sp.get("date") ?? "",
+        });
+        // On nettoie l'URL pour ne pas re-déclencher au prochain rendu / partage.
+        sp.delete("serviceId");
+        const q = sp.toString();
+        router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+      }
+    } catch {
+      /* URL illisible */
+    }
+
+    if (!("serviceWorker" in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (
+        data &&
+        typeof data === "object" &&
+        (data as { type?: unknown }).type === "planning-notification-click" &&
+        typeof (data as { serviceId?: unknown }).serviceId === "string" &&
+        (data as { serviceId: string }).serviceId
+      ) {
+        focusServiceFromNotification({
+          serviceId: (data as { serviceId: string }).serviceId,
+          date:
+            typeof (data as { date?: unknown }).date === "string"
+              ? (data as { date: string }).date
+              : "",
+        });
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener("message", onMessage);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusServiceFromNotification, pathname, router]);
+
+  /**
+   * Une fois la cible mémorisée et la bonne date affichée, on attend que la carte
+   * existe dans le DOM (le temps du fetch SWR) puis on défile dessus, on l'ouvre
+   * (bouton « Voir détails ») et on la surligne brièvement.
+   */
+  useEffect(() => {
+    if (!pendingFocus) return;
+    if (typeof document === "undefined") return;
+    // On patiente tant que l'affichage n'est pas sur la date du service.
+    if (pendingFocus.date && selectedKey !== pendingFocus.date) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const escapeSelector = (value: string): string => {
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+        return CSS.escape(value);
+      }
+      return value.replace(/["\\]/g, "\\$&");
+    };
+
+    const tryFocus = () => {
+      if (cancelled) return;
+      const el = document.querySelector<HTMLElement>(
+        `[data-service-id="${escapeSelector(pendingFocus.serviceId)}"]`
+      );
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+
+        const detailsBtn = el.querySelector<HTMLButtonElement>(
+          'button[aria-controls^="planning-card-details-"]'
+        );
+        if (detailsBtn && detailsBtn.getAttribute("aria-expanded") === "false") {
+          detailsBtn.click();
+        }
+
+        const highlightClasses = [
+          "ring-4",
+          "ring-amber-400",
+          "ring-offset-2",
+          "ring-offset-background",
+        ];
+        el.classList.add(...highlightClasses);
+        highlightTimer = setTimeout(() => {
+          el.classList.remove(...highlightClasses);
+        }, 2800);
+
+        setPendingFocus(null);
+        return;
+      }
+      attempts += 1;
+      if (attempts < 40) {
+        timer = setTimeout(tryFocus, 150);
+      } else {
+        setPendingFocus(null);
+      }
+    };
+
+    timer = setTimeout(tryFocus, 80);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      if (highlightTimer) clearTimeout(highlightTimer);
+    };
+  }, [pendingFocus, selectedKey, visibleRows]);
+
   // Important: on charge les statuts (PEC / completed) pour TOUTE la journée affichée,
   // même si le filtre "Me" est actif (sinon les statuts agents seraient incomplets).
   const serviceIdsForReports = useMemo(() => {
@@ -3114,6 +3272,7 @@ export function DailyServicesView() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   serviceId: serviceReportIdFromRow(row),
+                  date: dateKey,
                   rdv: row.rdv1 || row.rdv2 || "",
                 }),
               }).catch(() => {});
@@ -3143,6 +3302,7 @@ export function DailyServicesView() {
                   spreadsheetId,
                   dateKey,
                   stableRowKey: keyTrim,
+                  serviceId: sidSavedForPost,
                   assigneeName: label,
                   planningDay,
                   actorName,

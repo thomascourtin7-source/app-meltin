@@ -100,6 +100,10 @@ function normalizeRdvToTitleSuffix(rdv: string | null | undefined): string {
 /** Cas 5 : service avec alarme non couvert — diffusion à tous les abonnés. */
 export async function broadcastAlarmUncoveredPush(opts?: {
   rdv?: string | null;
+  /** Identifiant canonique du service (date|vol|RDV) pour le deep-link au clic. */
+  serviceId?: string | null;
+  /** Date du service (YYYY-MM-DD) pour basculer l'affichage au clic. */
+  date?: string | null;
 }): Promise<{
   sent: number;
   failed: number;
@@ -113,7 +117,13 @@ export async function broadcastAlarmUncoveredPush(opts?: {
     return { sent: 0, failed: 0 };
   }
 
-  const openUrl = "/planning";
+  const serviceId = opts?.serviceId?.trim() || "";
+  const date = opts?.date?.trim() || "";
+  const params = new URLSearchParams();
+  if (date) params.set("date", date);
+  if (serviceId) params.set("serviceId", serviceId);
+  const query = params.toString();
+  const openUrl = query ? `/planning?${query}` : "/planning";
   const subs = await getPlanningPushTargets();
   if (subs.length === 0) {
     console.warn("[planning-alarm-uncovered] Aucun abonnement push");

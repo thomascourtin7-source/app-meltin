@@ -89,6 +89,10 @@ export async function POST(req: Request) {
   const dateKey = typeof b.dateKey === "string" ? b.dateKey.trim() : "";
   const stableRowKey =
     typeof b.stableRowKey === "string" ? b.stableRowKey.trim() : "";
+  // Identifiant canonique du service (date|vol|RDV) : permet, au clic sur la
+  // notification, de basculer sur la bonne date puis de défiler jusqu'à la carte.
+  const serviceId =
+    typeof b.serviceId === "string" ? b.serviceId.trim() : "";
   const assigneeName =
     typeof b.assigneeName === "string" ? b.assigneeName.trim() : "";
   const actorName =
@@ -118,8 +122,14 @@ export async function POST(req: Request) {
   }
   dedupe.set(dedupeKey, now);
 
-  const openUrl = `/planning?date=${
-    planningDay === "today" ? "today" : planningDay === "tomorrow" ? "tomorrow" : dateKey
+  const dateParam =
+    planningDay === "today"
+      ? "today"
+      : planningDay === "tomorrow"
+        ? "tomorrow"
+        : dateKey;
+  const openUrl = `/planning?date=${dateParam}${
+    serviceId ? `&serviceId=${encodeURIComponent(serviceId)}` : ""
   }`;
 
   // Anti-spam : pour demain uniquement, on debounce 5s par cible (meilleure effort).
