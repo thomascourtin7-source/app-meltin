@@ -235,10 +235,13 @@ export async function fetchDailyServicesFromSheet(
     rows = parsed.rows.filter((r) => r.dateIso === filterKey);
   }
 
-  const uniqueParsedDates = [...new Set(rows.map((r) => r.dateIso))].slice(
-    0,
-    20
-  );
+  // Diagnostic : dates effectivement présentes dans la feuille (AVANT filtrage),
+  // pour repérer une mauvaise feuille (mois) ou un format de date non parsé.
+  const uniqueParsedDates = [
+    ...new Set(parsed.rows.map((r) => r.dateIso)),
+  ]
+    .sort()
+    .slice(0, 31);
 
   const rawDateCellSamples: unknown[] = [];
   const dc = parsed.dateColumnIndex;

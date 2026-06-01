@@ -180,29 +180,53 @@ export async function fetchPlanningSourceForMonth(
   supabase: SupabaseClient,
   month: PlanningMonthRef
 ): Promise<PlanningSourceRow | null> {
+  // Filtrage STRICT sur le mois (month_index) ET l'année (year) demandés,
+  // uniquement parmi les sources actives. `limit(1)` + tri déterministe :
+  // s'il existe par erreur plusieurs lignes is_active=TRUE pour ce mois,
+  // on en retient une seule (sans planter, contrairement à `maybeSingle`).
   const { data, error } = await supabase
     .from("planning_sources")
     .select("id,month_name,month_index,year,spreadsheet_id,is_active")
     .eq("year", month.year)
     .eq("month_index", month.monthIndex)
     .eq("is_active", true)
-    .maybeSingle();
+    .order("id", { ascending: true });
 
   if (error) {
     throw new Error(error.message);
   }
 
-  if (!data) return null;
+  const rows = (data ?? []) as PlanningSourceRow[];
+  if (rows.length > 1) {
+    console.warn(
+      "[planning_sources] Plusieurs sources actives pour ce mois — la première (tri par id) est retenue.",
+      {
+        monthIndex: month.monthIndex,
+        year: month.year,
+        spreadsheetIds: rows.map((r) => r.spreadsheet_id),
+      }
+    );
+  }
 
-  const row = data as PlanningSourceRow;
+  const row = rows[0];
+  if (!row) return null;
+
   const spreadsheetId = row.spreadsheet_id?.trim();
   if (!spreadsheetId) return null;
   return { ...row, spreadsheet_id: spreadsheetId };
 }
 
 /**
- * Mois calendaire courant (Paris) : priorité `.env`, puis `planning_sources`.
- * Autres mois : `planning_sources` uniquement.
+ * Résout le Google Sheet d'un mois donné.
+ *
+ * Priorité STRICTE à `planning_sources` (filtré sur month_index + year + is_active),
+ * puis repli sur la variable d'environnement uniquement si aucune source active
+ * n'existe pour ce mois.
+ *
+ * ⚠️ Historiquement la `.env` était prioritaire pour « le mois courant ». Mais cette
+ * variable reste souvent figée sur un mois précédent : au changement de mois
+ * calendaire (ex. mai → juin) elle masquait alors la bonne source et faisait
+ * « disparaître » le planning du nouveau mois. La base fait désormais foi.
  */
 export async function resolveSpreadsheetIdForPlanningMonth(
   supabase: SupabaseClient,
@@ -210,23 +234,40 @@ export async function resolveSpreadsheetIdForPlanningMonth(
 ): Promise<string | null> {
   await ensurePlanningSourcesInitialized(supabase);
 
-  const currentMonth = monthYearFromDateIso(todayIsoParis());
-  const isCurrentMonth = isSamePlanningMonth(month, currentMonth);
-
-  if (isCurrentMonth) {
-    const envId = readEnvPlanningSpreadsheetId();
-    if (envId) return envId;
-  }
-
   let source: PlanningSourceRow | null = null;
   try {
     source = await fetchPlanningSourceForMonth(supabase, month);
-  } catch {
+  } catch (error) {
+    console.error(
+      "[planning_sources] Échec lecture source pour",
+      { monthIndex: month.monthIndex, year: month.year },
+      error instanceof Error ? error.message : error
+    );
     source = null;
   }
-  if (source) return source.spreadsheet_id;
 
-  return readEnvPlanningSpreadsheetId();
+  if (source) {
+    console.log("[planning_sources] Source retenue :", {
+      monthIndex: month.monthIndex,
+      year: month.year,
+      spreadsheetId: source.spreadsheet_id,
+      origin: "planning_sources",
+    });
+    return source.spreadsheet_id;
+  }
+
+  // Repli : aucune source active en base pour ce mois précis.
+  const envId = readEnvPlanningSpreadsheetId();
+  console.warn(
+    "[planning_sources] Aucune source active en base pour ce mois — repli .env.",
+    {
+      monthIndex: month.monthIndex,
+      year: month.year,
+      spreadsheetId: envId,
+      origin: "env",
+    }
+  );
+  return envId;
 }
 
 export async function resolveSpreadsheetIdForDate(

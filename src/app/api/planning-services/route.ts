@@ -111,6 +111,30 @@ export async function GET(request: Request) {
       filterDateIso,
     });
 
+    console.log("RÉSULTAT LECTURE GOOGLE:", {
+      spreadsheetId: finalSpreadsheetId,
+      date,
+      rowsForDate: rows.length,
+      rawRowCount: debug?.rawRowCount,
+      headerRowIndex: debug?.headerRowIndex,
+      dateColumnIndex: debug?.dateColumnIndex,
+      uniqueParsedDates: debug?.uniqueParsedDates,
+    });
+
+    if (filterDateIso && rows.length === 0) {
+      // Garde-fou : aucune ligne pour la date demandée. On ne purge RIEN
+      // (la table `services` est en upsert seul) ; on journalise pour diagnostic
+      // (mauvaise feuille résolue, format de date, ou colonnes manquantes ?).
+      console.warn(
+        "[planning-services] 0 ligne pour la date demandée — vérifier la source (mois), le format DATE et les en-têtes.",
+        {
+          spreadsheetId: finalSpreadsheetId,
+          date,
+          datesDisponibles: debug?.uniqueParsedDates,
+        }
+      );
+    }
+
     return NextResponse.json({
       rows,
       fetchedAt: new Date().toISOString(),
