@@ -49,10 +49,35 @@ export function normalizeServiceRdvIdentity(row: DailyServiceRow): string {
   return block;
 }
 
+/** Client : trim + espaces compactés + minuscules (composant de la clé mission). */
+export function normalizeClientIdentity(client: string): string {
+  return normPart(client).toLowerCase();
+}
+
 /**
- * Identifiant mission : date + vol + RDV (insensible à la position dans le Sheet).
+ * Identifiant mission : date + vol + RDV + CLIENT (insensible à la position
+ * dans le Sheet).
+ *
+ * ⚠️ Le client est intégré pour que DEUX clients différents sur le même vol à
+ * la même heure (ex. AF754 06:30) restent des missions TOTALEMENT indépendantes
+ * (assignations / rapports distincts). Sans lui, les missions « jumelles »
+ * partageaient le même `service_id` et leurs agents étaient liés.
  */
 export function serviceMissionIdentityKey(row: DailyServiceRow): string {
+  const date = normalizeCanonicalDateKey(normPart(row.dateIso).toLowerCase());
+  const vol = normalizeVolIdentity(row.vol);
+  const rdv = normalizeServiceRdvIdentity(row);
+  const client = normalizeClientIdentity(row.client);
+  return [date, vol, rdv, client].join("|");
+}
+
+/**
+ * Ancienne clé mission (date + vol + RDV, SANS client) : conservée comme repli
+ * de lecture pour retrouver les assignations/rapports créés avant l'ajout du
+ * client. Ambiguë par nature (partagée par les missions jumelles) : à n'utiliser
+ * que lorsqu'elle ne désigne qu'UNE seule ligne (garde-fou côté lecture).
+ */
+export function legacyMissionIdentityKeyNoClient(row: DailyServiceRow): string {
   const date = normalizeCanonicalDateKey(normPart(row.dateIso).toLowerCase());
   const vol = normalizeVolIdentity(row.vol);
   const rdv = normalizeServiceRdvIdentity(row);
@@ -86,6 +111,7 @@ export function legacyServiceUrgencyIdentityKey(row: DailyServiceRow): string {
 export function collectSnapshotIdentityKeys(row: DailyServiceRow): string[] {
   const keys = [
     serviceMissionIdentityKey(row),
+    legacyMissionIdentityKeyNoClient(row),
     legacyStableServiceRowKey(row),
     legacyServiceUrgencyIdentityKey(row),
   ];
@@ -103,14 +129,20 @@ export function identityKeysEquivalent(a: string, b: string): boolean {
 
 function normalizeIdentityKeyForCompare(key: string): string {
   const parts = key.split("|").map((p) => p.trim());
-  if (parts.length === 3) {
-    const [dateRaw, volRaw, rdvRaw] = parts;
+  // Clé mission : 3 segments (legacy sans client) ou 4 segments (avec client).
+  if (parts.length === 3 || parts.length === 4) {
+    const [dateRaw, volRaw, rdvRaw, clientRaw] = parts;
     const date = normalizeCanonicalDateKey(dateRaw.toLowerCase());
     const vol = normalizeVolIdentity(volRaw);
     const rdv = rdvRaw
       .toLowerCase()
       .replace(/[^a-z0-9:,]/g, "")
       .replace(/\b(\d{1,2}):(\d{2}):00\b/g, "$1:$2");
+    // Le client n'est comparé que si les DEUX clés le possèdent : une clé à 3
+    // segments et une à 4 ne sont JAMAIS équivalentes (missions jumelles).
+    if (parts.length === 4) {
+      return [date, vol, rdv, normPart(clientRaw).toLowerCase()].join("|");
+    }
     return [date, vol, rdv].join("|");
   }
   return key.trim().toLowerCase();
@@ -180,5 +212,8 @@ export function logIdentityMatchFailure(
   console.warn(`${IDENTITY_LOG_PREFIX} ${context}`, detail);
 }
 
-/** Version algo identité (migration snapshot cron sans spam). */
-export const PLANNING_IDENTITY_ALGO_VERSION = 2;
+/**
+ * Version algo identité (migration snapshot cron sans spam).
+ * v3 : ajout du client dans la clé mission (date|vol|rdv|client).
+ */
+export const PLANNING_IDENTITY_ALGO_VERSION = 3;

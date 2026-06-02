@@ -274,6 +274,25 @@ function serviceRowUiKey(row: DailyServiceRow): string {
   ].join("\u0001");
 }
 
+/**
+ * Ré-indexe une map de statuts (clé = `service_id`) vers la clé CANONIQUE
+ * (avec client) de chaque ligne, en allant chercher la valeur sous
+ * l'identifiant « effectif » résolu (canonique, ou clé legacy non ambiguë).
+ * Préserve les statuts créés avant l'ajout du client dans la clé.
+ */
+function rekeyByEffectiveId<T>(
+  src: Record<string, T> | undefined,
+  effectiveByCanonical: Record<string, string>,
+  fallback: T
+): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const [canonical, effective] of Object.entries(effectiveByCanonical)) {
+    const v = src?.[effective];
+    out[canonical] = v === undefined ? (src?.[canonical] ?? fallback) : v;
+  }
+  return out;
+}
+
 /** Vol + créneaux RDV sur une seule ligne lisible. */
 function formatVolRdvLine(row: DailyServiceRow): string {
   const vol = row.vol.trim() || "—";
@@ -2586,7 +2605,13 @@ export function DailyServicesView() {
   // Important: on charge les statuts (PEC / completed) pour TOUTE la journée affichée,
   // même si le filtre "Me" est actif (sinon les statuts agents seraient incomplets).
   const serviceIdsForReports = useMemo(() => {
-    return filtered.map((r) => serviceReportIdFromRow(r));
+    // On envoie TOUTES les clés (canonique avec client + replis legacy) pour
+    // retrouver les rapports/états créés avant l'ajout du client dans la clé.
+    return [
+      ...new Set(
+        filtered.flatMap((r) => serviceLookupIdsFromRow(r)).filter(Boolean)
+      ),
+    ];
   }, [filtered]);
 
   const reportKey = useMemo(() => {
@@ -2704,12 +2729,104 @@ export function DailyServicesView() {
     }
   }, [globalMutate, reportKey]);
 
-  const isCompletedByServiceId = reportExistence?.isCompletedByServiceId ?? {};
-  const isPecByServiceId = reportExistence?.isPecByServiceId ?? {};
-  const pecStatusByServiceId = reportExistence?.pecStatusByServiceId ?? {};
-  const hasPhotoByServiceId = reportExistence?.hasPhotoByServiceId ?? {};
-  const photoUrlByServiceId = reportExistence?.photoUrlByServiceId ?? {};
-  const isStarredByServiceId = servicesFlagsData?.isStarredByServiceId ?? {};
+  // Rétro-compat clé mission (ajout du client) : pour chaque ligne, on résout
+  // l'identifiant qui porte réellement des données — la clé canonique (avec
+  // client) en priorité, sinon une clé legacy NON ambiguë (présente sur une
+  // seule ligne). Les missions jumelles (clé legacy partagée) gardent ainsi des
+  // statuts indépendants au lieu d'hériter d'anciennes données communes.
+  const effectiveReportIdByCanonical = useMemo(() => {
+    const refCount = new Map<string, number>();
+    for (const row of filtered) {
+      for (const id of serviceLookupIdsFromRow(row)) {
+        refCount.set(id, (refCount.get(id) ?? 0) + 1);
+      }
+    }
+    const reports = reportExistence;
+    const stars = servicesFlagsData?.isStarredByServiceId ?? {};
+    const hasData = (id: string): boolean => {
+      if (!id) return false;
+      if (reports?.hasReport?.[id]) return true;
+      if (reports?.isCompletedByServiceId?.[id]) return true;
+      if (reports?.hasPhotoByServiceId?.[id]) return true;
+      if (reports?.isPecByServiceId?.[id]) return true;
+      const pec = reports?.pecStatusByServiceId?.[id];
+      if (pec && pec !== "vide") return true;
+      if (stars[id]) return true;
+      return false;
+    };
+    const map: Record<string, string> = {};
+    for (const row of filtered) {
+      const canonical = serviceReportIdFromRow(row);
+      let effective = canonical;
+      if (!hasData(canonical)) {
+        for (const id of serviceLookupIdsFromRow(row)) {
+          if (id === canonical) continue;
+          if ((refCount.get(id) ?? 0) > 1) continue; // ambigu (jumelles)
+          if (hasData(id)) {
+            effective = id;
+            break;
+          }
+        }
+      }
+      map[canonical] = effective;
+    }
+    return map;
+  }, [filtered, reportExistence, servicesFlagsData?.isStarredByServiceId]);
+
+  const isCompletedByServiceId = useMemo(
+    () =>
+      rekeyByEffectiveId(
+        reportExistence?.isCompletedByServiceId,
+        effectiveReportIdByCanonical,
+        false
+      ),
+    [reportExistence?.isCompletedByServiceId, effectiveReportIdByCanonical]
+  );
+  const isPecByServiceId = useMemo(
+    () =>
+      rekeyByEffectiveId(
+        reportExistence?.isPecByServiceId,
+        effectiveReportIdByCanonical,
+        false
+      ),
+    [reportExistence?.isPecByServiceId, effectiveReportIdByCanonical]
+  );
+  const pecStatusByServiceId = useMemo<Record<string, PecStatus>>(
+    () =>
+      rekeyByEffectiveId<PecStatus>(
+        reportExistence?.pecStatusByServiceId,
+        effectiveReportIdByCanonical,
+        "vide"
+      ),
+    [reportExistence?.pecStatusByServiceId, effectiveReportIdByCanonical]
+  );
+  const hasPhotoByServiceId = useMemo(
+    () =>
+      rekeyByEffectiveId(
+        reportExistence?.hasPhotoByServiceId,
+        effectiveReportIdByCanonical,
+        false
+      ),
+    [reportExistence?.hasPhotoByServiceId, effectiveReportIdByCanonical]
+  );
+  const photoUrlByServiceId = useMemo<Record<string, string | null>>(
+    () =>
+      rekeyByEffectiveId<string | null>(
+        reportExistence?.photoUrlByServiceId,
+        effectiveReportIdByCanonical,
+        null
+      ),
+    [reportExistence?.photoUrlByServiceId, effectiveReportIdByCanonical]
+  );
+  const isStarredByServiceId = useMemo(
+    () =>
+      rekeyByEffectiveId(
+        servicesFlagsData?.isStarredByServiceId,
+        effectiveReportIdByCanonical,
+        false
+      ),
+    [servicesFlagsData?.isStarredByServiceId, effectiveReportIdByCanonical]
+  );
 
   const agentLabels = useMemo(() => {
     return displayAgents().map((o) => o.label);

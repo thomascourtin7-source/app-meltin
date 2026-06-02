@@ -1,6 +1,7 @@
 import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import {
+  legacyMissionIdentityKeyNoClient,
   legacyStableServiceRowKey,
   serviceMissionIdentityKey,
 } from "@/lib/planning/service-row-keys";
@@ -28,6 +29,10 @@ export function serviceReportIdFromRow(row: DailyServiceRow): string {
 export function serviceLookupIdsFromRow(row: DailyServiceRow): string[] {
   const ids = [
     serviceReportIdFromRow(row),
+    // Repli : ancienne clé canonique sans client (assignations/rapports
+    // créés avant l'ajout du client dans la clé). Ambiguë pour les missions
+    // jumelles → neutralisée côté lecture par le compteur de références.
+    legacyMissionIdentityKeyNoClient(row),
     legacyServiceReportIdFromRow(row),
     legacyStableServiceRowKey(row),
   ];
