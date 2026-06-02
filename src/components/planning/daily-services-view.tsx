@@ -582,7 +582,7 @@ type ServiceBlockProps = {
   onAssigneesChange: (
     key: string,
     next: string[],
-    options?: { persist?: boolean }
+    options?: { persist?: boolean; allowDeassign?: boolean }
   ) => void;
   hasTimeConflict?: boolean;
   showConflictUi?: boolean;
@@ -3095,7 +3095,15 @@ export function DailyServicesView() {
   }, [prepModeActive, visibleRows, assignees]);
 
   const setAssigneesForRow = useCallback(
-    (key: string, next: string[], opts?: { persist?: boolean }) => {
+    (
+      key: string,
+      next: string[],
+      opts?: { persist?: boolean; allowDeassign?: boolean }
+    ) => {
+      // Par défaut, un appel issu de l'UI est une action manuelle : le retrait
+      // d'agent est autorisé. Les écritures AUTOMATIQUES (ex. 🚨) passent
+      // explicitement `allowDeassign: false` pour ne jamais vider un agent réel.
+      const allowDeassign = opts?.allowDeassign !== false;
       try {
         const persist = opts?.persist !== false;
         const keyTrim = typeof key === "string" ? key.trim() : "";
@@ -3204,6 +3212,7 @@ export function DailyServicesView() {
                 serviceDate: row.dateIso,
                 assigneeSlugs: safe,
                 lookupIds,
+                allowDeassign,
               }),
             });
 
@@ -3232,6 +3241,20 @@ export function DailyServicesView() {
               });
               window.alert(msg);
               clearDraft();
+              return;
+            }
+
+            // App-First : le serveur a refusé d'effacer un agent réel existant.
+            // On resynchronise pour réafficher l'agent préservé (pas de notif).
+            let okBody: { preserved?: boolean } | null = null;
+            try {
+              okBody = (await res.json()) as { preserved?: boolean };
+            } catch {
+              okBody = null;
+            }
+            if (okBody?.preserved) {
+              clearDraft();
+              await mutateAssignments(undefined, { revalidate: true });
               return;
             }
 
@@ -3393,7 +3416,11 @@ export function DailyServicesView() {
         current.every((s) => s === DEFAULT_PLANNING_ASSIGNEE_SLUG) &&
         !current.some(isUrgentAssignee)
       ) {
-        setAssigneesForRow(stableKey, [URGENT_ASSIGNEE]);
+        // Écriture AUTOMATIQUE : ne doit jamais pouvoir effacer un agent réel
+        // (garde-fou serveur App-First via `allowDeassign: false`).
+        setAssigneesForRow(stableKey, [URGENT_ASSIGNEE], {
+          allowDeassign: false,
+        });
       }
     }
 

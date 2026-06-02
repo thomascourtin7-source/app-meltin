@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requirePlanningAdminBearer } from "@/lib/auth/planning-admin-server";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
+import { hasRealAssigneeAgentName } from "@/lib/planning/planning-assignee-guard";
 import { serializeAssigneeSlugsToName } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -11,6 +12,12 @@ type Body = {
   assigneeSlugs?: unknown;
   /** Anciens `service_id` possibles (repli sans doublon). */
   lookupIds?: unknown;
+  /**
+   * Autorise EXPLICITEMENT le retrait d'un agent réel (croix manuelle dans l'app).
+   * Par défaut `false` : aucune écriture automatique / de synchronisation ne peut
+   * vider un agent déjà assigné (règle « App-First »).
+   */
+  allowDeassign?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -61,6 +68,9 @@ export async function POST(request: Request) {
     ? b.assigneeSlugs.filter((x): x is string => typeof x === "string")
     : [];
 
+  // Retrait d'agent autorisé UNIQUEMENT sur action manuelle explicite (croix).
+  const allowDeassign = b.allowDeassign === true;
+
   const lookupIdsRaw = (b as Body).lookupIds;
   const lookupIds = [
     serviceId,
@@ -72,25 +82,54 @@ export async function POST(request: Request) {
     .filter(Boolean);
   const uniqueLookupIds = [...new Set(lookupIds)];
 
-  // Action MANUELLE (admin vérifié) : autoritaire. On écrit EXACTEMENT le choix.
-  // On récupère l’ETA existante (sous la clé canonique ou une ancienne clé) pour ne pas la perdre.
+  // On récupère l’ETA existante ET l’agent existant (sous la clé canonique ou
+  // une ancienne clé) pour ne rien perdre lors de l’écriture.
   let existingEta: string | null = null;
+  let existingAgentName: string | null = null;
   const legacyServiceIds = uniqueLookupIds.filter((id) => id !== serviceId);
 
   for (const id of uniqueLookupIds) {
     const { data: row } = await supabase
       .from("planning_assignments")
-      .select("eta_time")
+      .select("agent_name,eta_time")
       .eq("service_id", id)
       .maybeSingle();
     if (!row) continue;
     const eta = (row as { eta_time?: string | null }).eta_time ?? null;
     if (eta && !existingEta) existingEta = eta;
+    const agent = (row as { agent_name?: string | null }).agent_name ?? null;
+    if (!existingAgentName && hasRealAssigneeAgentName(agent)) {
+      existingAgentName = agent;
+    }
   }
 
   // `serializeAssigneeSlugsToName` renvoie `null` si plus aucun agent réel
   // (retrait/croix) : aucune virgule vide ni nom résiduel.
   const assigneeName = serializeAssigneeSlugsToName(slugs);
+  const incomingHasRealAgent = hasRealAssigneeAgentName(assigneeName);
+
+  // ───────────────────────────────────────────────────────────────────────
+  // PROTECTION « App-First » (règle anti-désassignation automatique)
+  // Si un agent RÉEL est déjà assigné en base et que l'écriture entrante ne
+  // contient aucun agent réel (vide, ou 🚨 seul), on REFUSE STRICTEMENT
+  // d'effacer — sauf retrait manuel explicite (`allowDeassign: true`, la croix).
+  // Aucune synchronisation / aucun automatisme ne peut vider un agent.
+  // ───────────────────────────────────────────────────────────────────────
+  if (existingAgentName && !incomingHasRealAgent && !allowDeassign) {
+    console.warn(
+      "[planning-assignees/set] App-First : écriture sans agent réel ignorée (agent existant préservé).",
+      { serviceId, existingAgentName }
+    );
+    return NextResponse.json({
+      ok: true,
+      preserved: true,
+      assignment: {
+        service_id: serviceId,
+        agent_name: existingAgentName,
+        eta_time: existingEta,
+      },
+    });
+  }
 
   const payload = {
     service_id: serviceId,
@@ -100,18 +139,43 @@ export async function POST(request: Request) {
     updated_at: new Date().toISOString(),
   };
 
-  // Nettoyage : supprime toute ancienne ligne (clés legacy) pour ne laisser
-  // AUCUNE trace d’un agent précédent sous un autre `service_id`.
+  // Nettoyage des clés legacy pour la MÊME mission, MAIS jamais au point
+  // d'effacer un agent réel d'une AUTRE mission qui partagerait une clé legacy
+  // (collision date+client+type+vol entre deux RDV distincts). On ne supprime
+  // donc qu'une ligne legacy vide OU portant exactement l'agent qu'on réécrit.
   if (legacyServiceIds.length > 0) {
-    const { error: cleanupError } = await supabase
+    const { data: legacyRows, error: legacyReadError } = await supabase
       .from("planning_assignments")
-      .delete()
+      .select("service_id,agent_name")
       .in("service_id", legacyServiceIds);
-    if (cleanupError) {
-      console.warn("[planning-assignees/set] nettoyage legacy", {
-        message: cleanupError.message,
+
+    if (legacyReadError) {
+      console.warn("[planning-assignees/set] lecture legacy", {
+        message: legacyReadError.message,
         legacyServiceIds,
       });
+    }
+
+    const newName = (assigneeName ?? "").trim();
+    const deletableIds = (legacyRows ?? [])
+      .filter((r) => {
+        const agent = (r as { agent_name?: string | null }).agent_name ?? null;
+        if (!hasRealAssigneeAgentName(agent)) return true; // ligne vide → purge OK
+        return (agent ?? "").trim() === newName; // même agent → migration de clé OK
+      })
+      .map((r) => (r as { service_id: string }).service_id);
+
+    if (deletableIds.length > 0) {
+      const { error: cleanupError } = await supabase
+        .from("planning_assignments")
+        .delete()
+        .in("service_id", deletableIds);
+      if (cleanupError) {
+        console.warn("[planning-assignees/set] nettoyage legacy", {
+          message: cleanupError.message,
+          deletableIds,
+        });
+      }
     }
   }
 
