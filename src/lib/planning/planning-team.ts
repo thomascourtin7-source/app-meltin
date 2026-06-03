@@ -237,6 +237,11 @@ export const PLANNING_AGENT_FILTER_BAR_LABELS = [
   "Pravin",
   "Deva",
   "Kumar",
+  "TIJ",
+  "AIDA",
+  "YAYA",
+  "ESCALE",
+  "AUTRE",
 ] as const;
 
 /** Filtre planning : service assigné à l’agent (libellé affiché). */
