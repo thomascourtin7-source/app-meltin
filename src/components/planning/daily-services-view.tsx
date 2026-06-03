@@ -205,6 +205,27 @@ type ServiceReportRow = {
 
 const DEFAULT_ASSIGNEE = DEFAULT_PLANNING_ASSIGNEE_SLUG;
 
+/**
+ * Filtre spécial « N-A » (barre de supervision Javed) : regroupe tout ce qui
+ * demande une attention immédiate — missions NON assignées + missions en
+ * ALARME (urgence / rajout non traité 🚨, même si un agent est déjà dessus).
+ * Sentinelle stockée dans `agentFilterLabel`, distincte des libellés d'agents.
+ */
+const NA_FILTER_LABEL = "N-A" as const;
+
+/** Carte « non assignée » : aucun agent réel (vide, null ou seulement 🚨/Non assigné). */
+function isAssignmentEmpty(assigneesRaw: unknown): boolean {
+  const list = normalizeAssigneeListFromStored(assigneesRaw);
+  return !list.some(
+    (slug) => slug !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(slug)
+  );
+}
+
+/** Carte « en alarme » : porte l'urgence 🚨 (rajout non traité / alerte active). */
+function hasActiveAlarm(assigneesRaw: unknown): boolean {
+  return normalizeAssigneeListFromStored(assigneesRaw).some(isUrgentAssignee);
+}
+
 /** Snapshots des identités « vues » par jour (détection des nouvelles lignes). */
 const PLANNING_ROW_SNAPSHOT_KEY = "meltin_planning_row_snapshot_v2";
 
@@ -2449,6 +2470,13 @@ export function DailyServicesView() {
     }
     if (agentFilterLabel?.trim()) {
       const label = agentFilterLabel.trim();
+      // Filtre d'urgence N-A : non assignées OU en alarme (🚨), même assignées.
+      if (planningDisplayNameEquals(label, NA_FILTER_LABEL)) {
+        return filtered.filter((row) => {
+          const raw = assignees[serviceRowUiKey(row)];
+          return isAssignmentEmpty(raw) || hasActiveAlarm(raw);
+        });
+      }
       return filtered.filter((row) =>
         isServiceAssignedToAgentLabel(assignees[serviceRowUiKey(row)], label)
       );
@@ -3750,6 +3778,40 @@ export function DailyServicesView() {
                   </Badge>
                 );
               })}
+              {(() => {
+                const isActive =
+                  agentFilterLabel != null &&
+                  planningDisplayNameEquals(agentFilterLabel, NA_FILTER_LABEL);
+                return (
+                  <Badge
+                    key={NA_FILTER_LABEL}
+                    variant="outline"
+                    role="button"
+                    tabIndex={0}
+                    className={cn(
+                      "h-7 cursor-pointer rounded-full border border-red-600/70 bg-red-600/10 px-3 py-1 text-xs font-semibold text-red-600 shadow-none transition-colors hover:bg-red-600/20 dark:text-red-400",
+                      isActive &&
+                        "border-red-600 bg-red-600/15 ring-2 ring-red-600 ring-offset-1"
+                    )}
+                    aria-pressed={isActive}
+                    title={
+                      isActive
+                        ? "Afficher tout le planning (filtre : N-A)"
+                        : "Urgences : missions non assignées + alarmes 🚨"
+                    }
+                    onClick={() => handleAgentFilterChipClick(NA_FILTER_LABEL)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      handleAgentFilterChipClick(NA_FILTER_LABEL);
+                    }}
+                  >
+                    <span className="max-w-[9rem] truncate">
+                      {NA_FILTER_LABEL}
+                    </span>
+                  </Badge>
+                );
+              })()}
             </div>
           ) : null}
         </div>
@@ -3777,7 +3839,9 @@ export function DailyServicesView() {
           {meOnly
             ? "Aucun service assigné à vous"
             : agentFilterLabel?.trim()
-              ? `Aucun service assigné à ${agentFilterLabel.trim()}`
+              ? planningDisplayNameEquals(agentFilterLabel.trim(), NA_FILTER_LABEL)
+                ? "Aucune mission non assignée ni en alarme 🚨"
+                : `Aucun service assigné à ${agentFilterLabel.trim()}`
               : "Aucun planning pour cette journée"}
         </p>
       ) : (
