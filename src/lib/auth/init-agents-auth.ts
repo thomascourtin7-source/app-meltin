@@ -1,11 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { isPlanningAdminDisplayName } from "@/lib/planning/planning-admins";
 import {
   PLANNING_ASSIGNEE_OPTIONS,
   authAgents,
-  isPlanningAssignmentOnlySlug,
-  isPlanningInternalAgentSlug,
-  isPlanningTechnicalAdminSlug,
 } from "@/lib/planning/planning-team";
 
 type AgentAuthSeed = {
@@ -22,15 +20,17 @@ function buildAgentAuthSeeds(): AgentAuthSeed[] {
   for (const option of PLANNING_ASSIGNEE_OPTIONS) {
     if (option.value === "__none__" || option.value === "emoji_alert") continue;
 
-    const assignmentOnly = isPlanningAssignmentOnlySlug(option.value);
-    const technicalAdmin = isPlanningTechnicalAdminSlug(option.value);
-    const internalAgent = isPlanningInternalAgentSlug(option.value);
     const canLogin = authAgents().some((o) => o.value === option.value);
+    // Le rôle admin dérive UNIQUEMENT de la liste des administrateurs (source de
+    // vérité, alignée sur le contrôle front-end et serveur). Un agent interne
+    // opérationnel hors de cette liste (ex. Rayane) reste un agent STANDARD.
+    const role: AgentAuthSeed["role"] = isPlanningAdminDisplayName(option.label)
+      ? "admin"
+      : "agent";
     seeds.push({
       name: option.label,
       email: null,
-      role:
-        assignmentOnly ? "agent" : technicalAdmin || internalAgent ? "admin" : "agent",
+      role,
       can_login: canLogin,
       password: null,
     });

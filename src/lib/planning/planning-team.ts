@@ -26,6 +26,7 @@ export const PLANNING_ASSIGNEE_OPTIONS = [
   { value: "pravin", label: "Pravin" },
   { value: "deva", label: "Deva" },
   { value: "kumar", label: "Kumar" },
+  { value: "rayane", label: "Rayane" },
   { value: "tij", label: "TIJ" },
   { value: "aida", label: "AIDA" },
   { value: "yaya", label: "YAYA" },
@@ -37,7 +38,12 @@ export const PLANNING_ASSIGNEE_OPTIONS = [
   },
 ] as const;
 
-/** Agents internes (badges + droits admin planning). */
+/**
+ * Agents internes opérationnels : badge en barre du haut, filtre « Me »,
+ * connexion. ⚠️ N'implique PAS le rôle admin : l'autorité admin est définie
+ * uniquement par {@link ADMINS} (cf. `planning-admins.ts`). Ex. « rayane » est
+ * un agent interne STANDARD (non-admin).
+ */
 export const PLANNING_INTERNAL_AGENT_SLUGS = [
   "pravin",
   "deva",
@@ -47,6 +53,7 @@ export const PLANNING_INTERNAL_AGENT_SLUGS = [
   "karthik",
   "javed",
   "elias",
+  "rayane",
 ] as const;
 
 /** Comptes admin techniques (connexion OK, jamais assignés ni badge opérationnel). */
@@ -237,6 +244,7 @@ export const PLANNING_AGENT_FILTER_BAR_LABELS = [
   "Pravin",
   "Deva",
   "Kumar",
+  "Rayane",
   "TIJ",
   "AIDA",
   "YAYA",
