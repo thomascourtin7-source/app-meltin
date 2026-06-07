@@ -184,6 +184,16 @@ export function parseDailyServiceRows(
     "ASSIGNED",
     "DRIVER ASSIGNED",
   ]);
+  // Colonne « Id » (K) : identifiant natif unique de la mission. Source de
+  // vérité du `service_id` Supabase si présent (insensible aux fautes de frappe).
+  const idCol = findColumnIndex(headers, [
+    "ID",
+    "id",
+    "IDENTIFIANT",
+    "ID MISSION",
+    "MISSION ID",
+    "UID",
+  ]);
 
   if (dateCol < 0 || clientCol < 0 || typeCol < 0) {
     throw new Error(
@@ -203,7 +213,18 @@ export function parseDailyServiceRows(
     const type = cell(row, typeCol);
     if (!client && !type) continue;
 
+    const sheetId = idCol >= 0 ? cell(row, idCol) : "";
+    // Sécurité : colonne « Id » présente mais cellule vide → on prévient (la
+    // mission reste affichée via la clé composite, mais l'ID natif est attendu).
+    if (idCol >= 0 && !sheetId) {
+      console.warn(
+        "[daily-services] Colonne « Id » vide pour une mission — repli sur la clé composite.",
+        { dateIso, client, type, vol: volCol >= 0 ? cell(row, volCol) : "" }
+      );
+    }
+
     out.push({
+      sheetId,
       dateIso: normalizeCanonicalDateKey(dateIso),
       client,
       tel: telCol >= 0 ? cell(row, telCol) : "",

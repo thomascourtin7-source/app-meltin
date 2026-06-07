@@ -55,20 +55,36 @@ export function normalizeClientIdentity(client: string): string {
 }
 
 /**
- * Identifiant mission : date + vol + RDV + CLIENT (insensible à la position
- * dans le Sheet).
+ * Clé composite (date + vol + RDV + CLIENT) — repli historique quand la
+ * mission n'a PAS d'ID natif (colonne « Id » absente / vide).
  *
  * ⚠️ Le client est intégré pour que DEUX clients différents sur le même vol à
  * la même heure (ex. AF754 06:30) restent des missions TOTALEMENT indépendantes
  * (assignations / rapports distincts). Sans lui, les missions « jumelles »
  * partageaient le même `service_id` et leurs agents étaient liés.
  */
-export function serviceMissionIdentityKey(row: DailyServiceRow): string {
+export function compositeMissionIdentityKey(row: DailyServiceRow): string {
   const date = normalizeCanonicalDateKey(normPart(row.dateIso).toLowerCase());
   const vol = normalizeVolIdentity(row.vol);
   const rdv = normalizeServiceRdvIdentity(row);
   const client = normalizeClientIdentity(row.client);
   return [date, vol, rdv, client].join("|");
+}
+
+/**
+ * Identifiant mission CANONIQUE.
+ *
+ * Priorité ABSOLUE à l'ID natif du Sheet (colonne « Id », ex.
+ * `260601-TIM-ARRIVEE-64`) : il est stable même si le nom du client, l'heure ou
+ * le vol sont corrigés → l'agent assigné ne « disparaît » plus de la carte.
+ *
+ * Repli sur la clé composite uniquement si la colonne « Id » est absente/vide
+ * (rétro-compatibilité avec les Sheets pas encore migrés).
+ */
+export function serviceMissionIdentityKey(row: DailyServiceRow): string {
+  const nativeId = normPart(row.sheetId);
+  if (nativeId) return nativeId;
+  return compositeMissionIdentityKey(row);
 }
 
 /**
@@ -111,6 +127,8 @@ export function legacyServiceUrgencyIdentityKey(row: DailyServiceRow): string {
 export function collectSnapshotIdentityKeys(row: DailyServiceRow): string[] {
   const keys = [
     serviceMissionIdentityKey(row),
+    // Repli : clé composite (assignations/rapports créés avant l'ID natif).
+    compositeMissionIdentityKey(row),
     legacyMissionIdentityKeyNoClient(row),
     legacyStableServiceRowKey(row),
     legacyServiceUrgencyIdentityKey(row),
@@ -215,5 +233,6 @@ export function logIdentityMatchFailure(
 /**
  * Version algo identité (migration snapshot cron sans spam).
  * v3 : ajout du client dans la clé mission (date|vol|rdv|client).
+ * v4 : priorité à l'ID natif du Sheet (colonne « Id ») comme clé canonique.
  */
-export const PLANNING_IDENTITY_ALGO_VERSION = 3;
+export const PLANNING_IDENTITY_ALGO_VERSION = 4;

@@ -1,6 +1,7 @@
 import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import {
+  compositeMissionIdentityKey,
   legacyMissionIdentityKeyNoClient,
   legacyStableServiceRowKey,
   serviceMissionIdentityKey,
@@ -29,6 +30,9 @@ export function serviceReportIdFromRow(row: DailyServiceRow): string {
 export function serviceLookupIdsFromRow(row: DailyServiceRow): string[] {
   const ids = [
     serviceReportIdFromRow(row),
+    // Repli : clé composite date|vol|rdv|client (assignations/rapports créés
+    // AVANT l'ID natif du Sheet) → migration transparente vers l'ID natif.
+    compositeMissionIdentityKey(row),
     // Repli : ancienne clé canonique sans client (assignations/rapports
     // créés avant l'ajout du client dans la clé). Ambiguë pour les missions
     // jumelles → neutralisée côté lecture par le compteur de références.
