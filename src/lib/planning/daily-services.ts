@@ -214,13 +214,15 @@ export function parseDailyServiceRows(
     if (!client && !type) continue;
 
     const sheetId = idCol >= 0 ? cell(row, idCol) : "";
-    // Sécurité : colonne « Id » présente mais cellule vide → on prévient (la
-    // mission reste affichée via la clé composite, mais l'ID natif est attendu).
+    // Colonne « Id » (K) = clé primaire ABSOLUE. Si la colonne existe mais que la
+    // cellule est vide, on IGNORE la ligne : on n'écrit jamais un service_id
+    // vide / calculé qui casserait l'attachement des agents.
     if (idCol >= 0 && !sheetId) {
       console.warn(
-        "[daily-services] Colonne « Id » vide pour une mission — repli sur la clé composite.",
+        "[daily-services] Ligne ignorée : colonne « Id » (K) vide (aucun ID stable).",
         { dateIso, client, type, vol: volCol >= 0 ? cell(row, volCol) : "" }
       );
+      continue;
     }
 
     out.push({

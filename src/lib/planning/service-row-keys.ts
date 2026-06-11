@@ -72,18 +72,23 @@ export function compositeMissionIdentityKey(row: DailyServiceRow): string {
 }
 
 /**
- * Identifiant mission CANONIQUE.
+ * Identifiant mission CANONIQUE = valeur BRUTE de la colonne K (Id du Sheet),
+ * ex. `260601-TIM-ARRIVEE-64`. C'est la clé primaire ABSOLUE pour insérer /
+ * mettre à jour les services et les assignations dans Supabase.
  *
- * Priorité ABSOLUE à l'ID natif du Sheet (colonne « Id », ex.
- * `260601-TIM-ARRIVEE-64`) : il est stable même si le nom du client, l'heure ou
- * le vol sont corrigés → l'agent assigné ne « disparaît » plus de la carte.
+ * ⚠️ Plus AUCUN ID composite/calculé (nom client, vol, RDV) n'est généré ici.
+ * Les lignes sans Id (colonne K vide) sont ignorées en amont par le parser, donc
+ * un `service_id` reste stable même si on corrige le nom, le vol, le type ou le
+ * téléphone → l'agent assigné ne disparaît plus.
  *
- * Repli sur la clé composite uniquement si la colonne « Id » est absente/vide
- * (rétro-compatibilité avec les Sheets pas encore migrés).
+ * `compositeMissionIdentityKey` ne sert PLUS qu'au repli de LECTURE
+ * (rétro-compat des assignations créées avant la colonne K, via
+ * `serviceLookupIdsFromRow`) et aux feuilles dépourvues de colonne « Id ».
  */
 export function serviceMissionIdentityKey(row: DailyServiceRow): string {
   const nativeId = normPart(row.sheetId);
   if (nativeId) return nativeId;
+  // Feuille sans colonne « Id » uniquement (legacy) : évite un service_id vide.
   return compositeMissionIdentityKey(row);
 }
 
