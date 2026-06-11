@@ -16,5 +16,9 @@ export const ADMINS = [
 export function isPlanningAdminDisplayName(name: string): boolean {
   const t = name.trim();
   if (!t) return false;
-  return ADMINS.some((admin) => planningDisplayNameEquals(admin, t));
+  // Full Admin pour TOUS les agents connectés : chacun peut assigner/retirer,
+  // éditer les RDV et faire le rapport d'autrui. (La liste ADMINS reste exportée
+  // pour la barre de supervision / le seeding des rôles.)
+  void ADMINS;
+  return true;
 }

@@ -928,7 +928,10 @@ function ServiceBlockInner({
     });
   }, [assignees, hasNamedAssignee, meName]);
 
-  const canAction = planningSuperAdminBypass || canActionAsAssignee;
+  // Full Admin : tout agent (planningReadOnly=false) peut faire/valider le
+  // rapport, prendre la photo, gérer la PEC et éditer le RDV, même non assigné.
+  const canAction =
+    !planningReadOnly || planningSuperAdminBypass || canActionAsAssignee;
 
   const ensureSelfAssignedIfUnassigned = useCallback(() => {
     if (planningReadOnly) return;
