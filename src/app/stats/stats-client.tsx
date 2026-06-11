@@ -28,6 +28,7 @@ type StatsPayload = {
   period: PlanningStatsPeriodMeta;
   spreadsheetId: string;
   rows: PlanningScoreRow[];
+  totalMissions: number;
 };
 
 async function fetchStats(url: string, token: string): Promise<StatsPayload> {
@@ -100,8 +101,8 @@ export function StatsClient() {
             </h1>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Rapports complétés par agent, répartition matin / après-midi / journée
-            entière, et jours sans service sur la période.
+            Accueils (rapports complétés par agent assigné) et jours sans service
+            sur la période.
           </p>
         </div>
         <Button
@@ -163,7 +164,7 @@ export function StatsClient() {
       ) : null}
 
       <div className="overflow-x-auto rounded-xl border border-border/60 shadow-sm">
-        <table className="w-full min-w-[640px] border-collapse text-sm">
+        <table className="w-full min-w-[320px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border/60 bg-muted/40 text-left">
               <th className="sticky left-0 z-10 whitespace-nowrap bg-muted/40 px-3 py-3 font-semibold backdrop-blur-sm sm:px-4">
@@ -173,15 +174,6 @@ export function StatsClient() {
                 Accueils
               </th>
               <th className="whitespace-nowrap px-3 py-3 text-right font-semibold sm:px-4">
-                Matins
-              </th>
-              <th className="whitespace-nowrap px-3 py-3 text-right font-semibold sm:px-4">
-                Après-midi
-              </th>
-              <th className="whitespace-nowrap px-3 py-3 text-right font-semibold sm:px-4">
-                Journées entières
-              </th>
-              <th className="whitespace-nowrap px-3 py-3 text-right font-semibold sm:px-4">
                 Jours OFF
               </th>
             </tr>
@@ -189,7 +181,7 @@ export function StatsClient() {
           <tbody>
             {isLoading && !data ? (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
+                <td colSpan={3} className="px-4 py-12 text-center text-muted-foreground">
                   <Loader2 className="mx-auto mb-2 size-6 animate-spin" aria-hidden />
                   Chargement…
                 </td>
@@ -209,15 +201,6 @@ export function StatsClient() {
                   <td className="px-3 py-2.5 text-right tabular-nums sm:px-4">
                     {row.accueils}
                   </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums sm:px-4">
-                    {row.matins}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums sm:px-4">
-                    {row.apresMidi}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums sm:px-4">
-                    {row.journeesEntieres}
-                  </td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground sm:px-4">
                     {row.joursOff}
                   </td>
@@ -225,7 +208,7 @@ export function StatsClient() {
               ))
             ) : (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
+                <td colSpan={3} className="px-4 py-10 text-center text-muted-foreground">
                   Aucune donnée pour cette période.
                 </td>
               </tr>
@@ -233,6 +216,15 @@ export function StatsClient() {
           </tbody>
         </table>
       </div>
+
+      {data ? (
+        <div className="rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-sm font-medium">
+          Nombre total de missions traitées ce mois-ci :{" "}
+          <span className="font-semibold tabular-nums text-foreground">
+            {data.totalMissions}
+          </span>
+        </div>
+      ) : null}
 
       {isValidating && data ? (
         <p className="text-center text-xs text-muted-foreground">Mise à jour…</p>
