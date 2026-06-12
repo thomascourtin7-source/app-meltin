@@ -26,6 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { TimeField } from "@/components/ui/time-field";
 import {
   Select,
   SelectContent,
@@ -573,31 +574,14 @@ function DepartureEtaButton({
         ETA&nbsp;:
       </span>
       <div className="relative flex min-h-8 min-w-0 flex-1 items-center justify-center">
-        {!hasEta ? (
-          <span
-            className="pointer-events-none absolute inset-0 flex items-center justify-center text-base font-bold leading-none text-[#0a192f]"
-            aria-hidden
-          >
-            --:--
-          </span>
-        ) : null}
-        <input
-          type="time"
-          step={60}
-          autoComplete="off"
-          disabled={disabled}
-          aria-label="Heure d’arrivée estimée (ETA)"
-          className={cn(
-            "planning-eta-time-input relative z-[1] m-0 box-border h-8 min-w-[4.5rem] flex-1 cursor-pointer rounded bg-transparent px-0 text-center text-base font-bold tabular-nums leading-none outline-none focus-visible:outline-none",
-            hasEta ? "text-[#0a192f]" : "text-transparent caret-[#0a192f]"
-          )}
+        <TimeField
           value={etaHHMM ?? ""}
-          onPointerDown={(e) => e.stopPropagation()}
-          onChange={(e) => {
-            void persistEta(e.currentTarget.value);
-          }}
-          onBlur={(e) => {
-            void persistEta(e.currentTarget.value);
+          disabled={disabled}
+          ariaLabel="Heure d’arrivée estimée (ETA)"
+          className="flex-1 justify-center text-[#0a192f]"
+          selectClassName="min-w-[2.25rem] px-0 text-[#0a192f]"
+          onChange={(hhmm) => {
+            void persistEta(hhmm);
           }}
         />
       </div>

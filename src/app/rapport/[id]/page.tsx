@@ -8,8 +8,8 @@ import { Pencil } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { TimeField } from "@/components/ui/time-field";
 import {
   Select,
   SelectContent,
@@ -554,15 +554,14 @@ export default function RapportServicePage() {
                   Début du service
                 </div>
                 {isEditingHours ? (
-                  <Input
-                    type="time"
-                    step={60}
-                    autoComplete="off"
-                    value={meetingTimeEdit}
-                    onChange={(e) => setMeetingTimeEdit(e.target.value)}
-                    className="mt-0.5 h-9 border-border/50 bg-background/80 font-medium text-foreground"
-                    aria-label="Début du service"
-                  />
+                  <div className="mt-0.5 flex h-9 items-center rounded-md border border-border/50 bg-background/80 px-2">
+                    <TimeField
+                      value={meetingTimeEdit}
+                      onChange={(hhmm) => setMeetingTimeEdit(hhmm)}
+                      ariaLabel="Début du service"
+                      selectClassName="font-medium text-foreground"
+                    />
+                  </div>
                 ) : (
                   <div className="mt-0.5 rounded-md border border-transparent bg-background/80 px-2 py-1.5 font-medium text-foreground">
                     {formatTimeForDisplay(
@@ -578,15 +577,14 @@ export default function RapportServicePage() {
                   Fin du service
                 </div>
                 {isEditingHours ? (
-                  <Input
-                    type="time"
-                    step={60}
-                    autoComplete="off"
-                    value={endOfServiceEdit}
-                    onChange={(e) => setEndOfServiceEdit(e.target.value)}
-                    className="mt-0.5 h-9 border-border/50 bg-background/80 font-medium text-foreground"
-                    aria-label="Fin du service"
-                  />
+                  <div className="mt-0.5 flex h-9 items-center rounded-md border border-border/50 bg-background/80 px-2">
+                    <TimeField
+                      value={endOfServiceEdit}
+                      onChange={(hhmm) => setEndOfServiceEdit(hhmm)}
+                      ariaLabel="Fin du service"
+                      selectClassName="font-medium text-foreground"
+                    />
+                  </div>
                 ) : (
                   <div className="mt-0.5 rounded-md border border-transparent bg-background/80 px-2 py-1.5 font-medium text-foreground">
                     {formatTimeForDisplay(
