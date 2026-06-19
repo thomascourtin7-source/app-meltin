@@ -90,6 +90,8 @@ type ServiceReportRow = {
   boarding_end_of_service: string | null;
   transit_bags: string | null;
   bags_status: string | null;
+  no_show: boolean | null;
+  no_checked_bags: boolean | null;
   is_pec: boolean | null;
   pec_status: string | null;
   completed_at: string | null;
@@ -292,6 +294,8 @@ export default function RapportServicePage() {
     useState<string>("");
   const [comments, setComments] = useState<string>("");
   const [bagsStatus, setBagsStatus] = useState<string>("");
+  const [noShow, setNoShow] = useState<boolean>(false);
+  const [noCheckedBags, setNoCheckedBags] = useState<boolean>(false);
   const [isEditingHours, setIsEditingHours] = useState(false);
   const [meetingTimeEdit, setMeetingTimeEdit] = useState("");
   const [endOfServiceEdit, setEndOfServiceEdit] = useState("");
@@ -308,6 +312,8 @@ export default function RapportServicePage() {
     setImmigrationSecuritySpeed("");
     setComments("");
     setBagsStatus("");
+    setNoShow(false);
+    setNoCheckedBags(false);
     setIsEditingHours(false);
     setMeetingTimeEdit("");
     setEndOfServiceEdit("");
@@ -330,6 +336,8 @@ export default function RapportServicePage() {
     setImmigrationSecuritySpeed(existingReport.immigration_security_speed ?? "");
     setComments(existingReport.comments ?? "");
     setBagsStatus(readBagsStatusFromReport(existingReport));
+    setNoShow(existingReport.no_show === true);
+    setNoCheckedBags(existingReport.no_checked_bags === true);
     setMeetingTimeEdit(timeToTimeInputValue(existingReport.meeting_time));
     setEndOfServiceEdit(timeToTimeInputValue(existingReport.end_of_service));
   }, [existingReport, isSubmitting]);
@@ -356,7 +364,14 @@ export default function RapportServicePage() {
       setSubmitError("Service introuvable pour ce rapport.");
       return;
     }
-    if (reportKind === "transit" && !bagsStatus.trim()) {
+    const isArrivalNoShow = reportKind === "arrival" && noShow;
+    if (isArrivalNoShow && !comments.trim()) {
+      setSubmitError(
+        "Veuillez renseigner les COMMENTS (circonstances du No Show)."
+      );
+      return;
+    }
+    if (!isArrivalNoShow && reportKind === "transit" && !bagsStatus.trim()) {
       setSubmitError("Veuillez sélectionner le statut bagages (Bagages).");
       return;
     }
@@ -393,15 +408,19 @@ export default function RapportServicePage() {
         assignee_name: primaryAssignee,
         report_kind: reportKind,
         completed_at: new Date().toISOString(),
-        meeting_time,
-        end_of_service,
-        photo_url: latest?.photo_url ?? null,
+        meeting_time: isArrivalNoShow ? null : meeting_time,
+        end_of_service: isArrivalNoShow ? null : end_of_service,
+        photo_url: isArrivalNoShow ? null : latest?.photo_url ?? null,
         pec_status: latest ? pecStatusFromStored(latest) : "vide",
         is_pec: latest ? pecStatusToIsPec(pecStatusFromStored(latest)) : false,
-        pax,
+        no_show: reportKind === "arrival" ? noShow : false,
+        no_checked_bags: isArrivalNoShow ? false : noCheckedBags,
+        pax: isArrivalNoShow ? null : pax,
         comments: comments || null,
         immigration_speed:
-          reportKind === "arrival" ? immigrationSpeed || null : null,
+          !isArrivalNoShow && reportKind === "arrival"
+            ? immigrationSpeed || null
+            : null,
         immigration_security_speed:
           reportKind !== "arrival" ? immigrationSecuritySpeed || null : null,
         deplanning: null,
@@ -417,7 +436,10 @@ export default function RapportServicePage() {
         vip_lounge: null,
         boarding_end_of_service: null,
         transit_bags: null,
-        bags_status: reportKind === "transit" ? bagsStatus.trim() : null,
+        bags_status:
+          !isArrivalNoShow && reportKind === "transit"
+            ? bagsStatus.trim()
+            : null,
         place_end_of_service: null,
       };
 
@@ -459,9 +481,16 @@ export default function RapportServicePage() {
     []
   );
 
-  const transitBagsMissing = reportKind === "transit" && !bagsStatus.trim();
+  const isArrivalNoShowUi = reportKind === "arrival" && noShow;
+  const transitBagsMissing =
+    !isArrivalNoShowUi && reportKind === "transit" && !bagsStatus.trim();
+  const noShowCommentsMissing = isArrivalNoShowUi && !comments.trim();
   const endDisabled =
-    isSubmitting || planningLoading || !serviceRow || transitBagsMissing;
+    isSubmitting ||
+    planningLoading ||
+    !serviceRow ||
+    transitBagsMissing ||
+    noShowCommentsMissing;
   return (
     <div className="relative mx-auto w-full max-w-3xl px-4 py-6">
       {isSubmitting || isLeavingPage ? (
@@ -522,6 +551,28 @@ export default function RapportServicePage() {
 
           {/* debug banner removed */}
 
+          {reportKind === "arrival" ? (
+            <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-amber-400/60 bg-amber-50 p-3 text-sm font-medium text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <input
+                type="checkbox"
+                className="size-5 shrink-0 cursor-pointer accent-amber-600"
+                checked={noShow}
+                onChange={(e) => {
+                  setNoShow(e.target.checked);
+                  setSubmitError(null);
+                  setSubmitRetryable(false);
+                }}
+              />
+              <span>
+                No Show
+                <span className="ml-1 font-normal text-amber-800/80 dark:text-amber-300/80">
+                  (client absent — seul COMMENTS reste requis)
+                </span>
+              </span>
+            </label>
+          ) : null}
+
+          {isArrivalNoShowUi ? null : (
           <div className="rounded-lg border border-border/60 bg-muted/25 p-4 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -597,8 +648,11 @@ export default function RapportServicePage() {
               </div>
             </div>
           </div>
+          )}
 
-          {existingReport?.photo_url?.trim() && reportKind !== "departure" ? (
+          {!isArrivalNoShowUi &&
+          existingReport?.photo_url?.trim() &&
+          reportKind !== "departure" ? (
             <div className="space-y-2">
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Photo du service
@@ -614,6 +668,7 @@ export default function RapportServicePage() {
           ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
+            {!isArrivalNoShowUi ? (
             <div className="space-y-1.5">
               <Label>PAX</Label>
               <Select
@@ -632,8 +687,9 @@ export default function RapportServicePage() {
                 </SelectContent>
               </Select>
             </div>
+            ) : null}
 
-            {reportKind === "arrival" ? (
+            {isArrivalNoShowUi ? null : reportKind === "arrival" ? (
               <div className="space-y-1.5">
                 <Label>IMMIGRATION SPEED</Label>
                 <Select
@@ -670,7 +726,19 @@ export default function RapportServicePage() {
               </div>
             )}
 
-            {reportKind === "transit" ? (
+            {!isArrivalNoShowUi && reportKind !== "transit" ? (
+              <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm font-medium sm:col-span-2">
+                <input
+                  type="checkbox"
+                  className="size-5 shrink-0 cursor-pointer accent-primary"
+                  checked={noCheckedBags}
+                  onChange={(e) => setNoCheckedBags(e.target.checked)}
+                />
+                <span>No Checked bags - carry on only</span>
+              </label>
+            ) : null}
+
+            {!isArrivalNoShowUi && reportKind === "transit" ? (
               <div className="space-y-1.5 sm:col-span-2">
                 <Label>
                   Bagages (Bags) <span className="text-destructive">*</span>
@@ -704,11 +772,28 @@ export default function RapportServicePage() {
             ) : null}
 
             <div className="space-y-1.5 sm:col-span-2">
-              <Label>COMMENTS</Label>
+              <Label>
+                COMMENTS
+                {isArrivalNoShowUi ? (
+                  <span className="text-destructive"> *</span>
+                ) : null}
+              </Label>
               <Textarea
                 value={comments}
-                onChange={(e) => setComments(e.target.value)}
-                placeholder="..."
+                onChange={(e) => {
+                  setComments(e.target.value);
+                  if (e.target.value.trim()) {
+                    setSubmitError(null);
+                    setSubmitRetryable(false);
+                  }
+                }}
+                placeholder={
+                  isArrivalNoShowUi
+                    ? "Expliquez les circonstances du No Show…"
+                    : "..."
+                }
+                aria-required={isArrivalNoShowUi}
+                aria-invalid={noShowCommentsMissing}
               />
             </div>
           </div>

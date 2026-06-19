@@ -47,6 +47,8 @@ type ServiceReportRow = {
   boarding_end_of_service: string | null;
   transit_bags: string | null;
   bags_status: string | null;
+  no_show: boolean | null;
+  no_checked_bags: boolean | null;
   is_pec: boolean | null;
   pec_status: string | null;
   completed_at: string | null;

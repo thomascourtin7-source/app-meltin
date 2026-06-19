@@ -44,6 +44,8 @@ export type ServiceReportPdfData = {
   boardingEndOfService?: string | null;
   transitBags?: string | null;
   bagsStatus?: string | null;
+  noShow?: boolean | null;
+  noCheckedBags?: boolean | null;
   endOfService?: string | null;
   placeEndOfService?: string | null;
   comments?: string | null;
@@ -127,6 +129,8 @@ export type ServiceReportRowSnapshotForPdf = {
   comments?: string | null;
   bags_status?: string | null;
   transit_bags?: string | null;
+  no_show?: boolean | null;
+  no_checked_bags?: boolean | null;
 };
 
 /**
@@ -166,6 +170,8 @@ export function serviceReportSnapshotToPdfData(opts: {
     immigrationSecuritySpeed: r.immigration_security_speed,
     comments: r.comments,
     bagsStatus: readBagsStatusFromReport(r) || null,
+    noShow: r.no_show === true,
+    noCheckedBags: r.no_checked_bags === true,
   };
 }
 
@@ -205,6 +211,47 @@ export async function generateServiceReportPdf(
     maxWidth: pageWidth - marginX * 2 - (logo ? 62 : 0),
   });
 
+  const drawFooter = () => {
+    const footerText = `Generated: ${new Intl.DateTimeFormat("fr-FR", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(new Date())}`;
+    doc.setFontSize(9);
+    doc.setTextColor(120);
+    doc.text(footerText, marginX, doc.internal.pageSize.getHeight() - 28);
+  };
+
+  // NO SHOW (arrivée) : bandeau + commentaires uniquement, rien d'autre.
+  if (data.noShow) {
+    const bannerY = top + 68;
+    doc.setFillColor(200, 30, 30);
+    doc.rect(marginX, bannerY, pageWidth - marginX * 2, 32, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.setTextColor(255, 255, 255);
+    doc.text("Statut : NO SHOW", marginX + 12, bannerY + 21);
+    doc.setTextColor(0, 0, 0);
+
+    autoTable(doc, {
+      startY: bannerY + 48,
+      head: [["Commentaires", ""]],
+      body: [["COMMENTS", clean(data.comments) || "—"]],
+      theme: "grid",
+      styles: { font: "helvetica", fontSize: 10, cellPadding: 6, valign: "top" },
+      headStyles: { fillColor: [16, 104, 196] },
+      columnStyles: {
+        0: { cellWidth: 160, fontStyle: "bold" },
+        1: { cellWidth: pageWidth - marginX * 2 - 160, minCellHeight: 60 },
+      },
+      didParseCell: (hook) => {
+        if (hook.section === "head") hook.cell.colSpan = 2;
+      },
+    });
+
+    drawFooter();
+    return doc;
+  }
+
   const serviceDetails: Array<[string, string]> = [
     ["VOL", clean(data.serviceVol) || "—"],
     ["DEST/PROV", clean(data.serviceDestProv) || "—"],
@@ -241,7 +288,14 @@ export async function generateServiceReportPdf(
     [immigrationLabel, immigrationValue || "—"],
     ...(kind === "transit"
       ? [["BAGAGES (BAGS)", bagsStatusDisplayLabel(data.bagsStatus) || "—"] as [string, string]]
-      : []),
+      : [
+          [
+            "BAGAGES",
+            data.noCheckedBags
+              ? "No checked bags - carry on only"
+              : "Bagages en soute",
+          ] as [string, string],
+        ]),
     ["COMMENTS", clean(data.comments) || "—"],
   ];
 
@@ -292,13 +346,7 @@ export async function generateServiceReportPdf(
     },
   });
 
-  const footerText = `Generated: ${new Intl.DateTimeFormat("fr-FR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date())}`;
-  doc.setFontSize(9);
-  doc.setTextColor(120);
-  doc.text(footerText, marginX, doc.internal.pageSize.getHeight() - 28);
+  drawFooter();
 
   return doc;
 }
