@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { pecStatusFromStored, pecStatusToIsPec } from "@/lib/planning/pec-status";
+import {
+  pecStatusFromStored,
+  pecStatusToIsPec,
+  type PecStatus,
+} from "@/lib/planning/pec-status";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
@@ -56,7 +60,7 @@ export async function POST(request: Request) {
 
   const existing = new Set<string>();
   const isPecByServiceId: Record<string, boolean> = {};
-  const pecStatusByServiceId: Record<string, "vide" | "en_place" | "pec"> = {};
+  const pecStatusByServiceId: Record<string, PecStatus> = {};
   const isCompletedByServiceId: Record<string, boolean> = {};
   const hasPhotoByServiceId: Record<string, boolean> = {};
   const photoUrlByServiceId: Record<string, string | null> = {};

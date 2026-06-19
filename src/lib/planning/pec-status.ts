@@ -1,10 +1,27 @@
-/** Cycle PEC planning : vide → en_place → pec → vide. */
-export const PEC_STATUS_VALUES = ["vide", "en_place", "pec"] as const;
+/**
+ * Statuts PEC planning.
+ * - Départs (cycle bouton unique) : vide → en_place → pec → vide.
+ * - Arrivées (3 boutons) : ep_large (E.P LARGE), ep_bloc (E.P BLOC), pec.
+ */
+export const PEC_STATUS_VALUES = [
+  "vide",
+  "en_place",
+  "ep_large",
+  "ep_bloc",
+  "pec",
+] as const;
 
 export type PecStatus = (typeof PEC_STATUS_VALUES)[number];
 
 export function isValidPecStatus(value: string): value is PecStatus {
   return (PEC_STATUS_VALUES as readonly string[]).includes(value);
+}
+
+/** Statuts « en place » (pastille orange) : commun départs/arrivées. */
+export function isEnPlaceLikeStatus(status: PecStatus): boolean {
+  return (
+    status === "en_place" || status === "ep_large" || status === "ep_bloc"
+  );
 }
 
 export function normalizePecStatus(
@@ -40,6 +57,8 @@ export function pecStatusFromStored(row: {
 }
 
 export function pecStatusButtonLabel(status: PecStatus): string {
+  if (status === "ep_large") return "E.P LARGE";
+  if (status === "ep_bloc") return "E.P BLOC";
   if (status === "en_place") return "EN PLACE";
   return "PEC";
 }

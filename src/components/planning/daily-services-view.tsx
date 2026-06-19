@@ -94,6 +94,7 @@ import {
 } from "@/lib/planning/planning-super-admins";
 import { formatLocalTimeHHMMSS } from "@/lib/reports/report-time";
 import {
+  isEnPlaceLikeStatus,
   nextPecStatus,
   pecStatusButtonLabel,
   type PecStatus,
@@ -616,6 +617,8 @@ type ServiceBlockProps = {
   /** Miniature après prise de vue (image déjà redressée côté client). */
   servicePhotoPreviewUrl?: string | null;
   onCyclePecStatus: (opts: { serviceId: string }) => Promise<void>;
+  /** Arrivées : fixe explicitement le statut (E.P LARGE / E.P BLOC / PEC) ou le remet à vide. */
+  onSetPecStatus: (opts: { serviceId: string; status: PecStatus }) => Promise<void>;
   onCapturePhoto: (opts: {
     serviceId: string;
     row: DailyServiceRow;
@@ -692,6 +695,7 @@ function ServiceBlockInner({
   hasPhoto,
   servicePhotoPreviewUrl = null,
   onCyclePecStatus,
+  onSetPecStatus,
   onCapturePhoto,
   onOpenReportForm,
   onDownloadReportPdf,
@@ -1350,7 +1354,7 @@ function ServiceBlockInner({
               <PlanningPhoneRichText text={row.client.trim() || "—"} tone="inherit" />
               {pecStatus === "pec"
                 ? " 🟢"
-                : pecStatus === "en_place"
+                : isEnPlaceLikeStatus(pecStatus)
                   ? " 🟠"
                   : ""}
             </h2>
@@ -1450,55 +1454,130 @@ function ServiceBlockInner({
         ) : null}
 
         <p className="mb-3 text-sm leading-relaxed text-white">
-          <span className="inline-flex items-center gap-3">
+          <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-semibold text-slate-200">
               Type :{" "}
             </span>
             <PlanningPhoneRichText text={typeLine || "—"} tone="inherit" />
-            <span className="relative inline-flex items-center">
-              <button
-                type="button"
-                disabled={!canAction}
-                aria-pressed={pecStatus !== "vide"}
-                aria-label={`Statut PEC : ${pecStatus === "vide" ? "vide" : pecStatus === "en_place" ? "en place" : "PEC"}`}
-                className={cn(
-                  "inline-flex min-h-8 min-w-[5.5rem] items-center justify-center rounded-md border px-2.5 py-1 text-xs font-bold uppercase tracking-wide transition-colors",
-                  pecStatus === "vide" &&
-                    "border-slate-500/80 bg-slate-800/40 text-slate-300 hover:bg-slate-700/50",
-                  pecStatus === "en_place" &&
-                    "border-amber-400 bg-amber-500 text-amber-950 shadow-sm hover:bg-amber-400",
-                  pecStatus === "pec" &&
-                    "border-emerald-500 bg-emerald-600 text-white shadow-sm hover:bg-emerald-500",
-                  !canAction && "cursor-not-allowed opacity-45"
-                )}
-                title={
-                  !canAction && hasNamedAssignee
-                    ? "Réservé à l’agent assigné à ce service"
-                    : "Cliquer pour changer : vide → EN PLACE → PEC → vide"
-                }
-                onClick={() => {
-                  if (!canAction) {
-                    showLockedHint();
-                    return;
+            {reportKind === "departure" ? (
+              <span className="relative inline-flex shrink-0 items-center">
+                <button
+                  type="button"
+                  disabled={!canAction}
+                  aria-pressed={pecStatus !== "vide"}
+                  aria-label={`Statut PEC : ${pecStatus === "vide" ? "vide" : isEnPlaceLikeStatus(pecStatus) ? "en place" : "PEC"}`}
+                  className={cn(
+                    "inline-flex min-h-8 min-w-[5.5rem] items-center justify-center rounded-md border px-2.5 py-1 text-xs font-bold uppercase tracking-wide transition-colors",
+                    pecStatus === "vide" &&
+                      "border-slate-500/80 bg-slate-800/40 text-slate-300 hover:bg-slate-700/50",
+                    isEnPlaceLikeStatus(pecStatus) &&
+                      "border-amber-400 bg-amber-500 text-amber-950 shadow-sm hover:bg-amber-400",
+                    pecStatus === "pec" &&
+                      "border-emerald-500 bg-emerald-600 text-white shadow-sm hover:bg-emerald-500",
+                    !canAction && "cursor-not-allowed opacity-45"
+                  )}
+                  title={
+                    !canAction && hasNamedAssignee
+                      ? "Réservé à l’agent assigné à ce service"
+                      : "Cliquer pour changer : vide → EN PLACE → PEC → vide"
                   }
-                  const next = nextPecStatus(pecStatus);
-                  if (next === "en_place" || next === "pec") {
-                    ensureSelfAssignedIfUnassigned();
-                  }
-                  onCyclePecStatus({ serviceId: reportServiceId }).catch(
-                    (err) => {
-                      console.error(err);
-                      window.alert(
-                        err instanceof Error
-                          ? err.message
-                          : "Mise à jour PEC impossible."
-                      );
+                  onClick={() => {
+                    if (!canAction) {
+                      showLockedHint();
+                      return;
                     }
-                  );
-                }}
-              >
-                {pecStatusButtonLabel(pecStatus)}
-              </button>
+                    const next = nextPecStatus(pecStatus);
+                    if (next === "en_place" || next === "pec") {
+                      ensureSelfAssignedIfUnassigned();
+                    }
+                    onCyclePecStatus({ serviceId: reportServiceId }).catch(
+                      (err) => {
+                        console.error(err);
+                        window.alert(
+                          err instanceof Error
+                            ? err.message
+                            : "Mise à jour PEC impossible."
+                        );
+                      }
+                    );
+                  }}
+                >
+                  {pecStatusButtonLabel(pecStatus)}
+                </button>
+                {!canAction && hasNamedAssignee ? (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    aria-label="Action réservée à l’agent assigné"
+                    className="absolute inset-0 z-[1] cursor-not-allowed rounded-sm"
+                    onClick={() => showLockedHint()}
+                  />
+                ) : null}
+              </span>
+            ) : null}
+          </span>
+          {reportKind === "arrival" || reportKind === "transit" ? (
+            <span className="relative mt-1.5 flex w-full min-w-0 flex-row flex-nowrap items-center gap-1 whitespace-nowrap">
+              {(
+                [
+                  { status: "ep_large", label: "E.P LARGE" },
+                  { status: "ep_bloc", label: "E.P BLOC" },
+                  { status: "pec", label: "PEC" },
+                ] as const
+              ).map((opt) => {
+                const active = pecStatus === opt.status;
+                return (
+                  <button
+                    key={opt.status}
+                    type="button"
+                    disabled={!canAction}
+                    aria-pressed={active}
+                    aria-label={`Statut ${opt.label}${active ? " (sélectionné)" : ""}`}
+                    className={cn(
+                      "inline-flex min-h-7 shrink-0 items-center justify-center rounded border px-1 py-0.5 text-[10px] font-bold uppercase leading-none tracking-tight transition-colors",
+                      !active &&
+                        "border-slate-500/80 bg-slate-800/40 text-slate-300 hover:bg-slate-700/50",
+                      active &&
+                        opt.status === "pec" &&
+                        "border-emerald-500 bg-emerald-600 text-white shadow-sm hover:bg-emerald-500",
+                      active &&
+                        opt.status !== "pec" &&
+                        "border-amber-400 bg-amber-500 text-amber-950 shadow-sm hover:bg-amber-400",
+                      !canAction && "cursor-not-allowed opacity-45"
+                    )}
+                    title={
+                      !canAction && hasNamedAssignee
+                        ? "Réservé à l’agent assigné à ce service"
+                        : active
+                          ? "Cliquer pour annuler ce statut"
+                          : `Définir le statut : ${opt.label}`
+                    }
+                    onClick={() => {
+                      if (!canAction) {
+                        showLockedHint();
+                        return;
+                      }
+                      const nextStatus: PecStatus = active ? "vide" : opt.status;
+                      if (nextStatus !== "vide") {
+                        ensureSelfAssignedIfUnassigned();
+                      }
+                      onSetPecStatus({
+                        serviceId: reportServiceId,
+                        status: nextStatus,
+                      }).catch((err) => {
+                        console.error(err);
+                        window.alert(
+                          err instanceof Error
+                            ? err.message
+                            : "Mise à jour du statut impossible."
+                        );
+                      });
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
               {!canAction && hasNamedAssignee ? (
                 <button
                   type="button"
@@ -1509,7 +1588,7 @@ function ServiceBlockInner({
                 />
               ) : null}
             </span>
-          </span>
+          ) : null}
         </p>
         <p className="mb-2 text-sm font-medium leading-relaxed text-white">
           <PlanningPhoneRichText text={formatVolRdvLine(row)} tone="inherit" />
@@ -2950,6 +3029,58 @@ export function DailyServicesView() {
     ]
   );
 
+  const persistPecStatus = useCallback(
+    async (opts: {
+      serviceId: string;
+      row: DailyServiceRow;
+      next: PecStatus;
+    }) => {
+      const kind = detectServiceReportKind(opts.row.type);
+      const next = opts.next;
+
+      const optimistic = {
+        ...(reportExistence ?? {
+          hasReport: {},
+          isPecByServiceId: {},
+          pecStatusByServiceId: {},
+          isCompletedByServiceId: {},
+          hasPhotoByServiceId: {},
+          photoUrlByServiceId: {},
+        }),
+        pecStatusByServiceId: {
+          ...(reportExistence?.pecStatusByServiceId ?? {}),
+          [opts.serviceId]: next,
+        },
+        isPecByServiceId: {
+          ...(reportExistence?.isPecByServiceId ?? {}),
+          [opts.serviceId]: next === "pec",
+        },
+      };
+      void mutateReports(optimistic, { revalidate: false });
+
+      const res = await fetch("/api/service-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spreadsheet_id: spreadsheetId,
+          service_id: opts.serviceId,
+          service_date: opts.row.dateIso,
+          service_client: opts.row.client,
+          service_type: opts.row.type,
+          report_kind: kind,
+          pec_status: next,
+        }),
+      });
+      const json = (await res.json()) as { report?: unknown; error?: string };
+      if (!res.ok) {
+        void mutateReports();
+        throw new Error(json?.error || "Sauvegarde du statut impossible.");
+      }
+      void mutateReports();
+    },
+    [detectServiceReportKind, mutateReports, reportExistence, spreadsheetId]
+  );
+
   const cyclePecStatus = useCallback(
     async (opts: { serviceId: string; row: DailyServiceRow }) => {
       const kind = detectServiceReportKind(opts.row.type);
@@ -3891,6 +4022,9 @@ export function DailyServicesView() {
                   }
                   onCyclePecStatus={async ({ serviceId }) =>
                     cyclePecStatus({ serviceId, row })
+                  }
+                  onSetPecStatus={async ({ serviceId, status }) =>
+                    persistPecStatus({ serviceId, row, next: status })
                   }
                   onCapturePhoto={async ({ serviceId, row: r, file }) =>
                     capturePhoto({ serviceId, row: r, file })
