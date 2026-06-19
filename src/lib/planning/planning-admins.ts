@@ -10,6 +10,7 @@ export const ADMINS = [
   "Karthik",
   "Javed",
   "Elias",
+  "Moubine",
   "JAVED ORDI",
 ] as const;
 

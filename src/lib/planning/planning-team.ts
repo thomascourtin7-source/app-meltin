@@ -27,6 +27,7 @@ export const PLANNING_ASSIGNEE_OPTIONS = [
   { value: "deva", label: "Deva" },
   { value: "kumar", label: "Kumar" },
   { value: "rayane", label: "Rayane" },
+  { value: "moubine", label: "Moubine" },
   { value: "tij", label: "TIJ" },
   { value: "aida", label: "AIDA" },
   { value: "yaya", label: "YAYA" },
@@ -54,6 +55,7 @@ export const PLANNING_INTERNAL_AGENT_SLUGS = [
   "javed",
   "elias",
   "rayane",
+  "moubine",
 ] as const;
 
 /** Comptes admin techniques (connexion OK, jamais assignés ni badge opérationnel). */
@@ -245,6 +247,7 @@ export const PLANNING_AGENT_FILTER_BAR_LABELS = [
   "Deva",
   "Kumar",
   "Rayane",
+  "Moubine",
   "TIJ",
   "AIDA",
   "YAYA",
