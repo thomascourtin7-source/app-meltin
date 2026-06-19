@@ -1520,7 +1520,7 @@ function ServiceBlockInner({
             ) : null}
           </span>
           {reportKind === "arrival" || reportKind === "transit" ? (
-            <span className="relative mt-1.5 flex w-full min-w-0 flex-row flex-nowrap items-center gap-1 whitespace-nowrap">
+            <span className="relative mt-1.5 flex w-full flex-row flex-nowrap items-stretch gap-1.5">
               {(
                 [
                   { status: "ep_large", label: "E.P LARGE" },
@@ -1537,7 +1537,7 @@ function ServiceBlockInner({
                     aria-pressed={active}
                     aria-label={`Statut ${opt.label}${active ? " (sélectionné)" : ""}`}
                     className={cn(
-                      "inline-flex min-h-7 shrink-0 items-center justify-center rounded border px-1 py-0.5 text-[10px] font-bold uppercase leading-none tracking-tight transition-colors",
+                      "inline-flex h-10 min-w-0 flex-1 items-center justify-center rounded-md border px-1 py-2.5 text-xs font-semibold uppercase leading-tight tracking-tight transition-colors",
                       !active &&
                         "border-slate-500/80 bg-slate-800/40 text-slate-300 hover:bg-slate-700/50",
                       active &&
