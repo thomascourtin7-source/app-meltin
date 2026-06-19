@@ -5,6 +5,10 @@ import {
   applyPecFieldsToServiceReportPayload,
   resolvePecStatusFromBody,
 } from "@/lib/reports/report-pec-payload";
+import {
+  isAppProtectedOperationalPecStatus,
+  pecStatusFromStored,
+} from "@/lib/planning/pec-status";
 import { isValidBagsStatus } from "@/lib/reports/transit-bags-status";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -161,7 +165,32 @@ export async function POST(request: Request) {
   };
 
   const pecStatus = resolvePecStatusFromBody(b);
-  if (pecStatus !== null) {
+  const hasExplicitPecInBody =
+    (typeof b.pec_status === "string" && b.pec_status.trim() !== "") ||
+    typeof b.is_pec === "boolean";
+
+  const { data: existingRow } = await supabase
+    .from("service_reports")
+    .select("pec_status,is_pec")
+    .eq("spreadsheet_id", spreadsheetId)
+    .eq("service_id", serviceId)
+    .maybeSingle();
+
+  const existingPecStatus = existingRow
+    ? pecStatusFromStored(
+        existingRow as { pec_status?: string | null; is_pec?: boolean | null }
+      )
+    : "vide";
+
+  // App-First : une synchro partielle (Sheet, photo, heure fin…) ne doit jamais
+  // effacer un statut opérationnel posé dans l’app (E.P LARGE, E.P BLOC, PEC…).
+  if (
+    !hasExplicitPecInBody &&
+    isAppProtectedOperationalPecStatus(existingPecStatus)
+  ) {
+    delete payload.pec_status;
+    delete payload.is_pec;
+  } else if (pecStatus !== null) {
     applyPecFieldsToServiceReportPayload(payload, {
       pecStatus,
       reportKind,

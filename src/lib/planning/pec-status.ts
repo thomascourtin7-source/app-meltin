@@ -24,6 +24,14 @@ export function isEnPlaceLikeStatus(status: PecStatus): boolean {
   );
 }
 
+/** Statuts opérationnels posés dans l’app — prioritaires sur toute synchro Sheet/partielle. */
+export function isAppProtectedOperationalPecStatus(
+  status: PecStatus | string | null | undefined
+): boolean {
+  const s = normalizePecStatus(status);
+  return s === "pec" || s === "ep_large" || s === "ep_bloc" || s === "en_place";
+}
+
 export function normalizePecStatus(
   value: string | null | undefined
 ): PecStatus {

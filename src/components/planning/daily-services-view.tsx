@@ -95,8 +95,11 @@ import {
 import { formatLocalTimeHHMMSS } from "@/lib/reports/report-time";
 import {
   isEnPlaceLikeStatus,
+  isValidPecStatus,
   nextPecStatus,
   pecStatusButtonLabel,
+  pecStatusFromStored,
+  pecStatusToIsPec,
   type PecStatus,
 } from "@/lib/planning/pec-status";
 import { detectServiceReportKind } from "@/lib/planning/service-kind";
@@ -1727,7 +1730,7 @@ async function fetchReportExistence(opts: {
   }
   for (const id of opts.serviceIds) {
     const status = (parsed.pecStatusByServiceId as Record<string, PecStatus>)[id];
-    if (status === "vide" || status === "en_place" || status === "pec") continue;
+    if (isValidPecStatus(status)) continue;
     (parsed.pecStatusByServiceId as Record<string, PecStatus>)[id] =
       parsed.isPecByServiceId?.[id] ? "pec" : "vide";
   }
@@ -1792,6 +1795,11 @@ export function DailyServicesView() {
   const assigneesListCacheRef = useRef(
     new Map<string, { key: string; list: string[] }>()
   );
+  /** Statuts PEC en cours d’écriture — évite qu’un re-fetch stale éteigne le bouton. */
+  const pecStatusPendingRef = useRef<
+    Map<string, { status: PecStatus; until: number }>
+  >(new Map());
+  const [pecStatusPendingVersion, setPecStatusPendingVersion] = useState(0);
 
   const selectedKeyRef = useRef("");
 
@@ -2885,15 +2893,27 @@ export function DailyServicesView() {
       ),
     [reportExistence?.isPecByServiceId, effectiveReportIdByCanonical]
   );
-  const pecStatusByServiceId = useMemo<Record<string, PecStatus>>(
-    () =>
-      rekeyByEffectiveId<PecStatus>(
-        reportExistence?.pecStatusByServiceId,
-        effectiveReportIdByCanonical,
-        "vide"
-      ),
-    [reportExistence?.pecStatusByServiceId, effectiveReportIdByCanonical]
-  );
+  const pecStatusByServiceId = useMemo<Record<string, PecStatus>>(() => {
+    const base = rekeyByEffectiveId<PecStatus>(
+      reportExistence?.pecStatusByServiceId,
+      effectiveReportIdByCanonical,
+      "vide"
+    );
+    const now = Date.now();
+    const out = { ...base };
+    for (const [sid, entry] of pecStatusPendingRef.current) {
+      if (entry.until >= now) {
+        out[sid] = entry.status;
+      } else {
+        pecStatusPendingRef.current.delete(sid);
+      }
+    }
+    return out;
+  }, [
+    reportExistence?.pecStatusByServiceId,
+    effectiveReportIdByCanonical,
+    pecStatusPendingVersion,
+  ]);
   const hasPhotoByServiceId = useMemo(
     () =>
       rekeyByEffectiveId(
@@ -3037,6 +3057,13 @@ export function DailyServicesView() {
     }) => {
       const kind = detectServiceReportKind(opts.row.type);
       const next = opts.next;
+      const sid = opts.serviceId;
+
+      pecStatusPendingRef.current.set(sid, {
+        status: next,
+        until: Date.now() + 8000,
+      });
+      setPecStatusPendingVersion((v) => v + 1);
 
       const optimistic = {
         ...(reportExistence ?? {
@@ -3047,45 +3074,86 @@ export function DailyServicesView() {
           hasPhotoByServiceId: {},
           photoUrlByServiceId: {},
         }),
+        hasReport: {
+          ...(reportExistence?.hasReport ?? {}),
+          [sid]: true,
+        },
         pecStatusByServiceId: {
           ...(reportExistence?.pecStatusByServiceId ?? {}),
-          [opts.serviceId]: next,
+          [sid]: next,
         },
         isPecByServiceId: {
           ...(reportExistence?.isPecByServiceId ?? {}),
-          [opts.serviceId]: next === "pec",
+          [sid]: pecStatusToIsPec(next),
         },
       };
       void mutateReports(optimistic, { revalidate: false });
 
-      const res = await fetch("/api/service-reports", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          spreadsheet_id: spreadsheetId,
-          service_id: opts.serviceId,
-          service_date: opts.row.dateIso,
-          service_client: opts.row.client,
-          service_type: opts.row.type,
-          report_kind: kind,
-          pec_status: next,
-        }),
-      });
-      const json = (await res.json()) as { report?: unknown; error?: string };
-      if (!res.ok) {
+      try {
+        const res = await fetch("/api/service-reports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            spreadsheet_id: spreadsheetId,
+            service_id: sid,
+            service_date: opts.row.dateIso,
+            service_client: opts.row.client,
+            service_type: opts.row.type,
+            report_kind: kind,
+            pec_status: next,
+          }),
+        });
+        const json = (await res.json()) as {
+          report?: { pec_status?: string | null; is_pec?: boolean | null };
+          error?: string;
+        };
+        if (!res.ok) {
+          throw new Error(json?.error || "Sauvegarde du statut impossible.");
+        }
+        const confirmed = json.report
+          ? pecStatusFromStored(json.report)
+          : next;
+        pecStatusPendingRef.current.set(sid, {
+          status: confirmed,
+          until: Date.now() + 8000,
+        });
+        setPecStatusPendingVersion((v) => v + 1);
+        void mutateReports(
+          (cur) => ({
+            ...(cur ?? optimistic),
+            hasReport: { ...(cur?.hasReport ?? {}), [sid]: true },
+            pecStatusByServiceId: {
+              ...(cur?.pecStatusByServiceId ?? {}),
+              [sid]: confirmed,
+            },
+            isPecByServiceId: {
+              ...(cur?.isPecByServiceId ?? {}),
+              [sid]: pecStatusToIsPec(confirmed),
+            },
+          }),
+          { revalidate: false }
+        );
+      } catch (e) {
+        pecStatusPendingRef.current.delete(sid);
+        setPecStatusPendingVersion((v) => v + 1);
         void mutateReports();
-        throw new Error(json?.error || "Sauvegarde du statut impossible.");
+        throw e;
       }
-      void mutateReports();
     },
     [detectServiceReportKind, mutateReports, reportExistence, spreadsheetId]
   );
 
   const cyclePecStatus = useCallback(
     async (opts: { serviceId: string; row: DailyServiceRow }) => {
-      const kind = detectServiceReportKind(opts.row.type);
-      const current: PecStatus = pecStatusByServiceId[opts.serviceId] ?? "vide";
+      const sid = opts.serviceId;
+      const current: PecStatus = pecStatusByServiceId[sid] ?? "vide";
       const next = nextPecStatus(current);
+
+      pecStatusPendingRef.current.set(sid, {
+        status: next,
+        until: Date.now() + 8000,
+      });
+      setPecStatusPendingVersion((v) => v + 1);
 
       const optimistic = {
         ...(reportExistence ?? {
@@ -3096,36 +3164,72 @@ export function DailyServicesView() {
           hasPhotoByServiceId: {},
           photoUrlByServiceId: {},
         }),
+        hasReport: {
+          ...(reportExistence?.hasReport ?? {}),
+          [sid]: true,
+        },
         pecStatusByServiceId: {
           ...(reportExistence?.pecStatusByServiceId ?? {}),
-          [opts.serviceId]: next,
+          [sid]: next,
         },
         isPecByServiceId: {
           ...(reportExistence?.isPecByServiceId ?? {}),
-          [opts.serviceId]: next === "pec",
+          [sid]: pecStatusToIsPec(next),
         },
       };
       void mutateReports(optimistic, { revalidate: false });
 
-      const res = await fetch("/api/service-reports", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          spreadsheet_id: spreadsheetId,
-          service_id: opts.serviceId,
-          service_date: opts.row.dateIso,
-          service_client: opts.row.client,
-          service_type: opts.row.type,
-          report_kind: kind,
-          pec_status: next,
-        }),
-      });
-      const json = (await res.json()) as { report?: unknown; error?: string };
-      if (!res.ok) {
+      try {
+        const kind = detectServiceReportKind(opts.row.type);
+        const res = await fetch("/api/service-reports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            spreadsheet_id: spreadsheetId,
+            service_id: sid,
+            service_date: opts.row.dateIso,
+            service_client: opts.row.client,
+            service_type: opts.row.type,
+            report_kind: kind,
+            pec_status: next,
+          }),
+        });
+        const json = (await res.json()) as {
+          report?: { pec_status?: string | null; is_pec?: boolean | null };
+          error?: string;
+        };
+        if (!res.ok) {
+          throw new Error(json?.error || "Sauvegarde PEC impossible.");
+        }
+        const confirmed = json.report
+          ? pecStatusFromStored(json.report)
+          : next;
+        pecStatusPendingRef.current.set(sid, {
+          status: confirmed,
+          until: Date.now() + 8000,
+        });
+        setPecStatusPendingVersion((v) => v + 1);
+        void mutateReports(
+          (cur) => ({
+            ...(cur ?? optimistic),
+            hasReport: { ...(cur?.hasReport ?? {}), [sid]: true },
+            pecStatusByServiceId: {
+              ...(cur?.pecStatusByServiceId ?? {}),
+              [sid]: confirmed,
+            },
+            isPecByServiceId: {
+              ...(cur?.isPecByServiceId ?? {}),
+              [sid]: pecStatusToIsPec(confirmed),
+            },
+          }),
+          { revalidate: false }
+        );
+      } catch (e) {
+        pecStatusPendingRef.current.delete(sid);
+        setPecStatusPendingVersion((v) => v + 1);
         void mutateReports();
-        throw new Error(json?.error || "Sauvegarde PEC impossible.");
+        throw e;
       }
-      void mutateReports();
     },
     [
       detectServiceReportKind,
