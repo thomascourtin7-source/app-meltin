@@ -43,8 +43,8 @@ import {
   displayAgents,
   isPlanningOperationalAgentSlug,
   isPlanningSelectableAssigneeValue,
-  isServiceAssignedToAgentLabel,
   isServiceAssignedToSessionAgent,
+  isServiceStrictlyAssignedToAgentLabel,
   PLANNING_AGENT_FILTER_BAR_LABELS,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
   PLANNING_URGENT_ASSIGNEE_SLUG,
@@ -298,6 +298,28 @@ function serviceRowUiKey(row: DailyServiceRow): string {
     String(row.rdv1 ?? "").trim().toLowerCase(),
     String(row.rdv2 ?? "").trim().toLowerCase(),
   ].join("\u0001");
+}
+
+/** Assignations Supabase uniquement (sans repli colonne Sheet) — pour filtre supervision. */
+function resolveDbAssigneeSlugsForRow(
+  row: DailyServiceRow,
+  mapByServiceId: Record<string, string>,
+  lookupIdRefCount: Map<string, number>
+): string[] {
+  const preciseId = serviceReportIdFromRow(row);
+  const preciseName = mapByServiceId[preciseId]?.trim();
+  if (preciseName) {
+    return parseAssigneeNameToSlugs(preciseName);
+  }
+  for (const id of serviceLookupIdsFromRow(row)) {
+    if (id === preciseId) continue;
+    if ((lookupIdRefCount.get(id) ?? 0) > 1) continue;
+    const name = mapByServiceId[id]?.trim();
+    if (name) {
+      return parseAssigneeNameToSlugs(name);
+    }
+  }
+  return [DEFAULT_PLANNING_ASSIGNEE_SLUG];
 }
 
 /**
@@ -2551,12 +2573,32 @@ export function DailyServicesView() {
           return isAssignmentEmpty(raw) || hasActiveAlarm(raw);
         });
       }
-      return filtered.filter((row) =>
-        isServiceAssignedToAgentLabel(assignees[serviceRowUiKey(row)], label)
-      );
+      const mapByServiceId = assignmentsData?.assigneesByServiceId ?? {};
+      const lookupIdRefCount = new Map<string, number>();
+      for (const row of filtered) {
+        for (const id of serviceLookupIdsFromRow(row)) {
+          lookupIdRefCount.set(id, (lookupIdRefCount.get(id) ?? 0) + 1);
+        }
+      }
+      return filtered.filter((row) => {
+        const dbSlugs = resolveDbAssigneeSlugsForRow(
+          row,
+          mapByServiceId,
+          lookupIdRefCount
+        );
+        return isServiceStrictlyAssignedToAgentLabel(dbSlugs, label);
+      });
     }
     return filtered;
-  }, [agentFilterLabel, assignees, filtered, meOnly, meSlug, showMeFilter]);
+  }, [
+    agentFilterLabel,
+    assignees,
+    assignmentsData?.assigneesByServiceId,
+    filtered,
+    meOnly,
+    meSlug,
+    showMeFilter,
+  ]);
 
   /**
    * Reçoit un clic de notification (deep-link). Bascule sur la date du service,

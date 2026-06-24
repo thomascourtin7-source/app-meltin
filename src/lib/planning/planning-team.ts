@@ -260,10 +260,29 @@ export function isServiceAssignedToAgentLabel(
   assigneesRaw: unknown,
   agentLabel: string
 ): boolean {
+  return isServiceStrictlyAssignedToAgentLabel(assigneesRaw, agentLabel);
+}
+
+/**
+ * Filtre supervision (Javed) : l’agent ciblé doit être réellement assigné.
+ * Exclut strictement non assigné (vide / __none__) et urgence 🚨 seule.
+ */
+export function isServiceStrictlyAssignedToAgentLabel(
+  assigneesRaw: unknown,
+  agentLabel: string
+): boolean {
   const target = agentLabel.trim();
   if (!target) return false;
   const list = normalizeAssigneeListFromStored(assigneesRaw);
+  const hasRealAssignee = list.some(
+    (slug) =>
+      slug !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(slug)
+  );
+  if (!hasRealAssignee) return false;
   return list.some((slug) => {
+    if (slug === DEFAULT_PLANNING_ASSIGNEE_SLUG || isUrgentAssignee(slug)) {
+      return false;
+    }
     const label = assigneeSlugToNotifyLabel(slug);
     return label != null && planningDisplayNameEquals(label, target);
   });
