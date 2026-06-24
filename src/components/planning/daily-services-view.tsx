@@ -930,7 +930,7 @@ function ServiceBlockInner({
     [assignees]
   );
 
-  /** Photo / PEC / rapport / ETA départ : assigné(s) réel(s) ; si aucun, ouvert à tous. Admin + contourne. */
+  /** Photo / PEC / rapport / ETA : assigné(s) réel(s) ; si aucun, ouvert aux admins. */
   const canActionAsAssignee = useMemo(() => {
     if (!hasNamedAssignee) return true;
     const me = meName.trim();
@@ -941,8 +941,6 @@ function ServiceBlockInner({
     });
   }, [assignees, hasNamedAssignee, meName]);
 
-  // Full Admin : tout agent (planningReadOnly=false) peut faire/valider le
-  // rapport, prendre la photo, gérer la PEC et éditer le RDV, même non assigné.
   const canAction =
     !planningReadOnly || planningSuperAdminBypass || canActionAsAssignee;
 
