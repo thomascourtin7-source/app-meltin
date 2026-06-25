@@ -1,7 +1,11 @@
 import { planningDisplayNameEquals } from "@/lib/planning/planning-team";
 
-/** Slugs session : Javed (opérationnel) + JAVED ORDI (admin technique). */
-export const PLANNING_SUPER_ADMIN_SLUGS = ["javed", "javed_ordo"] as const;
+/** Slugs session : Javed, JAVED ORDI, Thomas (supervision globale). */
+export const PLANNING_SUPER_ADMIN_SLUGS = [
+  "javed",
+  "javed_ordo",
+  "thomas",
+] as const;
 
 export function isPlanningSuperAdminSlug(slug: string): boolean {
   const s = slug.trim().toLowerCase();
@@ -13,7 +17,8 @@ export function isPlanningSuperAdminDisplayName(name: string): boolean {
   if (!t) return false;
   return (
     planningDisplayNameEquals(t, "Javed") ||
-    planningDisplayNameEquals(t, "JAVED ORDI")
+    planningDisplayNameEquals(t, "JAVED ORDI") ||
+    planningDisplayNameEquals(t, "Thomas")
   );
 }
 
@@ -64,8 +69,12 @@ export function isPlanningVipStarEditorSession(opts: {
   return false;
 }
 
-/** Barre de filtre rapide par agent (planning) : Javed + JAVED ORDI. */
-export const PLANNING_AGENT_FILTER_BAR_SLUGS = ["javed", "javed_ordo"] as const;
+/** Barre de filtre rapide par agent (planning) : Javed, JAVED ORDI, Thomas. */
+export const PLANNING_AGENT_FILTER_BAR_SLUGS = [
+  "javed",
+  "javed_ordo",
+  "thomas",
+] as const;
 
 export function isPlanningAgentFilterBarSlug(slug: string): boolean {
   const s = slug.trim().toLowerCase();
@@ -77,7 +86,8 @@ export function isPlanningAgentFilterBarDisplayName(name: string): boolean {
   if (!t) return false;
   return (
     planningDisplayNameEquals(t, "Javed") ||
-    planningDisplayNameEquals(t, "JAVED ORDI")
+    planningDisplayNameEquals(t, "JAVED ORDI") ||
+    planningDisplayNameEquals(t, "Thomas")
   );
 }
 
