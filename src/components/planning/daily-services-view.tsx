@@ -43,6 +43,7 @@ import {
   displayAgents,
   isPlanningOperationalAgentSlug,
   isPlanningSelectableAssigneeValue,
+  isCardUiUnassigned,
   isServiceAssignedToSessionAgent,
   isServiceStrictlyAssignedToAgentLabel,
   PLANNING_AGENT_FILTER_BAR_LABELS,
@@ -218,12 +219,9 @@ const DEFAULT_ASSIGNEE = DEFAULT_PLANNING_ASSIGNEE_SLUG;
  */
 const NA_FILTER_LABEL = "N-A" as const;
 
-/** Carte « non assignée » : aucun agent réel (vide, null ou seulement 🚨/Non assigné). */
+/** Carte « non assignée » : aligné sur le libellé affiché dans le Select. */
 function isAssignmentEmpty(assigneesRaw: unknown): boolean {
-  const list = normalizeAssigneeListFromStored(assigneesRaw);
-  return !list.some(
-    (slug) => slug !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(slug)
-  );
+  return isCardUiUnassigned(assigneesRaw);
 }
 
 /** Carte « en alarme » : porte l'urgence 🚨 (rajout non traité / alerte active). */
@@ -290,6 +288,8 @@ function dateNavButtonClass(active: boolean): string {
  * Distincte du `service_id` Supabase (date|vol|RDV) utilisé pour la persistance.
  */
 function serviceRowUiKey(row: DailyServiceRow): string {
+  const sheetId = String(row.sheetId ?? "").trim();
+  if (sheetId) return sheetId;
   return [
     normalizeCanonicalDateKey(String(row.dateIso ?? "").trim()),
     String(row.client ?? "").trim().toLowerCase(),
@@ -2301,18 +2301,6 @@ export function DailyServicesView() {
     const usedKeys = new Set<string>();
     const next: Record<string, string[]> = {};
 
-    /**
-     * Anti-contamination du filtre « Me » : les clés legacy (sans heure RDV)
-     * peuvent être partagées par plusieurs lignes (même client/vol/date).
-     * On ne les autorise comme repli que si elles désignent une SEULE ligne.
-     */
-    const lookupIdRefCount = new Map<string, number>();
-    for (const row of rows) {
-      for (const id of serviceLookupIdsFromRow(row)) {
-        lookupIdRefCount.set(id, (lookupIdRefCount.get(id) ?? 0) + 1);
-      }
-    }
-
     for (const row of rows) {
       const rowKey = serviceRowUiKey(row);
       usedKeys.add(rowKey);
@@ -2322,19 +2310,9 @@ export function DailyServicesView() {
         slugs = normalizeAssigneeListFromStored(assigneesDraftByRowKey[rowKey]);
       } else {
         const preciseId = serviceReportIdFromRow(row);
-        const fromDb = serviceLookupIdsFromRow(row)
-          .map((id) => {
-            const name = mapByServiceId[id];
-            if (typeof name !== "string" || name.length === 0) return null;
-            // Clé précise (date+vol+RDV) : toujours fiable.
-            if (id === preciseId) return name;
-            // Clé legacy : seulement si elle ne référence qu’une ligne (non ambiguë).
-            if ((lookupIdRefCount.get(id) ?? 0) > 1) return null;
-            return name;
-          })
-          .find((name): name is string => typeof name === "string");
-        if (fromDb) {
-          slugs = parseAssigneeNameToSlugs(fromDb);
+        const preciseName = mapByServiceId[preciseId]?.trim();
+        if (preciseName) {
+          slugs = parseAssigneeNameToSlugs(preciseName);
         } else {
           const label = matchSheetAssigneeToTeamLabel(row.sheetAssignee || "");
           if (label) {
@@ -2551,7 +2529,7 @@ export function DailyServicesView() {
       }
       return filtered.filter((row) => {
         const uiAssignees = assignees[serviceRowUiKey(row)];
-        if (isAssignmentEmpty(uiAssignees)) return false;
+        if (isCardUiUnassigned(uiAssignees)) return false;
         return isServiceStrictlyAssignedToAgentLabel(uiAssignees, label);
       });
     }

@@ -263,6 +263,22 @@ export function isServiceAssignedToAgentLabel(
   return isServiceStrictlyAssignedToAgentLabel(assigneesRaw, agentLabel);
 }
 
+/** Slugs tels qu’affichés dans le sélecteur d’assignation (carte planning). */
+export function effectiveCardAssigneeSlugs(raw: unknown): string[] {
+  return normalizeAssigneeListFromStored(raw).map((slug) =>
+    isPlanningSelectableAssigneeValue(slug)
+      ? slug
+      : DEFAULT_PLANNING_ASSIGNEE_SLUG
+  );
+}
+
+/** Carte affichée « Non assigné » (aligné sur le Select de la carte). */
+export function isCardUiUnassigned(raw: unknown): boolean {
+  return !effectiveCardAssigneeSlugs(raw).some(
+    (slug) => slug !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(slug)
+  );
+}
+
 /**
  * Filtre supervision (Javed) : l’agent ciblé doit être réellement assigné.
  * Exclut strictement non assigné (vide / __none__) et urgence 🚨 seule.
@@ -273,13 +289,8 @@ export function isServiceStrictlyAssignedToAgentLabel(
 ): boolean {
   const target = agentLabel.trim();
   if (!target) return false;
-  const list = normalizeAssigneeListFromStored(assigneesRaw);
-  const hasRealAssignee = list.some(
-    (slug) =>
-      slug !== DEFAULT_PLANNING_ASSIGNEE_SLUG && !isUrgentAssignee(slug)
-  );
-  if (!hasRealAssignee) return false;
-  return list.some((slug) => {
+  if (isCardUiUnassigned(assigneesRaw)) return false;
+  return effectiveCardAssigneeSlugs(assigneesRaw).some((slug) => {
     if (slug === DEFAULT_PLANNING_ASSIGNEE_SLUG || isUrgentAssignee(slug)) {
       return false;
     }
