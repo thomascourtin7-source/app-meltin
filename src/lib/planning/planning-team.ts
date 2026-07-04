@@ -28,7 +28,6 @@ export const PLANNING_ASSIGNEE_OPTIONS = [
   { value: "kumar", label: "Kumar" },
   { value: "rayane", label: "Rayane" },
   { value: "moubine", label: "Moubine" },
-  { value: "tij", label: "TIJ" },
   { value: "aida", label: "AIDA" },
   { value: "yaya", label: "YAYA" },
   { value: "escale", label: "ESCALE" },
@@ -63,7 +62,6 @@ export const PLANNING_TECHNICAL_ADMIN_SLUGS = ["javed_ordo"] as const;
 
 /** Entités assignables au planning sans compte de connexion. */
 export const PLANNING_ASSIGNMENT_ONLY_SLUGS = [
-  "tij",
   "aida",
   "yaya",
   "escale",
@@ -248,7 +246,6 @@ export const PLANNING_AGENT_FILTER_BAR_LABELS = [
   "Kumar",
   "Rayane",
   "Moubine",
-  "TIJ",
   "AIDA",
   "YAYA",
   "ESCALE",

@@ -69,11 +69,12 @@ export function isPlanningVipStarEditorSession(opts: {
   return false;
 }
 
-/** Barre de filtre rapide par agent (planning) : Javed, JAVED ORDI, Thomas. */
+/** Barre de filtre rapide par agent (planning) : Javed, JAVED ORDI, Thomas, Karthik. */
 export const PLANNING_AGENT_FILTER_BAR_SLUGS = [
   "javed",
   "javed_ordo",
   "thomas",
+  "karthik",
 ] as const;
 
 export function isPlanningAgentFilterBarSlug(slug: string): boolean {
@@ -87,7 +88,8 @@ export function isPlanningAgentFilterBarDisplayName(name: string): boolean {
   return (
     planningDisplayNameEquals(t, "Javed") ||
     planningDisplayNameEquals(t, "JAVED ORDI") ||
-    planningDisplayNameEquals(t, "Thomas")
+    planningDisplayNameEquals(t, "Thomas") ||
+    planningDisplayNameEquals(t, "Karthik")
   );
 }
 
