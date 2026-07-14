@@ -74,6 +74,7 @@ import {
 } from "@/lib/planning/planning-agent-scroll";
 import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
+import { ServiceAssignmentHistory } from "@/components/planning/service-assignment-history";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
 import {
   MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT,
@@ -641,6 +642,8 @@ type ServiceBlockProps = {
   ) => Promise<void>;
   agentScrollAnchorIds?: string[];
   showUnassignedTodayAlert?: boolean;
+  /** Javed, JAVED ORDI, Thomas : historique des changements d’assignation. */
+  showAssignmentHistory?: boolean;
 };
 
 function serviceBlockMemoAreEqual(
@@ -663,6 +666,7 @@ function serviceBlockMemoAreEqual(
   if (prev.hasPhoto !== next.hasPhoto) return false;
   if (prev.servicePhotoPreviewUrl !== next.servicePhotoPreviewUrl) return false;
   if (prev.showUnassignedTodayAlert !== next.showUnassignedTodayAlert) return false;
+  if (prev.showAssignmentHistory !== next.showAssignmentHistory) return false;
   if (serviceBlockRowFingerprint(prev.row) !== serviceBlockRowFingerprint(next.row)) {
     return false;
   }
@@ -708,6 +712,7 @@ function ServiceBlockInner({
   onEtaCommit,
   agentScrollAnchorIds = [],
   showUnassignedTodayAlert = false,
+  showAssignmentHistory = false,
 }: ServiceBlockProps) {
   const assignees = Array.isArray(assigneesRaw) ? assigneesRaw : [];
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
@@ -1649,6 +1654,12 @@ function ServiceBlockInner({
             <span className="font-semibold text-slate-200">Détails : </span>
             <PlanningPhoneRichText text={driverDetails} tone="inherit" />
           </div>
+        ) : null}
+        {showDetails && showAssignmentHistory ? (
+          <ServiceAssignmentHistory
+            serviceId={reportServiceId}
+            enabled={showAssignmentHistory}
+          />
         ) : null}
       </div>
 
@@ -4089,6 +4100,7 @@ export function DailyServicesView() {
                     isTodaySelected && isServiceUnassigned(assigneeList)
                   }
                   planningSuperAdminBypass={planningSuperAdminBypass}
+                  showAssignmentHistory={planningSuperAdminBypass}
                   isStarred={Boolean(isStarredByServiceId[reportSid])}
                   vipStarInteractive={vipStarEditorSession}
                   onToggleVipStar={toggleVipStar}

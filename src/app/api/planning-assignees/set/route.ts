@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { requirePlanningAdminBearer } from "@/lib/auth/planning-admin-server";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import { hasRealAssigneeAgentName } from "@/lib/planning/planning-assignee-guard";
+import {
+  assignmentLogAgentNamesDiffer,
+  normalizeAssignmentLogAgentName,
+} from "@/lib/planning/service-assignment-log";
 import { serializeAssigneeSlugsToName } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -19,6 +23,30 @@ type Body = {
    */
   allowDeassign?: unknown;
 };
+
+async function insertServiceAssignmentLogIfChanged(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdmin>>,
+  opts: {
+    serviceId: string;
+    changedBy: string;
+    oldAgent: string | null | undefined;
+    newAgent: string | null | undefined;
+  }
+): Promise<void> {
+  if (!assignmentLogAgentNamesDiffer(opts.oldAgent, opts.newAgent)) return;
+  const { error } = await supabase.from("service_assignment_logs").insert({
+    service_id: opts.serviceId,
+    changed_by: opts.changedBy.trim(),
+    old_agent: normalizeAssignmentLogAgentName(opts.oldAgent),
+    new_agent: normalizeAssignmentLogAgentName(opts.newAgent),
+  });
+  if (error) {
+    console.warn("[planning-assignees/set] service_assignment_logs insert", {
+      message: error.message,
+      serviceId: opts.serviceId,
+    });
+  }
+}
 
 export async function POST(request: Request) {
   const admin = await requirePlanningAdminBearer(request);
@@ -86,6 +114,7 @@ export async function POST(request: Request) {
   // une ancienne clé) pour ne rien perdre lors de l’écriture.
   let existingEta: string | null = null;
   let existingAgentName: string | null = null;
+  let previousAgentNameForLog: string | null = null;
   const legacyServiceIds = uniqueLookupIds.filter((id) => id !== serviceId);
 
   for (const id of uniqueLookupIds) {
@@ -98,6 +127,9 @@ export async function POST(request: Request) {
     const eta = (row as { eta_time?: string | null }).eta_time ?? null;
     if (eta && !existingEta) existingEta = eta;
     const agent = (row as { agent_name?: string | null }).agent_name ?? null;
+    if (id === serviceId) {
+      previousAgentNameForLog = normalizeAssignmentLogAgentName(agent);
+    }
     if (!existingAgentName && hasRealAssigneeAgentName(agent)) {
       existingAgentName = agent;
     }
@@ -130,6 +162,10 @@ export async function POST(request: Request) {
       },
     });
   }
+
+  const oldAgentForLog =
+    previousAgentNameForLog ??
+    normalizeAssignmentLogAgentName(existingAgentName);
 
   const payload = {
     service_id: serviceId,
@@ -230,6 +266,12 @@ export async function POST(request: Request) {
           }
           const arr = Array.isArray(j) ? j : [];
           const first = arr[0] ?? null;
+          await insertServiceAssignmentLogIfChanged(supabase, {
+            serviceId,
+            changedBy: admin.agentName,
+            oldAgent: oldAgentForLog,
+            newAgent: assigneeName,
+          });
           return NextResponse.json({ ok: true, assignment: first });
         } catch {
           // fallthrough to normal error
@@ -238,6 +280,13 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+
+  await insertServiceAssignmentLogIfChanged(supabase, {
+    serviceId,
+    changedBy: admin.agentName,
+    oldAgent: oldAgentForLog,
+    newAgent: assigneeName,
+  });
 
   return NextResponse.json({ ok: true, assignment: data });
 }
