@@ -2521,6 +2521,12 @@ export function DailyServicesView() {
     );
   }, [planningPayload?.rows, selectedKey]);
 
+  const totalServicesDayLabel = useMemo(() => {
+    if (isTodaySelected) return "Total des services aujourd'hui :";
+    if (isTomorrowSelected) return "Total des services demain :";
+    return "Total des services pour cette journée :";
+  }, [isTodaySelected, isTomorrowSelected]);
+
   const visibleRows = useMemo(() => {
     if (meOnly) {
       if (!showMeFilter) return [];
@@ -3868,6 +3874,13 @@ export function DailyServicesView() {
             })}
           </div>
         </div>
+      </div>
+
+      <div className="mb-3 mt-1 px-1 text-sm font-medium text-gray-400">
+        {totalServicesDayLabel}{" "}
+        <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs font-bold text-white">
+          {filtered.length}
+        </span>
       </div>
 
       <div className="flex w-full max-w-md flex-col gap-2">
