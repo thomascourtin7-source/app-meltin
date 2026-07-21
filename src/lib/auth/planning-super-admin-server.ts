@@ -1,44 +1,18 @@
 import { NextResponse } from "next/server";
 
-import { isPlanningAdminDisplayName } from "@/lib/planning/planning-admins";
+import {
+  isPlanningSuperAdminDisplayName,
+} from "@/lib/planning/planning-super-admins";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
-export type PlanningAdminAuthResult =
+export type PlanningSuperAdminAuthResult =
   | { ok: true; agentName: string }
   | { ok: false; response: NextResponse };
 
-async function isPlanningAdminInDatabase(
-  supabase: NonNullable<ReturnType<typeof getSupabaseAdmin>>,
-  name: string
-): Promise<boolean> {
-  const { data, error } = await supabase
-    .from("agents_auth")
-    .select("role,is_active")
-    .ilike("name", name)
-    .maybeSingle();
-
-  if (error || !data) {
-    return isPlanningAdminDisplayName(name);
-  }
-
-  if ((data as { is_active?: boolean }).is_active === false) {
-    return false;
-  }
-
-  const role = String((data as { role?: unknown }).role ?? "")
-    .trim()
-    .toLowerCase();
-  if (role === "admin") return true;
-  return isPlanningAdminDisplayName(name);
-}
-
-/**
- * Vérifie `Authorization: Bearer <token>` : token stocké sur `agents_auth_sessions`,
- * prénom en base dans la liste des administrateurs planning.
- */
-export async function requirePlanningAdminBearer(
+/** Javed, JAVED ORDI, Thomas uniquement. */
+export async function requirePlanningSuperAdminBearer(
   request: Request
-): Promise<PlanningAdminAuthResult> {
+): Promise<PlanningSuperAdminAuthResult> {
   const auth = request.headers.get("authorization") ?? "";
   const m = /^Bearer\s+(.+)$/i.exec(auth.trim());
   const token = m?.[1]?.trim() ?? "";
@@ -73,9 +47,10 @@ export async function requirePlanningAdminBearer(
     };
   }
 
-  const row = data as { name?: unknown } | null;
   const name =
-    row && typeof row.name === "string" ? row.name.trim() : "";
+    data && typeof (data as { name?: unknown }).name === "string"
+      ? (data as { name: string }).name.trim()
+      : "";
   if (!name) {
     return {
       ok: false,
@@ -83,11 +58,11 @@ export async function requirePlanningAdminBearer(
     };
   }
 
-  if (!isPlanningAdminInDatabase(supabase, name)) {
+  if (!isPlanningSuperAdminDisplayName(name)) {
     return {
       ok: false,
       response: NextResponse.json(
-        { error: "Action réservée aux administrateurs." },
+        { error: "Action réservée à Javed, JAVED ORDI et Thomas." },
         { status: 403 }
       ),
     };

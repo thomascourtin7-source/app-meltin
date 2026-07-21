@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
 import {
   getOrCreatePlanningDeviceId,
   persistPlanningAuthSession,
@@ -28,7 +29,11 @@ import { authAgents, planningDisplayNameEquals } from "@/lib/planning/planning-t
 import { subscribeChatPush } from "@/lib/push/client-subscribe-chat";
 import { ensureServiceWorkerRegistered } from "@/lib/push/register-sw";
 
-type RegistryPayload = { registeredNames: string[]; error?: string };
+type RegistryPayload = {
+  registeredNames: string[];
+  pendingSignupNames?: string[];
+  error?: string;
+};
 
 type AuthOkPayload = { slug: string; displayName: string; token: string; error?: string };
 
@@ -36,6 +41,7 @@ export function LoginClient() {
   const router = useRouter();
   const [mode, setMode] = useState<"signup" | "login">("signup");
   const [registeredNames, setRegisteredNames] = useState<string[] | null>(null);
+  const [pendingSignupNames, setPendingSignupNames] = useState<string[]>([]);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [signupSlug, setSignupSlug] = useState<string>("");
   const [loginName, setLoginName] = useState<string>("");
@@ -55,6 +61,7 @@ export function LoginClient() {
         return;
       }
       setRegisteredNames(json.registeredNames ?? []);
+      setPendingSignupNames(json.pendingSignupNames ?? []);
     } catch {
       setRegistryError("Réseau indisponible.");
       setRegisteredNames([]);
@@ -67,10 +74,21 @@ export function LoginClient() {
 
   const signupOptions = useMemo(() => {
     const names = registeredNames ?? [];
-    return authAgents().filter(
+    const staticOptions = authAgents().filter(
       (o) => !names.some((n) => planningDisplayNameEquals(n, o.label))
     );
-  }, [registeredNames]);
+    const dynamicOptions = pendingSignupNames
+      .filter(
+        (name) =>
+          !names.some((n) => planningDisplayNameEquals(n, name)) &&
+          !staticOptions.some((o) => planningDisplayNameEquals(o.label, name))
+      )
+      .map((name) => ({
+        value: agentNameToSlug(name),
+        label: name,
+      }));
+    return [...staticOptions, ...dynamicOptions];
+  }, [pendingSignupNames, registeredNames]);
 
   const loginNamesSorted = useMemo(() => {
     const names = registeredNames ?? [];

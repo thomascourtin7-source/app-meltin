@@ -2,6 +2,7 @@
  * Urgence : valeur technique stable (localStorage, logique, comparaisons).
  * L’affichage utilise toujours {@link assigneeDisplayLabel}.
  */
+import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
 export const PLANNING_URGENT_ASSIGNEE_SLUG = "emoji_alert" as const;
 
 /** Texte affiché pour l’urgence (sirènes). */
@@ -340,7 +341,7 @@ export function assigneeSlugFromNotifyLabel(label: string): string | null {
     }
     if (normKey(o.label) === key) return o.value;
   }
-  return null;
+  return agentNameToSlug(t);
 }
 
 /**

@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
+import { AgentManagementPanel } from "@/components/configuration/agent-management-panel";
 import { ChatProfileSettings } from "@/components/configuration/chat-profile-settings";
 import { clearPlanningAuthSession } from "@/lib/auth/planning-auth-session";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
@@ -12,6 +13,7 @@ import { Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
 import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
+import { usePlanningSuperAdminClient } from "@/hooks/use-planning-super-admin-client";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import {
   Card,
@@ -32,6 +34,7 @@ const PushNotificationCard = dynamic(
 export function ConfigurationClient() {
   const router = useRouter();
   const isPlanningAdmin = usePlanningAdminClient();
+  const isPlanningSuperAdmin = usePlanningSuperAdminClient();
   const { setPreparingTomorrow } = usePlanningPreparation();
   const configuredId = useLocalSpreadsheetId();
   const spreadsheetId =
@@ -49,6 +52,8 @@ export function ConfigurationClient() {
       </div>
 
       <ChatProfileSettings />
+
+      {isPlanningSuperAdmin ? <AgentManagementPanel /> : null}
 
       <Card className="rounded-xl border border-destructive/25 shadow-sm">
         <CardHeader>

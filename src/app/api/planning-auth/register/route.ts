@@ -3,9 +3,11 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 
+import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
 import {
   displayNameForPlanningAuthSlug,
   isAllowedPlanningAuthSlug,
+  resolvePlanningAuthDisplayName,
 } from "@/lib/auth/planning-auth-slugs";
 import { isPlanningAssignmentOnlySlug } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -31,7 +33,7 @@ export async function POST(request: Request) {
   const password = typeof b.password === "string" ? b.password : "";
   const deviceId = typeof b.deviceId === "string" ? b.deviceId.trim() : "";
 
-  if (!slug || !isAllowedPlanningAuthSlug(slug) || isPlanningAssignmentOnlySlug(slug)) {
+  if (!slug || isPlanningAssignmentOnlySlug(slug)) {
     return NextResponse.json({ error: "Prénom non autorisé." }, { status: 400 });
   }
   if (password.length < 6) {
@@ -41,9 +43,31 @@ export async function POST(request: Request) {
     );
   }
 
-  const displayName = displayNameForPlanningAuthSlug(slug);
+  const displayName =
+    displayNameForPlanningAuthSlug(slug) ??
+    (await resolvePlanningAuthDisplayName(supabase, slug));
   if (!displayName) {
     return NextResponse.json({ error: "Prénom non autorisé." }, { status: 400 });
+  }
+
+  const { data: allowedRow, error: allowedErr } = await supabase
+    .from("agents_auth")
+    .select("name,can_login,is_active,password")
+    .ilike("name", displayName)
+    .maybeSingle();
+
+  if (allowedErr) {
+    return NextResponse.json({ error: allowedErr.message }, { status: 500 });
+  }
+
+  if (
+    !allowedRow ||
+    (allowedRow as { can_login?: boolean }).can_login === false ||
+    (allowedRow as { is_active?: boolean }).is_active === false
+  ) {
+    if (!isAllowedPlanningAuthSlug(slug)) {
+      return NextResponse.json({ error: "Prénom non autorisé." }, { status: 400 });
+    }
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
@@ -119,7 +143,7 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({
-    slug,
+    slug: agentNameToSlug(displayName),
     displayName,
     token: sessionToken,
   });

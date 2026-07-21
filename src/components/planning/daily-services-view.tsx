@@ -40,13 +40,12 @@ import {
   DEFAULT_PLANNING_ASSIGNEE_SLUG,
   MAX_PLANNING_ASSIGNEES_PER_SERVICE,
   assignableAgents,
-  displayAgents,
   isPlanningOperationalAgentSlug,
   isPlanningSelectableAssigneeValue,
   isCardUiUnassigned,
   isServiceAssignedToSessionAgent,
   isServiceStrictlyAssignedToAgentLabel,
-  PLANNING_AGENT_FILTER_BAR_LABELS,
+  type PlanningAgentOption,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
   PLANNING_URGENT_ASSIGNEE_SLUG,
   assigneeSlugFromNotifyLabel,
@@ -72,6 +71,7 @@ import {
   getChronologyIndexForAgentRow,
   scrollToAgentBadgeTarget,
 } from "@/lib/planning/planning-agent-scroll";
+import { usePlanningAgentCatalog } from "@/hooks/use-planning-agent-catalog";
 import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
 import { ServiceAssignmentHistory } from "@/components/planning/service-assignment-history";
@@ -644,6 +644,7 @@ type ServiceBlockProps = {
   showUnassignedTodayAlert?: boolean;
   /** Javed, JAVED ORDI, Thomas : historique des changements d’assignation. */
   showAssignmentHistory?: boolean;
+  assignableAgentOptions?: PlanningAgentOption[];
 };
 
 function serviceBlockMemoAreEqual(
@@ -671,6 +672,13 @@ function serviceBlockMemoAreEqual(
     return false;
   }
   if (!sameAssigneeSlugList(prev.assignees, next.assignees)) return false;
+  const prevAssignable = (prev.assignableAgentOptions ?? [])
+    .map((o) => o.value)
+    .join("\u0001");
+  const nextAssignable = (next.assignableAgentOptions ?? [])
+    .map((o) => o.value)
+    .join("\u0001");
+  if (prevAssignable !== nextAssignable) return false;
   const prevAnchors = (prev.agentScrollAnchorIds ?? []).join("\u0001");
   const nextAnchors = (next.agentScrollAnchorIds ?? []).join("\u0001");
   if (prevAnchors !== nextAnchors) return false;
@@ -713,8 +721,10 @@ function ServiceBlockInner({
   agentScrollAnchorIds = [],
   showUnassignedTodayAlert = false,
   showAssignmentHistory = false,
+  assignableAgentOptions,
 }: ServiceBlockProps) {
   const assignees = Array.isArray(assigneesRaw) ? assigneesRaw : [];
+  const assigneeOptions = assignableAgentOptions ?? assignableAgents();
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
   const fileRef = useRef<HTMLInputElement>(null);
   const assigneesSectionRef = useRef<HTMLDivElement>(null);
@@ -828,7 +838,7 @@ function ServiceBlockInner({
         return;
       }
       if (assigneeRowCount >= MAX_PLANNING_ASSIGNEES_PER_SERVICE) return;
-      if (!assignableAgents().length) {
+      if (!assigneeOptions.length) {
         console.error("handleAddAssignee: liste des agents indisponible.");
         return;
       }
@@ -1196,7 +1206,7 @@ function ServiceBlockInner({
             const triggerDisplayText =
               assignee === PLANNING_URGENT_ASSIGNEE_SLUG
                 ? PLANNING_URGENT_ASSIGNEE_DISPLAY
-                : assignableAgents().find((opt) => opt.value === assignee)
+                : assigneeOptions.find((opt) => opt.value === assignee)
                     ?.label || assignee;
             const showRemoveLine = slot > 0 && !planningReadOnly;
             const canAddMore =
@@ -1256,7 +1266,7 @@ function ServiceBlockInner({
                       >
                         {assignee === PLANNING_URGENT_ASSIGNEE_SLUG
                           ? PLANNING_URGENT_ASSIGNEE_DISPLAY
-                          : assignableAgents().find(
+                          : assigneeOptions.find(
                               (opt) => opt.value === assignee
                             )?.label || assignee}
                       </span>
@@ -1267,7 +1277,7 @@ function ServiceBlockInner({
                         ASSIGNEE_SELECT_EMOJI_FONT
                       )}
                     >
-                      {assignableAgents().map((opt) => (
+                      {assigneeOptions.map((opt) => (
                         <SelectItem
                           key={opt.value}
                           value={opt.value}
@@ -1822,6 +1832,8 @@ export function DailyServicesView() {
   const [meName, setMeName] = useState<string>("");
   const [meSlug, setMeSlug] = useState<string>("");
   const isPlanningAdmin = usePlanningAdminClient();
+  const { operationalLabels, filterBarLabels, assignableOptions } =
+    usePlanningAgentCatalog();
   const planningSuperAdminBypass = useMemo(
     () => isPlanningSuperAdminSession({ slug: meSlug, displayName: meName }),
     [meSlug, meName]
@@ -2937,9 +2949,7 @@ export function DailyServicesView() {
     [servicesFlagsData?.isStarredByServiceId, effectiveReportIdByCanonical]
   );
 
-  const agentLabels = useMemo(() => {
-    return displayAgents().map((o) => o.label);
-  }, []);
+  const agentLabels = operationalLabels;
 
   type AgentStatus = "red" | "yellow" | "green" | "gray" | "black";
 
@@ -3970,7 +3980,7 @@ export function DailyServicesView() {
               role="group"
               aria-label="Filtrer par agent"
             >
-              {PLANNING_AGENT_FILTER_BAR_LABELS.map((label) => {
+              {filterBarLabels.map((label) => {
                 const isActive =
                   agentFilterLabel != null &&
                   planningDisplayNameEquals(agentFilterLabel, label);
@@ -4114,6 +4124,7 @@ export function DailyServicesView() {
                   }
                   planningSuperAdminBypass={planningSuperAdminBypass}
                   showAssignmentHistory={planningSuperAdminBypass}
+                  assignableAgentOptions={assignableOptions}
                   isStarred={Boolean(isStarredByServiceId[reportSid])}
                   vipStarInteractive={vipStarEditorSession}
                   onToggleVipStar={toggleVipStar}

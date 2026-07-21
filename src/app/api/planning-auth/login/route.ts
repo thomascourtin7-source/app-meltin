@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 
+import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
 import { slugFromDisplayName } from "@/lib/auth/planning-auth-slugs";
 import { isPlanningAssignmentOnlySlug } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
   // Insensible à la casse : "test" ou "Test" doivent fonctionner.
   const { data: row, error: selErr } = await supabase
     .from("agents_auth")
-    .select("name, password, can_login")
+    .select("name, password, can_login, is_active, role")
     .ilike("name", nameRaw)
     .maybeSingle();
 
@@ -46,6 +47,7 @@ export async function POST(request: Request) {
   if (
     !row ||
     (row as { can_login?: unknown }).can_login === false ||
+    (row as { is_active?: unknown }).is_active === false ||
     typeof (row as { password?: unknown }).password !== "string"
   ) {
     return NextResponse.json(
@@ -67,7 +69,7 @@ export async function POST(request: Request) {
     ? (row as { name: string }).name.trim()
     : nameRaw;
 
-  const slug = slugFromDisplayName(dbName);
+  const slug = slugFromDisplayName(dbName) ?? agentNameToSlug(dbName);
   if (!slug || isPlanningAssignmentOnlySlug(slug)) {
     return NextResponse.json(
       { error: "Prénom non reconnu pour cette application." },

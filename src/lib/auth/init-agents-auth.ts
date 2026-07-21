@@ -53,7 +53,7 @@ export async function initAgentsAuth(supabase: SupabaseClient): Promise<void> {
   for (const seed of buildAgentAuthSeeds()) {
     const { data: existing, error: fetchError } = await supabase
       .from("agents_auth")
-      .select("name,password")
+      .select("name,password,is_active")
       .eq("name", seed.name)
       .maybeSingle();
 
@@ -62,11 +62,19 @@ export async function initAgentsAuth(supabase: SupabaseClient): Promise<void> {
     }
 
     if (existing) {
+      const existingRow = existing as {
+        name?: string;
+        password?: unknown;
+        is_active?: boolean | null;
+      };
+      if (existingRow.is_active === false) {
+        continue;
+      }
+
       const { error } = await supabase
         .from("agents_auth")
         .update({
           email: seed.email,
-          role: seed.role,
           can_login: seed.can_login,
           ...(seed.can_login ? {} : { password: null }),
         })
