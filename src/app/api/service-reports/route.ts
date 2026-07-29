@@ -35,7 +35,7 @@ type ServiceReportRow = {
   travel_class: string | null;
   immigration_speed: string | null;
   checkin_bags: number | null;
-  customs_control: boolean | null;
+  customs_control: string | null;
   end_of_service: string | null;
   place_end_of_service: string | null;
   comments: string | null;
@@ -47,7 +47,7 @@ type ServiceReportRow = {
   checkin: boolean | null;
   immigration_security: boolean | null;
   immigration_security_speed: string | null;
-  vip_lounge: boolean | null;
+  vip_lounge: string | null;
   boarding_end_of_service: string | null;
   transit_bags: string | null;
   bags_status: string | null;

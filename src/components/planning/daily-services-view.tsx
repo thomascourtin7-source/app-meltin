@@ -104,7 +104,7 @@ import {
   pecStatusToIsPec,
   type PecStatus,
 } from "@/lib/planning/pec-status";
-import { detectServiceReportKind } from "@/lib/planning/service-kind";
+import { detectServiceReportKind, resolveServiceReportKind } from "@/lib/planning/service-kind";
 import {
   SERVICE_REPORTS_SWR_KEY_0,
   type ServiceReportsSwrBundle,
@@ -196,12 +196,12 @@ type ServiceReportRow = {
   immigration_security: boolean | null;
   immigration_security_speed: string | null;
   checkin_bags: number | null;
-  customs_control: boolean | null;
+  customs_control: string | null;
   tax_refund: boolean | null;
   tax_refund_speed: string | null;
   tax_refund_by: string | null;
   checkin: boolean | null;
-  vip_lounge: boolean | null;
+  vip_lounge: string | null;
   boarding_end_of_service: string | null;
   transit_bags: string | null;
   bags_status: string | null;
@@ -492,11 +492,27 @@ function serviceBlockRowFingerprint(row: DailyServiceRow): string {
   ].join("\u0001");
 }
 
+async function readJsonResponse(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error(
+      res.ok
+        ? "Réponse serveur illisible."
+        : text.trim().startsWith("Internal Server Error")
+          ? "Erreur interne du serveur Next.js. Arrêtez `npm run dev`, supprimez le dossier `.next`, puis relancez (OneDrive peut verrouiller ce dossier)."
+          : `Erreur serveur (${res.status}) : ${text.slice(0, 120)}`
+    );
+  }
+}
+
 async function planningServicesFetcher(
   url: string
 ): Promise<PlanningServicesPayload> {
   const res = await fetch(url);
-  const data: unknown = await res.json();
+  const data = await readJsonResponse(res);
   if (!res.ok) {
     const body = data as { error?: unknown; message?: unknown };
     if (
@@ -3363,10 +3379,10 @@ export function DailyServicesView() {
       }
       const r = json.report;
       if (!r) throw new Error("Rapport introuvable.");
-      const kind =
-        r.report_kind === "departure" || r.report_kind === "transit"
-          ? r.report_kind
-          : "arrival";
+      const kind = resolveServiceReportKind({
+        reportKindStored: r.report_kind,
+        serviceType: r.service_type,
+      });
       const doc = await generateServiceReportPdf(
         serviceReportSnapshotToPdfData({
           row: r,

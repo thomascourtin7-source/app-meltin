@@ -2,10 +2,19 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import { formatTimeForDisplay } from "@/lib/reports/report-time";
+import { resolveServiceReportKind } from "@/lib/planning/service-kind";
 import {
   bagsStatusDisplayLabel,
   readBagsStatusFromReport,
 } from "@/lib/reports/transit-bags-status";
+import {
+  taxRefundHasDetails,
+  taxRefundPdfLabelFromReport,
+} from "@/lib/reports/departure-report-options";
+import {
+  customsControlPdfLabel,
+} from "@/lib/reports/arrival-report-options";
+import { vipLoungePdfLabel } from "@/lib/reports/transit-report-options";
 
 /**
  * Données PDF destinées au client.
@@ -35,12 +44,12 @@ export type ServiceReportPdfData = {
   immigrationSecurity?: boolean | null;
   immigrationSecuritySpeed?: string | null;
   checkinBags?: number | null;
-  customsControl?: boolean | null;
+  customsControl?: string | boolean | null;
   taxRefund?: boolean | null;
   taxRefundSpeed?: string | null;
   taxRefundBy?: string | null;
   checkin?: boolean | null;
-  vipLounge?: boolean | null;
+  vipLounge?: string | boolean | null;
   boardingEndOfService?: string | null;
   transitBags?: string | null;
   bagsStatus?: string | null;
@@ -124,8 +133,18 @@ export type ServiceReportRowSnapshotForPdf = {
   meeting_time?: string | null;
   end_of_service?: string | null;
   pax?: number | null;
+  deplanning?: string | null;
   immigration_speed?: string | null;
   immigration_security_speed?: string | null;
+  travel_class?: string | null;
+  checkin_bags?: number | null;
+  customs_control?: string | boolean | null;
+  place_end_of_service?: string | null;
+  tax_refund?: boolean | null;
+  tax_refund_speed?: string | null;
+  tax_refund_by?: string | null;
+  boarding_end_of_service?: string | null;
+  vip_lounge?: string | boolean | null;
   comments?: string | null;
   bags_status?: string | null;
   transit_bags?: string | null;
@@ -143,12 +162,12 @@ export function serviceReportSnapshotToPdfData(opts: {
   title?: string;
 }): ServiceReportPdfData {
   const r = opts.row;
-  const stored = (r.report_kind || "").trim().toLowerCase();
-  const kindFromRow =
-    stored === "departure" || stored === "transit" || stored === "arrival"
-      ? (stored as "arrival" | "departure" | "transit")
-      : undefined;
-  const reportKind = opts.reportKind ?? kindFromRow ?? "arrival";
+  const reportKind =
+    opts.reportKind ??
+    resolveServiceReportKind({
+      reportKindStored: r.report_kind,
+      serviceType: r.service_type,
+    });
   return {
     title: opts.title ?? "Rapport de service",
     reportKind,
@@ -166,8 +185,18 @@ export function serviceReportSnapshotToPdfData(opts: {
     meetingTime: r.meeting_time,
     endOfService: r.end_of_service,
     pax: r.pax,
+    deplanning: r.deplanning,
     immigrationSpeed: r.immigration_speed,
     immigrationSecuritySpeed: r.immigration_security_speed,
+    travelClass: r.travel_class,
+    checkinBags: r.checkin_bags,
+    customsControl: r.customs_control,
+    placeEndOfService: r.place_end_of_service,
+    taxRefund: r.tax_refund,
+    taxRefundSpeed: r.tax_refund_speed,
+    taxRefundBy: r.tax_refund_by,
+    boardingEndOfService: r.boarding_end_of_service,
+    vipLounge: r.vip_lounge,
     comments: r.comments,
     bagsStatus: readBagsStatusFromReport(r) || null,
     noShow: r.no_show === true,
@@ -283,19 +312,85 @@ export async function generateServiceReportPdf(
       ? clean(data.immigrationSpeed)
       : clean(data.immigrationSecuritySpeed);
 
+  const kindSpecificRows: Array<[string, string]> =
+    kind === "transit"
+      ? [
+          ["DEPLANING", clean(data.deplanning) || "—"],
+          ["TRAVEL CLASS", clean(data.travelClass) || "—"],
+          ["VIP LOUNGE", vipLoungePdfLabel(data.vipLounge)],
+          [
+            "END OF SERVICE",
+            clean(data.boardingEndOfService) || "—",
+          ],
+          [
+            "IMMIGRATION & SECURITY SPEED",
+            clean(data.immigrationSecuritySpeed) || "—",
+          ],
+          [
+            "BAGAGES (BAGS)",
+            bagsStatusDisplayLabel(data.bagsStatus) || "—",
+          ],
+        ]
+      : kind === "arrival"
+        ? [
+            ["DEPLANING", clean(data.deplanning) || "—"],
+            ["TRAVEL CLASS", clean(data.travelClass) || "—"],
+            ["IMMIGRATION SPEED", clean(data.immigrationSpeed) || "—"],
+            [
+              "CHECKING BAGS",
+              data.noCheckedBags
+                ? "No checked bags - carry on only"
+                : data.checkinBags != null
+                  ? String(data.checkinBags)
+                  : "—",
+            ],
+            ["CUSTOMS CONTROL", customsControlPdfLabel(data.customsControl)],
+            [
+              "PLACE END OF SERVICE",
+              clean(data.placeEndOfService) || "—",
+            ],
+          ]
+        : kind === "departure"
+          ? [
+              [
+                "TAX REFUND",
+                taxRefundPdfLabelFromReport({
+                  taxRefund: data.taxRefund,
+                  taxRefundSpeed: data.taxRefundSpeed,
+                  taxRefundBy: data.taxRefundBy,
+                }),
+              ],
+              ...(taxRefundHasDetails({
+                taxRefund: data.taxRefund,
+                taxRefundSpeed: data.taxRefundSpeed,
+                taxRefundBy: data.taxRefundBy,
+              })
+                ? ([
+                    [
+                      "TAX REFUND SPEED LINE",
+                      clean(data.taxRefundSpeed) || "—",
+                    ],
+                    ["REFUND TAX BY", clean(data.taxRefundBy) || "—"],
+                  ] as Array<[string, string]>)
+                : []),
+              ["TRAVEL CLASS", clean(data.travelClass) || "—"],
+              [
+                "END OF SERVICE",
+                clean(data.boardingEndOfService) || "—",
+              ],
+              [immigrationLabel, immigrationValue || "—"],
+              [
+                "BAGAGES",
+                data.noCheckedBags
+                  ? "No checked bags - carry on only"
+                  : "Bagages en soute",
+              ],
+            ]
+          : [[immigrationLabel, immigrationValue || "—"]];
+
   const reportDetails: Array<[string, string]> = [
     ["PAX", data.pax != null ? String(data.pax) : "—"],
-    [immigrationLabel, immigrationValue || "—"],
-    ...(kind === "transit"
-      ? [["BAGAGES (BAGS)", bagsStatusDisplayLabel(data.bagsStatus) || "—"] as [string, string]]
-      : [
-          [
-            "BAGAGES",
-            data.noCheckedBags
-              ? "No checked bags - carry on only"
-              : "Bagages en soute",
-          ] as [string, string],
-        ]),
+    ...kindSpecificRows,
     ["COMMENTS", clean(data.comments) || "—"],
   ];
 

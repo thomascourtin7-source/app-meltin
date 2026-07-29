@@ -42,3 +42,15 @@ export function detectServiceReportKind(
   return "arrival";
 }
 
+/** Type de rapport en base, avec repli sur le libellé service (planning). */
+export function resolveServiceReportKind(opts: {
+  reportKindStored?: string | null;
+  serviceType?: string | null;
+}): ServiceReportKind {
+  const stored = (opts.reportKindStored || "").trim().toLowerCase();
+  if (stored === "departure" || stored === "transit" || stored === "arrival") {
+    return stored;
+  }
+  return detectServiceReportKind(opts.serviceType ?? undefined);
+}
+

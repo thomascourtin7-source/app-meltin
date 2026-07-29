@@ -45,6 +45,31 @@ import {
   readBagsStatusFromReport,
   TRANSIT_BAGS_STATUS_OPTIONS,
 } from "@/lib/reports/transit-bags-status";
+import {
+  DEPARTURE_PAX_OPTIONS,
+  END_OF_SERVICE_PLACE_OPTIONS,
+  REFUND_TAX_BY_OPTIONS,
+  TAX_REFUND_OPTIONS,
+  TAX_REFUND_SPEED_LINE_OPTIONS,
+  TRAVEL_CLASS_OPTIONS,
+  taxRefundBooleanFromUi,
+  taxRefundUiFromBoolean,
+} from "@/lib/reports/departure-report-options";
+import {
+  ARRIVAL_IMMIGRATION_SPEED_OPTIONS,
+  CHECKING_BAGS_OPTIONS,
+  CUSTOMS_CONTROL_OPTIONS,
+  DEPLANING_OPTIONS,
+  PLACE_END_OF_SERVICE_OPTIONS,
+  customsControlFromStored,
+} from "@/lib/reports/arrival-report-options";
+import {
+  DEPLANING_OPTIONS as TRANSIT_DEPLANING_OPTIONS,
+  TRANSIT_END_OF_SERVICE_OPTIONS,
+  TRAVEL_CLASS_OPTIONS as TRANSIT_TRAVEL_CLASS_OPTIONS,
+  VIP_LOUNGE_OPTIONS,
+  vipLoungeFromStored,
+} from "@/lib/reports/transit-report-options";
 
 type PlanningServicesPayload = {
   rows: DailyServiceRow[];
@@ -74,7 +99,7 @@ type ServiceReportRow = {
   travel_class: string | null;
   immigration_speed: string | null;
   checkin_bags: number | null;
-  customs_control: boolean | null;
+  customs_control: string | null;
   end_of_service: string | null;
   place_end_of_service: string | null;
   comments: string | null;
@@ -86,7 +111,7 @@ type ServiceReportRow = {
   checkin: boolean | null;
   immigration_security: boolean | null;
   immigration_security_speed: string | null;
-  vip_lounge: boolean | null;
+  vip_lounge: string | null;
   boarding_end_of_service: string | null;
   transit_bags: string | null;
   bags_status: string | null;
@@ -289,6 +314,10 @@ export default function RapportServicePage() {
   }, [existingReport?.report_kind, detectedKind]);
 
   const [pax, setPax] = useState<number | null>(null);
+  const [deplaning, setDeplaning] = useState<string>("");
+  const [checkinBags, setCheckinBags] = useState<number | null>(null);
+  const [customsControl, setCustomsControl] = useState<string>("");
+  const [placeEndOfService, setPlaceEndOfService] = useState<string>("");
   const [immigrationSpeed, setImmigrationSpeed] = useState<string>("");
   const [immigrationSecuritySpeed, setImmigrationSecuritySpeed] =
     useState<string>("");
@@ -296,6 +325,13 @@ export default function RapportServicePage() {
   const [bagsStatus, setBagsStatus] = useState<string>("");
   const [noShow, setNoShow] = useState<boolean>(false);
   const [noCheckedBags, setNoCheckedBags] = useState<boolean>(false);
+  const [taxRefund, setTaxRefund] = useState<string>("");
+  const [taxRefundSpeedLine, setTaxRefundSpeedLine] = useState<string>("");
+  const [refundTaxBy, setRefundTaxBy] = useState<string>("");
+  const [travelClass, setTravelClass] = useState<string>("");
+  const [endOfServicePlace, setEndOfServicePlace] = useState<string>("");
+  const [transitEndOfService, setTransitEndOfService] = useState<string>("");
+  const [vipLounge, setVipLounge] = useState<string>("");
   const [isEditingHours, setIsEditingHours] = useState(false);
   const [meetingTimeEdit, setMeetingTimeEdit] = useState("");
   const [endOfServiceEdit, setEndOfServiceEdit] = useState("");
@@ -303,17 +339,30 @@ export default function RapportServicePage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitRetryable, setSubmitRetryable] = useState(false);
   const [isLeavingPage, setIsLeavingPage] = useState(false);
+  const [formReady, setFormReady] = useState(false);
   const submitLockRef = useRef(false);
   const redirectScheduledRef = useRef(false);
+  const formHydratedForRef = useRef<string | null>(null);
 
   const resetReportFormState = useCallback(() => {
     setPax(null);
+    setDeplaning("");
+    setCheckinBags(null);
+    setCustomsControl("");
+    setPlaceEndOfService("");
     setImmigrationSpeed("");
     setImmigrationSecuritySpeed("");
     setComments("");
     setBagsStatus("");
     setNoShow(false);
     setNoCheckedBags(false);
+    setTaxRefund("");
+    setTaxRefundSpeedLine("");
+    setRefundTaxBy("");
+    setTravelClass("");
+    setEndOfServicePlace("");
+    setTransitEndOfService("");
+    setVipLounge("");
     setIsEditingHours(false);
     setMeetingTimeEdit("");
     setEndOfServiceEdit("");
@@ -329,18 +378,55 @@ export default function RapportServicePage() {
   }, []);
 
   useEffect(() => {
+    formHydratedForRef.current = null;
+    setFormReady(false);
+  }, [serviceId, spreadsheetId]);
+
+  useEffect(() => {
     if (isSubmitting || redirectScheduledRef.current) return;
-    if (!existingReport) return;
-    setPax(existingReport.pax ?? null);
-    setImmigrationSpeed(existingReport.immigration_speed ?? "");
-    setImmigrationSecuritySpeed(existingReport.immigration_security_speed ?? "");
-    setComments(existingReport.comments ?? "");
-    setBagsStatus(readBagsStatusFromReport(existingReport));
-    setNoShow(existingReport.no_show === true);
-    setNoCheckedBags(existingReport.no_checked_bags === true);
-    setMeetingTimeEdit(timeToTimeInputValue(existingReport.meeting_time));
-    setEndOfServiceEdit(timeToTimeInputValue(existingReport.end_of_service));
-  }, [existingReport, isSubmitting]);
+    if (reportLoading) return;
+
+    const hydrationKey = `${spreadsheetId}|${serviceId}`;
+    if (formHydratedForRef.current === hydrationKey) return;
+    formHydratedForRef.current = hydrationKey;
+
+    if (existingReport) {
+      setPax(existingReport.pax ?? null);
+      setDeplaning(existingReport.deplanning ?? "");
+      setCheckinBags(existingReport.checkin_bags ?? null);
+      setCustomsControl(customsControlFromStored(existingReport.customs_control));
+      setPlaceEndOfService(existingReport.place_end_of_service ?? "");
+      setImmigrationSpeed(existingReport.immigration_speed ?? "");
+      setImmigrationSecuritySpeed(existingReport.immigration_security_speed ?? "");
+      setComments(existingReport.comments ?? "");
+      setBagsStatus(readBagsStatusFromReport(existingReport));
+      setNoShow(existingReport.no_show === true);
+      setNoCheckedBags(existingReport.no_checked_bags === true);
+      setTaxRefund(taxRefundUiFromBoolean(existingReport.tax_refund));
+      setTaxRefundSpeedLine(existingReport.tax_refund_speed ?? "");
+      setRefundTaxBy(existingReport.tax_refund_by ?? "");
+      setTravelClass(existingReport.travel_class ?? "");
+      setVipLounge(vipLoungeFromStored(existingReport.vip_lounge));
+      const storedKind = (existingReport.report_kind || "")
+        .trim()
+        .toLowerCase();
+      if (storedKind === "transit") {
+        setTransitEndOfService(existingReport.boarding_end_of_service ?? "");
+      } else if (storedKind === "departure") {
+        setEndOfServicePlace(existingReport.boarding_end_of_service ?? "");
+      }
+      setMeetingTimeEdit(timeToTimeInputValue(existingReport.meeting_time));
+      setEndOfServiceEdit(timeToTimeInputValue(existingReport.end_of_service));
+    }
+
+    setFormReady(true);
+  }, [
+    existingReport,
+    isSubmitting,
+    reportLoading,
+    serviceId,
+    spreadsheetId,
+  ]);
 
   const pageTitle = serviceRow?.client?.trim() || "Rapport de service";
   const primaryAssignee = useMemo(() => {
@@ -423,24 +509,64 @@ export default function RapportServicePage() {
             : null,
         immigration_security_speed:
           reportKind !== "arrival" ? immigrationSecuritySpeed || null : null,
-        deplanning: null,
+        deplanning:
+          !isArrivalNoShow &&
+          (reportKind === "arrival" || reportKind === "transit")
+            ? deplaning || null
+            : null,
         service_started_at: null,
-        travel_class: null,
-        checkin_bags: null,
-        customs_control: null,
-        tax_refund: null,
-        tax_refund_speed: null,
-        tax_refund_by: null,
+        travel_class:
+          !isArrivalNoShow &&
+          (reportKind === "departure" ||
+            reportKind === "arrival" ||
+            reportKind === "transit")
+            ? travelClass || null
+            : null,
+        checkin_bags:
+          !isArrivalNoShow && reportKind === "arrival" && !noCheckedBags
+            ? checkinBags
+            : null,
+        customs_control:
+          !isArrivalNoShow && reportKind === "arrival"
+            ? customsControl || null
+            : null,
+        tax_refund:
+          reportKind === "departure" && !isArrivalNoShow
+            ? taxRefundBooleanFromUi(taxRefund)
+            : null,
+        tax_refund_speed:
+          reportKind === "departure" &&
+          !isArrivalNoShow &&
+          taxRefund === "Yes"
+            ? taxRefundSpeedLine || null
+            : null,
+        tax_refund_by:
+          reportKind === "departure" &&
+          !isArrivalNoShow &&
+          taxRefund === "Yes"
+            ? refundTaxBy || null
+            : null,
         checkin: null,
         immigration_security: null,
-        vip_lounge: null,
-        boarding_end_of_service: null,
+        vip_lounge:
+          !isArrivalNoShow && reportKind === "transit"
+            ? vipLounge || null
+            : null,
+        boarding_end_of_service:
+          reportKind === "departure" && !isArrivalNoShow
+            ? endOfServicePlace || null
+            : reportKind === "transit" && !isArrivalNoShow
+              ? transitEndOfService || null
+              : null,
         transit_bags: null,
         bags_status:
           !isArrivalNoShow && reportKind === "transit"
             ? bagsStatus.trim()
             : null,
-        place_end_of_service: null,
+        place_end_of_service:
+          !isArrivalNoShow && reportKind === "arrival"
+            ? placeEndOfService || null
+            : null,
       };
 
       const saved = await persistCompletedReport(payload);
@@ -476,16 +602,16 @@ export default function RapportServicePage() {
     }
   }
 
-  const paxOptions = useMemo(
-    () => Array.from({ length: 10 }, (_, i) => i + 1),
-    []
-  );
-
   const isArrivalNoShowUi = reportKind === "arrival" && noShow;
+  const showArrivalFields = !isArrivalNoShowUi && reportKind === "arrival";
+  const showDepartureFields = !isArrivalNoShowUi && reportKind === "departure";
+  const showTransitFields = !isArrivalNoShowUi && reportKind === "transit";
+  const showTaxRefundDetails = showDepartureFields && taxRefund === "Yes";
   const transitBagsMissing =
     !isArrivalNoShowUi && reportKind === "transit" && !bagsStatus.trim();
   const noShowCommentsMissing = isArrivalNoShowUi && !comments.trim();
   const endDisabled =
+    !formReady ||
     isSubmitting ||
     planningLoading ||
     !serviceRow ||
@@ -493,19 +619,25 @@ export default function RapportServicePage() {
     noShowCommentsMissing;
   return (
     <div className="relative mx-auto w-full max-w-3xl px-4 py-6">
-      {isSubmitting || isLeavingPage ? (
+      {isSubmitting || isLeavingPage || !formReady ? (
         <div
           className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-background/60"
-          aria-hidden
+          aria-hidden={isSubmitting || isLeavingPage}
         >
           <p className="text-sm font-medium text-muted-foreground">
-            {isLeavingPage ? "Retour au planning…" : "Enregistrement…"}
+            {isLeavingPage
+              ? "Retour au planning…"
+              : isSubmitting
+                ? "Enregistrement…"
+                : "Chargement du rapport…"}
           </p>
         </div>
       ) : null}
       <Card
         className={
-          isSubmitting || isLeavingPage ? "pointer-events-none opacity-80" : undefined
+          isSubmitting || isLeavingPage || !formReady
+            ? "pointer-events-none opacity-80"
+            : undefined
         }
       >
         <CardHeader className="border-b">
@@ -670,7 +802,9 @@ export default function RapportServicePage() {
           <div className="grid gap-4 sm:grid-cols-2">
             {!isArrivalNoShowUi ? (
             <div className="space-y-1.5">
-              <Label>PAX</Label>
+              <Label>
+                {reportKind === "departure" ? "Number of PAX" : "PAX"}
+              </Label>
               <Select
                 value={pax != null ? String(pax) : undefined}
                 onValueChange={(v) => setPax(v ? Number(v) : null)}
@@ -679,7 +813,7 @@ export default function RapportServicePage() {
                   <SelectValue placeholder="Choisir..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {paxOptions.map((n) => (
+                  {DEPARTURE_PAX_OPTIONS.map((n) => (
                     <SelectItem key={n} value={String(n)}>
                       {n}
                     </SelectItem>
@@ -689,25 +823,7 @@ export default function RapportServicePage() {
             </div>
             ) : null}
 
-            {isArrivalNoShowUi ? null : reportKind === "arrival" ? (
-              <div className="space-y-1.5">
-                <Label>IMMIGRATION SPEED</Label>
-                <Select
-                  value={immigrationSpeed || undefined}
-                  onValueChange={(v) => setImmigrationSpeed(v ?? "")}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Choisir..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="NO IMMIGRATION">NO IMMIGRATION</SelectItem>
-                    <SelectItem value="QUEUE">QUEUE</SelectItem>
-                    <SelectItem value="FAST">FAST</SelectItem>
-                    <SelectItem value="VERY FAST">VERY FAST</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
+            {isArrivalNoShowUi ? null : reportKind !== "arrival" ? (
               <div className="space-y-1.5">
                 <Label>IMMIGRATION &amp; SECURITY SPEED</Label>
                 <Select
@@ -724,9 +840,254 @@ export default function RapportServicePage() {
                   </SelectContent>
                 </Select>
               </div>
-            )}
+            ) : null}
 
-            {!isArrivalNoShowUi && reportKind !== "transit" ? (
+            {showArrivalFields ? (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Deplaning</Label>
+                  <Select
+                    value={deplaning || undefined}
+                    onValueChange={(v) => setDeplaning(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DEPLANING_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Travel Class</Label>
+                  <Select
+                    value={travelClass || undefined}
+                    onValueChange={(v) => setTravelClass(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TRAVEL_CLASS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Immigration Speed</Label>
+                  <Select
+                    value={immigrationSpeed || undefined}
+                    onValueChange={(v) => setImmigrationSpeed(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ARRIVAL_IMMIGRATION_SPEED_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm font-medium sm:col-span-2">
+                  <input
+                    type="checkbox"
+                    className="size-5 shrink-0 cursor-pointer accent-primary"
+                    checked={noCheckedBags}
+                    onChange={(e) => {
+                      setNoCheckedBags(e.target.checked);
+                      if (e.target.checked) setCheckinBags(null);
+                    }}
+                  />
+                  <span>No Checked bags - carry on only</span>
+                </label>
+
+                {!noCheckedBags ? (
+                  <div className="space-y-1.5">
+                    <Label>Checking Bags</Label>
+                    <Select
+                      value={checkinBags != null ? String(checkinBags) : undefined}
+                      onValueChange={(v) =>
+                        setCheckinBags(v ? Number(v) : null)
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Choisir..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CHECKING_BAGS_OPTIONS.map((n) => (
+                          <SelectItem key={n} value={String(n)}>
+                            {n}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
+
+                <div className="space-y-1.5">
+                  <Label>Customs Control</Label>
+                  <Select
+                    value={customsControl || undefined}
+                    onValueChange={(v) => setCustomsControl(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CUSTOMS_CONTROL_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Place End of Service</Label>
+                  <Select
+                    value={placeEndOfService || undefined}
+                    onValueChange={(v) => setPlaceEndOfService(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PLACE_END_OF_SERVICE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            ) : null}
+
+            {showDepartureFields ? (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Tax Refund</Label>
+                  <Select
+                    value={taxRefund || undefined}
+                    onValueChange={(v) => {
+                      const next = v ?? "";
+                      setTaxRefund(next);
+                      if (next !== "Yes") {
+                        setTaxRefundSpeedLine("");
+                        setRefundTaxBy("");
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TAX_REFUND_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {showTaxRefundDetails ? (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label>Tax Refund Speed Line</Label>
+                      <Select
+                        value={taxRefundSpeedLine || undefined}
+                        onValueChange={(v) => setTaxRefundSpeedLine(v ?? "")}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Choisir..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TAX_REFUND_SPEED_LINE_OPTIONS.map((opt) => (
+                            <SelectItem key={opt} value={opt}>
+                              {opt}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label>Refund Tax By</Label>
+                      <Select
+                        value={refundTaxBy || undefined}
+                        onValueChange={(v) => setRefundTaxBy(v ?? "")}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Choisir..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {REFUND_TAX_BY_OPTIONS.map((opt) => (
+                            <SelectItem key={opt} value={opt}>
+                              {opt}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
+                ) : null}
+
+                <div className="space-y-1.5">
+                  <Label>Travel Class</Label>
+                  <Select
+                    value={travelClass || undefined}
+                    onValueChange={(v) => setTravelClass(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TRAVEL_CLASS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>End of Service</Label>
+                  <Select
+                    value={endOfServicePlace || undefined}
+                    onValueChange={(v) => setEndOfServicePlace(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {END_OF_SERVICE_PLACE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            ) : null}
+
+            {!isArrivalNoShowUi && reportKind === "departure" ? (
               <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm font-medium sm:col-span-2">
                 <input
                   type="checkbox"
@@ -736,6 +1097,86 @@ export default function RapportServicePage() {
                 />
                 <span>No Checked bags - carry on only</span>
               </label>
+            ) : null}
+
+            {showTransitFields ? (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Deplaning</Label>
+                  <Select
+                    value={deplaning || undefined}
+                    onValueChange={(v) => setDeplaning(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TRANSIT_DEPLANING_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Travel Class</Label>
+                  <Select
+                    value={travelClass || undefined}
+                    onValueChange={(v) => setTravelClass(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TRANSIT_TRAVEL_CLASS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>VIP Lounge</Label>
+                  <Select
+                    value={vipLounge || undefined}
+                    onValueChange={(v) => setVipLounge(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {VIP_LOUNGE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>End of Service</Label>
+                  <Select
+                    value={transitEndOfService || undefined}
+                    onValueChange={(v) => setTransitEndOfService(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choisir..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TRANSIT_END_OF_SERVICE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
             ) : null}
 
             {!isArrivalNoShowUi && reportKind === "transit" ? (

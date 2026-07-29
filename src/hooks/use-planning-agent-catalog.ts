@@ -16,9 +16,17 @@ export const MELTIN_AGENTS_CATALOG_CHANGED_EVENT =
 
 async function catalogFetcher(url: string): Promise<PlanningAgentCatalogPayload> {
   const res = await fetch(url);
-  const json = (await res.json()) as PlanningAgentCatalogPayload & {
-    error?: string;
-  };
+  const text = await res.text();
+  let json: PlanningAgentCatalogPayload & { error?: string };
+  try {
+    json = JSON.parse(text) as PlanningAgentCatalogPayload & { error?: string };
+  } catch {
+    throw new Error(
+      text.trim().startsWith("Internal Server Error")
+        ? "Serveur indisponible. Relancez `npm run dev` après avoir supprimé `.next`."
+        : "Catalogue agents : réponse serveur illisible."
+    );
+  }
   if (!res.ok) {
     throw new Error(json?.error || "Catalogue agents indisponible.");
   }

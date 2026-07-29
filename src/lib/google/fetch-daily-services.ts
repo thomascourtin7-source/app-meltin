@@ -31,7 +31,7 @@ type ServiceAccountCredentials = {
 
 /**
  * Plage par défaut : onglet **Feuille 1** (vérifier dans Google Sheets que le nom correspond),
- * colonnes A–M jusqu’à la ligne 1000 (colonne « assigné » optionnelle).
+ * colonnes A–M (juillet 2026 dépasse la ligne 1000 — le 31/07 commence ~L1001).
  * Surcharge : PLANNING_SHEET_RANGE ou NEXT_PUBLIC_PLANNING_SHEET_RANGE
  */
 function getSheetRange(): string {
@@ -39,7 +39,7 @@ function getSheetRange(): string {
     process.env.PLANNING_SHEET_RANGE?.trim() ||
     process.env.NEXT_PUBLIC_PLANNING_SHEET_RANGE?.trim();
   if (fromEnv) return fromEnv;
-  return "'Feuille 1'!A1:M1000";
+  return "'Feuille 1'!A1:M2500";
 }
 
 export type DailyServicesFetchResult = {
