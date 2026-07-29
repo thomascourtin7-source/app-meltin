@@ -1733,6 +1733,8 @@ const ServiceBlock = memo(ServiceBlockInner, serviceBlockMemoAreEqual);
 async function fetchReportExistence(opts: {
   spreadsheetId: string;
   serviceIds: string[];
+  serviceDate: string;
+  rows: DailyServiceRow[];
 }): Promise<ReportsData> {
   const res = await fetch("/api/service-reports/batch", {
     method: "POST",
@@ -2054,13 +2056,21 @@ export function DailyServicesView() {
   serviceIdsForAssignmentsRef.current = serviceIdsForAssignments;
 
   const loadAssignmentsBatch = useCallback(
-    async (
-      serviceIds: string[]
-    ): Promise<PlanningAssignmentsPayload> => {
+    async (opts: {
+      serviceIds: string[];
+      serviceDate: string;
+      rows: DailyServiceRow[];
+      spreadsheetId: string;
+    }): Promise<PlanningAssignmentsPayload> => {
       const res = await fetch("/api/planning-assignments/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serviceIds }),
+        body: JSON.stringify({
+          serviceIds: opts.serviceIds,
+          serviceDate: opts.serviceDate,
+          rows: opts.rows,
+          spreadsheetId: opts.spreadsheetId,
+        }),
       });
       const json: unknown = await res.json();
       if (!res.ok) {
@@ -2079,7 +2089,7 @@ export function DailyServicesView() {
           ? (p.assigneesByServiceId as Record<string, string>)
           : {};
       const etaTimeByServiceId: Record<string, string | null> = {};
-      for (const id of serviceIds) {
+      for (const id of opts.serviceIds) {
         etaTimeByServiceId[id] = null;
       }
       const etaSrc = p.etaTimeByServiceId;
@@ -2112,7 +2122,13 @@ export function DailyServicesView() {
     mutate: mutateAssignments,
   } = useSWR<PlanningAssignmentsPayload>(
     assignmentsKey,
-    () => loadAssignmentsBatch(serviceIdsForAssignments),
+    () =>
+      loadAssignmentsBatch({
+        serviceIds: serviceIdsForAssignments,
+        serviceDate: selectedKey,
+        rows: planningPayload?.rows ?? [],
+        spreadsheetId,
+      }),
     {
       // Filet de sécurité si un événement Realtime est manqué : l’agent distant
       // converge même sans toucher l’écran, et au retour sur l’app (après push).
@@ -2348,10 +2364,16 @@ export function DailyServicesView() {
       if (Object.prototype.hasOwnProperty.call(assigneesDraftByRowKey, rowKey)) {
         slugs = normalizeAssigneeListFromStored(assigneesDraftByRowKey[rowKey]);
       } else {
-        const preciseId = serviceReportIdFromRow(row);
-        const preciseName = mapByServiceId[preciseId]?.trim();
-        if (preciseName) {
-          slugs = parseAssigneeNameToSlugs(preciseName);
+        let agentName = "";
+        for (const id of serviceLookupIdsFromRow(row)) {
+          const name = mapByServiceId[id]?.trim();
+          if (name) {
+            agentName = name;
+            break;
+          }
+        }
+        if (agentName) {
+          slugs = parseAssigneeNameToSlugs(agentName);
         } else {
           const label = matchSheetAssigneeToTeamLabel(row.sheetAssignee || "");
           if (label) {
@@ -2756,7 +2778,13 @@ export function DailyServicesView() {
     mutate: mutateReports,
   } = useSWR<ReportsData>(
     reportKey,
-    () => fetchReportExistence({ spreadsheetId, serviceIds: serviceIdsForReports }),
+    () =>
+      fetchReportExistence({
+        spreadsheetId,
+        serviceIds: serviceIdsForReports,
+        serviceDate: selectedKey,
+        rows: filtered,
+      }),
     {
       revalidateOnFocus: false,
     }

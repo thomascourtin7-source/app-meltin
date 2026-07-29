@@ -5,7 +5,51 @@ import {
   pecStatusToIsPec,
   type PecStatus,
 } from "@/lib/planning/pec-status";
+import { resolveStoredServiceIdForPlanningRow } from "@/lib/planning/planning-batch-reconcile";
+import {
+  parsePlanningRowPayloads,
+  parseServiceDateParam,
+} from "@/lib/planning/planning-row-payload";
+import { serviceReportIdFromRow } from "@/lib/reports/service-report-id";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+
+type ReportDbRow = {
+  service_id: string;
+  service_date?: string | null;
+  service_client?: string | null;
+  service_vol?: string | null;
+  service_rdv1?: string | null;
+  service_rdv2?: string | null;
+  is_pec?: boolean | null;
+  pec_status?: string | null;
+  completed_at?: string | null;
+  photo_url?: string | null;
+};
+
+function applyReportFlags(
+  targetId: string,
+  row: ReportDbRow,
+  existing: Set<string>,
+  isPecByServiceId: Record<string, boolean>,
+  pecStatusByServiceId: Record<string, PecStatus>,
+  isCompletedByServiceId: Record<string, boolean>,
+  hasPhotoByServiceId: Record<string, boolean>,
+  photoUrlByServiceId: Record<string, string | null>
+): void {
+  existing.add(targetId);
+  const pecStatus = pecStatusFromStored(row);
+  pecStatusByServiceId[targetId] = pecStatus;
+  isPecByServiceId[targetId] = pecStatusToIsPec(pecStatus);
+  const completedAt = row.completed_at;
+  if (typeof completedAt === "string" && completedAt.trim()) {
+    isCompletedByServiceId[targetId] = true;
+  }
+  const photoUrl = row.photo_url;
+  if (typeof photoUrl === "string" && photoUrl.trim()) {
+    hasPhotoByServiceId[targetId] = true;
+    photoUrlByServiceId[targetId] = photoUrl.trim();
+  }
+}
 
 export async function POST(request: Request) {
   const supabase = getSupabaseAdmin();
@@ -27,35 +71,88 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Body JSON invalide." }, { status: 400 });
   }
 
+  const b = body as Record<string, unknown>;
   const spreadsheetId =
-    typeof (body as { spreadsheetId?: unknown }).spreadsheetId === "string"
-      ? ((body as { spreadsheetId: string }).spreadsheetId || "").trim()
-      : "";
-  const serviceIdsRaw = (body as { serviceIds?: unknown }).serviceIds;
+    typeof b.spreadsheetId === "string" ? b.spreadsheetId.trim() : "";
+  const serviceDate = parseServiceDateParam(b.serviceDate);
+  const rows = parsePlanningRowPayloads(b.rows);
+  const serviceIdsRaw = b.serviceIds;
   const serviceIds = Array.isArray(serviceIdsRaw)
-    ? [...new Set(
-        serviceIdsRaw
-          .filter((x): x is string => typeof x === "string")
-          .map((x) => x.trim())
-          .filter(Boolean)
-      )]
+    ? [
+        ...new Set(
+          serviceIdsRaw
+            .filter((x): x is string => typeof x === "string")
+            .map((x) => x.trim())
+            .filter(Boolean)
+        ),
+      ]
     : [];
 
-  if (!spreadsheetId || serviceIds.length === 0) {
+  if (!spreadsheetId) {
     return NextResponse.json(
-      { error: "Champs requis manquants (spreadsheetId, serviceIds[])." },
+      { error: "Champs requis manquants (spreadsheetId)." },
       { status: 400 }
     );
   }
 
-  const { data, error } = await supabase
-    .from("service_reports")
-    .select("service_id,is_pec,pec_status,completed_at,photo_url")
-    .eq("spreadsheet_id", spreadsheetId)
-    .in("service_id", serviceIds);
+  const canonicalIds =
+    rows.length > 0
+      ? [
+          ...new Set(
+            rows
+              .map((row) => serviceReportIdFromRow(row))
+              .filter(Boolean)
+          ),
+        ]
+      : serviceIds;
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (canonicalIds.length === 0) {
+    return NextResponse.json(
+      { error: "Champs requis manquants (serviceIds[] ou rows[])." },
+      { status: 400 }
+    );
+  }
+
+  let dbReports: ReportDbRow[] = [];
+  let dbAssignments: Array<{ service_id: string; agent_name?: string | null }> =
+    [];
+
+  if (serviceDate && rows.length > 0) {
+    const [reportsRes, assignRes] = await Promise.all([
+      supabase
+        .from("service_reports")
+        .select(
+          "service_id,service_date,service_client,service_vol,service_rdv1,service_rdv2,is_pec,pec_status,completed_at,photo_url"
+        )
+        .eq("spreadsheet_id", spreadsheetId)
+        .eq("service_date", serviceDate),
+      supabase
+        .from("planning_assignments")
+        .select("service_id,agent_name")
+        .eq("service_date", serviceDate),
+    ]);
+
+    if (reportsRes.error) {
+      return NextResponse.json({ error: reportsRes.error.message }, { status: 500 });
+    }
+    if (assignRes.error) {
+      return NextResponse.json({ error: assignRes.error.message }, { status: 500 });
+    }
+    dbReports = (reportsRes.data ?? []) as ReportDbRow[];
+    dbAssignments = (assignRes.data ?? []) as typeof dbAssignments;
+  } else {
+    const { data, error } = await supabase
+      .from("service_reports")
+      .select(
+        "service_id,service_date,service_client,service_vol,service_rdv1,service_rdv2,is_pec,pec_status,completed_at,photo_url"
+      )
+      .eq("spreadsheet_id", spreadsheetId)
+      .in("service_id", serviceIds);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    dbReports = (data ?? []) as ReportDbRow[];
   }
 
   const existing = new Set<string>();
@@ -64,36 +161,66 @@ export async function POST(request: Request) {
   const isCompletedByServiceId: Record<string, boolean> = {};
   const hasPhotoByServiceId: Record<string, boolean> = {};
   const photoUrlByServiceId: Record<string, string | null> = {};
-  for (const id of serviceIds) {
+
+  for (const id of canonicalIds) {
     isPecByServiceId[id] = false;
     pecStatusByServiceId[id] = "vide";
+    isCompletedByServiceId[id] = false;
+    hasPhotoByServiceId[id] = false;
+    photoUrlByServiceId[id] = null;
   }
-  for (const id of serviceIds) isCompletedByServiceId[id] = false;
-  for (const id of serviceIds) hasPhotoByServiceId[id] = false;
-  for (const id of serviceIds) photoUrlByServiceId[id] = null;
 
-  for (const row of data ?? []) {
-    const sid = (row as { service_id?: unknown }).service_id;
-    const completedAt = (row as { completed_at?: unknown }).completed_at;
-    const photoUrl = (row as { photo_url?: unknown }).photo_url;
-    if (typeof sid !== "string") continue;
-    existing.add(sid);
-    const pecStatus = pecStatusFromStored(row as { pec_status?: string; is_pec?: boolean });
-    pecStatusByServiceId[sid] = pecStatus;
-    isPecByServiceId[sid] = pecStatusToIsPec(pecStatus);
-    // Rapport « terminé » côté planning (PDF client, masquage ETA) : `completed_at` renseigné.
-    // Si une colonne `is_completed` est ajoutée plus tard, l’OR ici avec la même sémantique.
-    if (typeof completedAt === "string" && completedAt.trim()) {
-      isCompletedByServiceId[sid] = true;
+  if (serviceDate && rows.length > 0) {
+    const storedIds = new Set(
+      [
+        ...dbReports.map((r) => r.service_id.trim()),
+        ...dbAssignments.map((a) => a.service_id.trim()),
+      ].filter(Boolean)
+    );
+
+    for (const row of rows) {
+      const canonical = serviceReportIdFromRow(row);
+      if (!canonical) continue;
+      const storedId = resolveStoredServiceIdForPlanningRow(
+        row,
+        storedIds,
+        dbReports,
+        rows,
+        dbAssignments
+      );
+      if (!storedId) continue;
+      const report = dbReports.find((r) => r.service_id.trim() === storedId);
+      if (!report) continue;
+      applyReportFlags(
+        canonical,
+        report,
+        existing,
+        isPecByServiceId,
+        pecStatusByServiceId,
+        isCompletedByServiceId,
+        hasPhotoByServiceId,
+        photoUrlByServiceId
+      );
     }
-    if (typeof photoUrl === "string" && photoUrl.trim()) {
-      hasPhotoByServiceId[sid] = true;
-      photoUrlByServiceId[sid] = photoUrl.trim();
+  } else {
+    for (const row of dbReports) {
+      const sid = row.service_id?.trim();
+      if (!sid || !canonicalIds.includes(sid)) continue;
+      applyReportFlags(
+        sid,
+        row,
+        existing,
+        isPecByServiceId,
+        pecStatusByServiceId,
+        isCompletedByServiceId,
+        hasPhotoByServiceId,
+        photoUrlByServiceId
+      );
     }
   }
 
   const hasReport: Record<string, boolean> = {};
-  for (const id of serviceIds) hasReport[id] = existing.has(id);
+  for (const id of canonicalIds) hasReport[id] = existing.has(id);
 
   return NextResponse.json({
     hasReport,
@@ -104,4 +231,3 @@ export async function POST(request: Request) {
     photoUrlByServiceId,
   });
 }
-
