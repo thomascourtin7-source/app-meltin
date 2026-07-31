@@ -14,6 +14,11 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isChatPage = pathname === "/chat";
   const isLoginPage = pathname === "/login";
+  const isPublicTrackPage = pathname.startsWith("/track/");
+
+  if (isPublicTrackPage) {
+    return <>{children}</>;
+  }
 
   return (
     <AuthGate>

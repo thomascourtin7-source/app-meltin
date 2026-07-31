@@ -75,6 +75,7 @@ import { usePlanningAgentCatalog } from "@/hooks/use-planning-agent-catalog";
 import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
 import { ServiceAssignmentHistory } from "@/components/planning/service-assignment-history";
+import { ServiceDoChatSection } from "@/components/client-chat/service-do-chat-section";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
 import {
   MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT,
@@ -614,6 +615,7 @@ type ServiceBlockProps = {
   row: DailyServiceRow;
   rowKey: string;
   reportServiceId: string;
+  spreadsheetId: string;
   assignees: string[];
   /** Admin + (Javed, JAVED ORDI) : actions service même sans assignation personnelle. */
   planningSuperAdminBypass: boolean;
@@ -669,6 +671,7 @@ function serviceBlockMemoAreEqual(
 ): boolean {
   if (prev.rowKey !== next.rowKey) return false;
   if (prev.reportServiceId !== next.reportServiceId) return false;
+  if (prev.spreadsheetId !== next.spreadsheetId) return false;
   if (prev.serviceEtaHHMM !== next.serviceEtaHHMM) return false;
   if (prev.onEtaCommit !== next.onEtaCommit) return false;
   if (prev.planningSuperAdminBypass !== next.planningSuperAdminBypass) return false;
@@ -712,6 +715,7 @@ function ServiceBlockInner({
   row,
   rowKey,
   reportServiceId,
+  spreadsheetId,
   assignees: assigneesRaw,
   planningSuperAdminBypass,
   isStarred,
@@ -1184,6 +1188,14 @@ function ServiceBlockInner({
             </Button>
           ) : null}
         </div>
+        {spreadsheetId ? (
+          <ServiceDoChatSection
+            spreadsheetId={spreadsheetId}
+            serviceId={reportServiceId}
+            passengerLabel={row.client.trim() || "Passager"}
+            variant="planning"
+          />
+        ) : null}
         {copyToast}
       </div>
     );
@@ -1688,6 +1700,15 @@ function ServiceBlockInner({
           />
         ) : null}
       </div>
+
+      {spreadsheetId ? (
+        <ServiceDoChatSection
+          spreadsheetId={spreadsheetId}
+          serviceId={reportServiceId}
+          passengerLabel={row.client.trim() || "Passager"}
+          variant="planning"
+        />
+      ) : null}
 
       <div className="mt-5 border-t border-[#D4AF37]/30 pt-4">
         <Button
@@ -4161,6 +4182,7 @@ export function DailyServicesView() {
                   row={row}
                   rowKey={rowKey}
                   reportServiceId={reportSid}
+                  spreadsheetId={spreadsheetId}
                   assignees={assigneeList}
                   agentScrollAnchorIds={agentScrollAnchorIds}
                   showUnassignedTodayAlert={

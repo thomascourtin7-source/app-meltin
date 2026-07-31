@@ -7,6 +7,7 @@ import useSWR, { useSWRConfig } from "swr";
 import { Pencil } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ServiceDoChatSection } from "@/components/client-chat/service-do-chat-section";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { TimeField } from "@/components/ui/time-field";
@@ -1238,6 +1239,15 @@ export default function RapportServicePage() {
               />
             </div>
           </div>
+
+          {spreadsheetId && serviceRow ? (
+            <ServiceDoChatSection
+              spreadsheetId={spreadsheetId}
+              serviceId={serviceId}
+              passengerLabel={serviceRow.client.trim() || "Passager"}
+              variant="report"
+            />
+          ) : null}
         </CardContent>
 
         <CardFooter className="justify-between gap-2">

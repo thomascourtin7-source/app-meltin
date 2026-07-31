@@ -11,13 +11,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [hydrated, setHydrated] = useState(false);
   const onLoginRoute = pathname === "/login";
+  const isPublicTrackRoute = pathname.startsWith("/track/");
 
   useEffect(() => {
     setHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || isPublicTrackRoute) return;
     const ok = hasPlanningAuthSession();
     if (onLoginRoute && ok) {
       router.replace("/planning");
@@ -26,7 +27,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     if (!onLoginRoute && !ok) {
       router.replace("/login");
     }
-  }, [hydrated, onLoginRoute, router]);
+  }, [hydrated, isPublicTrackRoute, onLoginRoute, router]);
+
+  if (isPublicTrackRoute) {
+    return <>{children}</>;
+  }
 
   if (!hydrated) {
     return (
