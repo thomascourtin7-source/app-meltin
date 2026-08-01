@@ -3,6 +3,7 @@ import {
   pecStatusFromStored,
   type PecStatus,
 } from "@/lib/planning/pec-status";
+import { assignedTimelineTitle } from "@/lib/client-chat/assigned-agents";
 
 export type TrackMissionSnapshot = {
   pecStatus: PecStatus;
@@ -45,7 +46,7 @@ export function buildTrackTimelineEvents(
     events.push({
       id: "assigned",
       kind: "assigned",
-      title: `Greeter assigned: ${snap.agentName.trim()}`,
+      title: assignedTimelineTitle(snap.agentName.trim()),
       at: snap.agentUpdatedAt ?? null,
     });
   }

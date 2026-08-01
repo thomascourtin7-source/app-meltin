@@ -1,4 +1,5 @@
 import { pecStatusFromStored, pecStatusToIsPec } from "@/lib/planning/pec-status";
+import { resolveTrackAgentNames } from "@/lib/client-chat/assigned-agents";
 import {
   formatPassengerServiceTitleEn,
   resolveTrackServiceStatusEn,
@@ -13,14 +14,6 @@ type ServiceRow = {
   share_token: string | null;
   passenger_label: string | null;
 };
-
-function firstRealAgentName(raw: string | null | undefined): string | null {
-  const name = String(raw ?? "").trim();
-  if (!name) return null;
-  const parts = name.split(/[;,]/).map((p) => p.trim()).filter(Boolean);
-  const real = parts.find((p) => p && p !== "🚨" && !/^n\/a$/i.test(p));
-  return real ?? parts[0] ?? null;
-}
 
 export async function loadTrackPayloadByToken(
   shareToken: string
@@ -66,13 +59,10 @@ export async function loadTrackPayloadByToken(
     reportClient ||
     "Passager";
 
-  const agentFromAssign = firstRealAgentName(
-    (assignment as { agent_name?: string | null } | null)?.agent_name
-  );
-  const agentFromReport = firstRealAgentName(
+  const agentName = resolveTrackAgentNames(
+    (assignment as { agent_name?: string | null } | null)?.agent_name,
     (report as { assignee_name?: string | null } | null)?.assignee_name
   );
-  const agentName = agentFromAssign ?? agentFromReport;
 
   const completedAt = (report as { completed_at?: string | null } | null)
     ?.completed_at;

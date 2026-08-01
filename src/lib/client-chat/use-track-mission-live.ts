@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { resolveTrackAgentNames } from "@/lib/client-chat/assigned-agents";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   buildTrackTimelineEvents,
@@ -18,14 +19,6 @@ type LiveTrackState = {
   snapshot: TrackMissionSnapshot;
   timeline: TrackTimelineEvent[];
 };
-
-function firstRealAgentName(raw: string | null | undefined): string | null {
-  const name = String(raw ?? "").trim();
-  if (!name) return null;
-  const parts = name.split(/[;,]/).map((p) => p.trim()).filter(Boolean);
-  const real = parts.find((p) => p && p !== "🚨" && !/^n\/a$/i.test(p));
-  return real ?? parts[0] ?? null;
-}
 
 function buildPayloadFromParts(
   base: TrackServicePayload,
@@ -146,7 +139,8 @@ export function useTrackMissionLive(shareToken: string) {
           setState((prev) => {
             if (!prev) return prev;
             const agentName =
-              firstRealAgentName(row.assignee_name) ?? prev.snapshot.agentName;
+              resolveTrackAgentNames(null, row.assignee_name) ??
+              prev.snapshot.agentName;
             const snap = snapshotFromReportRow(
               row,
               agentName,
@@ -193,7 +187,9 @@ export function useTrackMissionLive(shareToken: string) {
           };
           setState((prev) => {
             if (!prev) return prev;
-            const agentName = firstRealAgentName(row.agent_name);
+            const agentName =
+              resolveTrackAgentNames(row.agent_name, null) ??
+              prev.snapshot.agentName;
             const snap: TrackMissionSnapshot = {
               ...prev.snapshot,
               agentName,

@@ -1,10 +1,19 @@
 "use client";
 
-import { Loader2, Plane, UserRound } from "lucide-react";
+import { Loader2, Phone, Plane, UserRound } from "lucide-react";
 import { useParams } from "next/navigation";
 
 import { ClientDoChatPanel } from "@/components/client-chat/client-do-chat-panel";
 import { MissionTimeline } from "@/components/client-chat/mission-timeline";
+import {
+  assignedAgentCountFromFormatted,
+  greeterCardTitle,
+  parseFormattedAgentNames,
+} from "@/lib/client-chat/assigned-agents";
+import {
+  formatPhoneForDisplay,
+  lookupAgentPhone,
+} from "@/lib/client-chat/agent-phones";
 import { useTrackMissionLive } from "@/lib/client-chat/use-track-mission-live";
 import { cn } from "@/lib/utils";
 import type { TrackServicePayload } from "@/lib/client-chat/types";
@@ -24,10 +33,50 @@ function statusBadgeClass(
   }
 }
 
+function GreeterAgentsList({ agentNameFormatted }: { agentNameFormatted: string | null }) {
+  const agents = parseFormattedAgentNames(agentNameFormatted);
+
+  if (agents.length === 0) {
+    return (
+      <p className="mt-1 text-xl font-semibold text-white">
+        Assignment in progress
+      </p>
+    );
+  }
+
+  return (
+    <ul className="mt-2 space-y-2.5">
+      {agents.map((name) => {
+        const phone = lookupAgentPhone(name);
+        return (
+          <li
+            key={name}
+            className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3"
+          >
+            <span className="text-lg font-semibold text-white">{name}</span>
+            {phone ? (
+              <a
+                href={`tel:${phone}`}
+                className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[#D4AF37]/35 bg-[#D4AF37]/10 px-3 py-1 text-sm font-medium text-[#f5e6b8]/90 transition-colors hover:border-[#D4AF37]/55 hover:bg-[#D4AF37]/20 active:scale-[0.98]"
+              >
+                <Phone className="size-3.5 shrink-0 text-[#D4AF37]" aria-hidden />
+                {formatPhoneForDisplay(phone)}
+              </a>
+            ) : (
+              <span className="text-sm text-white/40">Phone unavailable</span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export default function TrackMissionPage() {
   const params = useParams();
   const token = typeof params.token === "string" ? params.token : "";
   const { payload, timeline, loading, error } = useTrackMissionLive(token);
+  const agentCount = assignedAgentCountFromFormatted(payload?.agentName ?? null);
 
   if (loading) {
     return (
@@ -80,12 +129,10 @@ export default function TrackMissionPage() {
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-white/50">
-              Your Greeter
+              {greeterCardTitle(agentCount)}
             </p>
-            <p className="mt-1 text-xl font-semibold text-white">
-              {payload.agentName ?? "Assignment in progress"}
-            </p>
-            <p className="mt-2 text-sm text-white/55">
+            <GreeterAgentsList agentNameFormatted={payload.agentName} />
+            <p className="mt-3 text-sm text-white/55">
               Chat live with your Meltin team below.
             </p>
           </div>
