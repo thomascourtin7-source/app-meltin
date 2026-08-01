@@ -43,6 +43,8 @@ function buildPayloadFromParts(
     agentName: snap.agentName,
     status: status.label,
     statusTone: status.tone,
+    missionReport: snap.missionReport,
+    timeline: snap,
   };
 }
 
@@ -125,13 +127,8 @@ export function useTrackMissionLive(shareToken: string) {
           filter: `service_id=eq.${serviceId}`,
         },
         (payload) => {
-          const row = payload.new as {
+          const row = payload.new as Record<string, unknown> & {
             spreadsheet_id?: string;
-            pec_status?: string | null;
-            is_pec?: boolean | null;
-            photo_url?: string | null;
-            completed_at?: string | null;
-            updated_at?: string | null;
             assignee_name?: string | null;
           };
           if (row.spreadsheet_id !== spreadsheetId) return;
@@ -142,7 +139,7 @@ export function useTrackMissionLive(shareToken: string) {
               resolveTrackAgentNames(null, row.assignee_name) ??
               prev.snapshot.agentName;
             const snap = snapshotFromReportRow(
-              row,
+              row as Parameters<typeof snapshotFromReportRow>[0],
               agentName,
               prev.snapshot.agentUpdatedAt
             );
@@ -217,6 +214,7 @@ export function useTrackMissionLive(shareToken: string) {
     () => ({
       payload: state?.payload ?? null,
       timeline: state?.timeline ?? [],
+      missionReport: state?.payload.missionReport ?? null,
       loading,
       error,
     }),

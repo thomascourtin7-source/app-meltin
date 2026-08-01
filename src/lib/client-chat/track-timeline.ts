@@ -4,6 +4,16 @@ import {
   type PecStatus,
 } from "@/lib/planning/pec-status";
 import { assignedTimelineTitle } from "@/lib/client-chat/assigned-agents";
+import {
+  ARRIVAL_EP_BLOC_MESSAGE,
+  ARRIVAL_EP_LARGE_MESSAGE,
+  isDoTrackArrivalEpMessage,
+} from "@/lib/client-chat/track-arrival-ep";
+import {
+  buildTrackMissionReportSummary,
+  type TrackMissionReportSummary,
+  type TrackReportRowSlice,
+} from "@/lib/client-chat/track-report-summary";
 
 export type TrackMissionSnapshot = {
   pecStatus: PecStatus;
@@ -12,6 +22,10 @@ export type TrackMissionSnapshot = {
   updatedAt: string | null;
   agentName: string | null;
   agentUpdatedAt: string | null;
+  serviceType: string | null;
+  reportKind: string | null;
+  deplanning: string | null;
+  missionReport: TrackMissionReportSummary | null;
 };
 
 export type TrackTimelineEventKind =
@@ -19,7 +33,8 @@ export type TrackTimelineEventKind =
   | "on_position"
   | "passenger_met"
   | "photo"
-  | "completed";
+  | "completed"
+  | "mission_report";
 
 export type TrackTimelineEvent = {
   id: string;
@@ -35,6 +50,35 @@ function positionDetail(status: PecStatus): string | undefined {
   if (status === "ep_bloc") return "Block";
   if (status === "en_place") return "Meeting point";
   return undefined;
+}
+
+function resolveOnPositionTitle(snap: TrackMissionSnapshot): string {
+  const arrivalLike = isDoTrackArrivalEpMessage(
+    snap.serviceType,
+    snap.reportKind
+  );
+  const deplan = (snap.deplanning ?? "").trim().toLowerCase();
+
+  if (arrivalLike) {
+    if (snap.pecStatus === "ep_bloc" || deplan === "block") {
+      return ARRIVAL_EP_BLOC_MESSAGE;
+    }
+    if (snap.pecStatus === "ep_large" || deplan === "large") {
+      return ARRIVAL_EP_LARGE_MESSAGE;
+    }
+  }
+
+  const detail = isEnPlaceLikeStatus(snap.pecStatus)
+    ? positionDetail(snap.pecStatus)
+    : undefined;
+
+  if (detail) {
+    return `Greeter is in position at ${detail}`;
+  }
+  if (snap.pecStatus === "pec") {
+    return "Greeter was in position";
+  }
+  return "Greeter is in position";
 }
 
 export function buildTrackTimelineEvents(
@@ -55,18 +99,10 @@ export function buildTrackTimelineEvents(
     isEnPlaceLikeStatus(snap.pecStatus) || snap.pecStatus === "pec";
 
   if (reachedPosition) {
-    const detail = isEnPlaceLikeStatus(snap.pecStatus)
-      ? positionDetail(snap.pecStatus)
-      : undefined;
     events.push({
       id: "on_position",
       kind: "on_position",
-      title: detail
-        ? `Greeter is in position at ${detail}`
-        : snap.pecStatus === "pec"
-          ? "Greeter was in position"
-          : "Greeter is in position",
-      detail,
+      title: resolveOnPositionTitle(snap),
       at: snap.updatedAt,
     });
   }
@@ -99,11 +135,20 @@ export function buildTrackTimelineEvents(
     });
   }
 
+  if (snap.completedAt?.trim() && snap.missionReport) {
+    events.push({
+      id: "mission_report",
+      kind: "mission_report",
+      title: "Click here to see the report of the mission",
+      at: snap.completedAt.trim(),
+    });
+  }
+
   return events;
 }
 
 export function snapshotFromReportRow(
-  row: {
+  row: TrackReportRowSlice & {
     pec_status?: string | null;
     is_pec?: boolean | null;
     photo_url?: string | null;
@@ -113,6 +158,8 @@ export function snapshotFromReportRow(
   agentName: string | null,
   agentUpdatedAt: string | null
 ): TrackMissionSnapshot {
+  const missionReport = buildTrackMissionReportSummary(row);
+
   return {
     pecStatus: pecStatusFromStored(row ?? {}),
     photoUrl:
@@ -129,5 +176,18 @@ export function snapshotFromReportRow(
         : null,
     agentName,
     agentUpdatedAt,
+    serviceType:
+      typeof row?.service_type === "string" && row.service_type.trim()
+        ? row.service_type.trim()
+        : null,
+    reportKind:
+      typeof row?.report_kind === "string" && row.report_kind.trim()
+        ? row.report_kind.trim()
+        : null,
+    deplanning:
+      typeof row?.deplanning === "string" && row.deplanning.trim()
+        ? row.deplanning.trim()
+        : null,
+    missionReport,
   };
 }

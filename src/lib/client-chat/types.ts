@@ -1,3 +1,6 @@
+import type { TrackMissionReportSummary } from "@/lib/client-chat/track-report-summary";
+import type { TrackMissionSnapshot } from "@/lib/client-chat/track-timeline";
+
 export type ClientChatSenderType = "client" | "agent";
 
 export type ClientChatMessageRow = {
@@ -10,8 +13,6 @@ export type ClientChatMessageRow = {
   message: string;
 };
 
-import type { TrackMissionSnapshot } from "@/lib/client-chat/track-timeline";
-
 export type TrackServicePayload = {
   shareToken: string;
   spreadsheetId: string;
@@ -21,6 +22,7 @@ export type TrackServicePayload = {
   status: string;
   statusTone: "default" | "active" | "done" | "alert";
   timeline: TrackMissionSnapshot;
+  missionReport: TrackMissionReportSummary | null;
 };
 
 export type ShareLinkPayload = {

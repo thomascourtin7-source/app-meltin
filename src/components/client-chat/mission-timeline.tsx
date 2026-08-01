@@ -5,16 +5,20 @@ import {
   Camera,
   CheckCircle2,
   Circle,
+  FileText,
   MapPin,
   UserCheck,
   UserRound,
 } from "lucide-react";
 
+import { ServicePhotoCopyPreview } from "@/components/service-photo-copy-preview";
 import type { TrackTimelineEvent } from "@/lib/client-chat/track-timeline";
+import type { TrackMissionReportSummary } from "@/lib/client-chat/track-report-summary";
 import { cn } from "@/lib/utils";
 
 type MissionTimelineProps = {
   events: TrackTimelineEvent[];
+  missionReport?: TrackMissionReportSummary | null;
   className?: string;
 };
 
@@ -42,13 +46,28 @@ function eventIcon(kind: TrackTimelineEvent["kind"]) {
       return Camera;
     case "completed":
       return CheckCircle2;
+    case "mission_report":
+      return FileText;
     default:
       return Circle;
   }
 }
 
-export function MissionTimeline({ events, className }: MissionTimelineProps) {
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+const REPORT_KIND_LABEL: Record<
+  TrackMissionReportSummary["reportKind"],
+  string
+> = {
+  arrival: "Arrival Report",
+  departure: "Departure Report",
+  transit: "Transit Report",
+};
+
+export function MissionTimeline({
+  events,
+  missionReport,
+  className,
+}: MissionTimelineProps) {
+  const [reportOpen, setReportOpen] = useState(false);
 
   return (
     <>
@@ -72,6 +91,7 @@ export function MissionTimeline({ events, className }: MissionTimelineProps) {
               const Icon = eventIcon(event.kind);
               const isLast = index === events.length - 1;
               const time = formatEventTime(event.at);
+              const isReportLink = event.kind === "mission_report";
 
               return (
                 <li key={event.id} className="relative flex gap-4 pb-6 last:pb-0">
@@ -88,9 +108,19 @@ export function MissionTimeline({ events, className }: MissionTimelineProps) {
 
                   <div className="min-w-0 flex-1 pt-0.5">
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                      <p className="text-sm font-medium text-white/95">
-                        {event.title}
-                      </p>
+                      {isReportLink && missionReport ? (
+                        <button
+                          type="button"
+                          onClick={() => setReportOpen(true)}
+                          className="text-left text-sm font-medium text-[#D4AF37] underline decoration-[#D4AF37]/40 underline-offset-2 transition hover:text-[#f5e6b8] hover:decoration-[#D4AF37]"
+                        >
+                          {event.title}
+                        </button>
+                      ) : (
+                        <p className="text-sm font-medium text-white/95">
+                          {event.title}
+                        </p>
+                      )}
                       {time ? (
                         <time
                           className="text-xs tabular-nums text-[#D4AF37]/80"
@@ -102,18 +132,14 @@ export function MissionTimeline({ events, className }: MissionTimelineProps) {
                     </div>
 
                     {event.kind === "photo" && event.photoUrl ? (
-                      <button
-                        type="button"
-                        onClick={() => setLightboxUrl(event.photoUrl!)}
-                        className="mt-3 block overflow-hidden rounded-xl border border-white/10 transition hover:border-[#D4AF37]/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4AF37]/60"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={event.photoUrl}
-                          alt="Service photo confirmation"
-                          className="max-h-48 w-full object-cover"
-                        />
-                      </button>
+                      <ServicePhotoCopyPreview
+                        src={event.photoUrl}
+                        alt="Service photo confirmation"
+                        hintText="Click to copy photo"
+                        successMessage="Photo copied to clipboard!"
+                        buttonClassName="mt-3 w-full rounded-xl border border-white/10 hover:border-[#D4AF37]/40"
+                        imageClassName="max-h-48 w-full object-cover"
+                      />
                     ) : null}
                   </div>
                 </li>
@@ -123,28 +149,55 @@ export function MissionTimeline({ events, className }: MissionTimelineProps) {
         )}
       </div>
 
-      {lightboxUrl ? (
+      {reportOpen && missionReport ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 p-4 sm:items-center"
           role="dialog"
           aria-modal="true"
-          aria-label="Service photo"
-          onClick={() => setLightboxUrl(null)}
+          aria-labelledby="mission-report-title"
+          onClick={() => setReportOpen(false)}
         >
-          <button
-            type="button"
-            className="absolute right-4 top-4 rounded-full border border-white/20 px-3 py-1 text-sm text-white/80 hover:bg-white/10"
-            onClick={() => setLightboxUrl(null)}
-          >
-            Close
-          </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={lightboxUrl}
-            alt="Service photo confirmation"
-            className="max-h-[90vh] max-w-full rounded-lg object-contain"
+          <div
+            className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-[#D4AF37]/25 bg-gradient-to-br from-[#0f172a] to-[#1e293b] p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
-          />
+          >
+            <div className="mb-5 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.15em] text-[#D4AF37]/80">
+                  Mission Report
+                </p>
+                <h3
+                  id="mission-report-title"
+                  className="mt-1 text-lg font-semibold text-white"
+                >
+                  {REPORT_KIND_LABEL[missionReport.reportKind]}
+                </h3>
+              </div>
+              <button
+                type="button"
+                className="shrink-0 rounded-full border border-white/20 px-3 py-1 text-sm text-white/80 hover:bg-white/10"
+                onClick={() => setReportOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <dl className="space-y-3">
+              {missionReport.fields.map((field) => (
+                <div
+                  key={field.label}
+                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-3"
+                >
+                  <dt className="text-[10px] font-semibold uppercase tracking-wide text-[#D4AF37]/70">
+                    {field.label}
+                  </dt>
+                  <dd className="mt-1 text-sm leading-relaxed text-white/90">
+                    {field.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
         </div>
       ) : null}
     </>

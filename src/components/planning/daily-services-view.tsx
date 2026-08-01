@@ -76,6 +76,7 @@ import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
 import { ServiceAssignmentHistory } from "@/components/planning/service-assignment-history";
 import { ServiceDoChatSection } from "@/components/client-chat/service-do-chat-section";
+import { ServicePhotoCopyPreview } from "@/components/service-photo-copy-preview";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
 import {
   MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT,
@@ -1458,12 +1459,12 @@ function ServiceBlockInner({
               {hasPhoto ? <span aria-hidden>✅</span> : null}
             </button>
             {hasPhoto && servicePhotoPreviewUrl ? (
-              <img
+              <ServicePhotoCopyPreview
                 src={servicePhotoPreviewUrl}
                 alt="Aperçu de la photo du service"
-                className="h-14 w-14 shrink-0 rounded-md border border-[#D4AF37]/40 object-cover object-center"
-                loading="lazy"
-                decoding="async"
+                buttonClassName="h-14 w-14 shrink-0 rounded-md border border-[#D4AF37]/40"
+                imageClassName="h-14 w-full object-cover object-center"
+                showHoverHint={false}
               />
             ) : null}
             <input

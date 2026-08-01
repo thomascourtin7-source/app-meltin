@@ -75,7 +75,8 @@ function GreeterAgentsList({ agentNameFormatted }: { agentNameFormatted: string 
 export default function TrackMissionPage() {
   const params = useParams();
   const token = typeof params.token === "string" ? params.token : "";
-  const { payload, timeline, loading, error } = useTrackMissionLive(token);
+  const { payload, timeline, missionReport, loading, error } =
+    useTrackMissionLive(token);
   const agentCount = assignedAgentCountFromFormatted(payload?.agentName ?? null);
 
   if (loading) {
@@ -139,7 +140,11 @@ export default function TrackMissionPage() {
         </div>
       </section>
 
-      <MissionTimeline events={timeline} className="mb-6" />
+      <MissionTimeline
+        events={timeline}
+        missionReport={missionReport}
+        className="mb-6"
+      />
 
       <section className="flex flex-1 flex-col">
         <ClientDoChatPanel

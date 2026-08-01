@@ -8,6 +8,7 @@ import { Pencil } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ServiceDoChatSection } from "@/components/client-chat/service-do-chat-section";
+import { ServicePhotoCopyPreview } from "@/components/service-photo-copy-preview";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { TimeField } from "@/components/ui/time-field";
@@ -790,12 +791,11 @@ export default function RapportServicePage() {
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Photo du service
               </div>
-              <img
+              <ServicePhotoCopyPreview
                 src={existingReport.photo_url.trim()}
                 alt="Photo jointe au rapport"
-                className="max-h-72 w-full max-w-md rounded-lg border border-border object-contain"
-                loading="lazy"
-                decoding="async"
+                buttonClassName="max-w-md rounded-lg border border-border"
+                imageClassName="max-h-72 w-full object-contain"
               />
             </div>
           ) : null}

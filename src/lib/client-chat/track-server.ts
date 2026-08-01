@@ -8,6 +8,35 @@ import { snapshotFromReportRow } from "@/lib/client-chat/track-timeline";
 import type { TrackServicePayload } from "@/lib/client-chat/types";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
+const TRACK_REPORT_SELECT = [
+  "service_client",
+  "assignee_name",
+  "service_type",
+  "report_kind",
+  "completed_at",
+  "is_pec",
+  "pec_status",
+  "photo_url",
+  "updated_at",
+  "deplanning",
+  "pax",
+  "travel_class",
+  "immigration_speed",
+  "checkin_bags",
+  "customs_control",
+  "place_end_of_service",
+  "comments",
+  "no_show",
+  "no_checked_bags",
+  "tax_refund",
+  "tax_refund_speed",
+  "tax_refund_by",
+  "immigration_security_speed",
+  "vip_lounge",
+  "boarding_end_of_service",
+  "bags_status",
+].join(",");
+
 type ServiceRow = {
   spreadsheet_id: string;
   service_id: string;
@@ -36,9 +65,7 @@ export async function loadTrackPayloadByToken(
   const [{ data: report }, { data: assignment }] = await Promise.all([
     supabase
       .from("service_reports")
-      .select(
-        "service_client,assignee_name,completed_at,is_pec,pec_status,photo_url,updated_at"
-      )
+      .select(TRACK_REPORT_SELECT)
       .eq("spreadsheet_id", service.spreadsheet_id)
       .eq("service_id", service.service_id)
       .maybeSingle(),
@@ -49,10 +76,10 @@ export async function loadTrackPayloadByToken(
       .maybeSingle(),
   ]);
 
+  const reportRow = report as { service_client?: unknown } | null;
   const reportClient =
-    typeof (report as { service_client?: unknown } | null)?.service_client ===
-    "string"
-      ? (report as { service_client: string }).service_client.trim()
+    typeof reportRow?.service_client === "string"
+      ? reportRow.service_client.trim()
       : "";
   const passengerRaw =
     service.passenger_label?.trim() ||
@@ -89,13 +116,7 @@ export async function loadTrackPayloadByToken(
       : null;
 
   const timeline = snapshotFromReportRow(
-    (report as {
-      pec_status?: string | null;
-      is_pec?: boolean | null;
-      photo_url?: string | null;
-      completed_at?: string | null;
-      updated_at?: string | null;
-    } | null) ?? null,
+    (report as unknown as Parameters<typeof snapshotFromReportRow>[0]) ?? null,
     agentName,
     agentUpdatedAt
   );
@@ -109,6 +130,7 @@ export async function loadTrackPayloadByToken(
     status: status.label,
     statusTone: status.tone,
     timeline,
+    missionReport: timeline.missionReport,
   };
 }
 
