@@ -5,7 +5,11 @@
 alter table public.services
   add column if not exists share_token text,
   add column if not exists passenger_label text,
+  add column if not exists flight_label text,
   add column if not exists is_do_tracking_active boolean not null default false;
+
+comment on column public.services.flight_label is
+  'Numéro(s) de vol affichés sur la page D.O. (ex. AF718 ou AF7303 / RJ118).';
 
 comment on column public.services.is_do_tracking_active is
   'Chat D.O. activé après partage du lien de suivi (Lien D.O. / WhatsApp).';
@@ -52,6 +56,14 @@ begin
 exception
   when duplicate_object then null;
 end $$;
+
+alter table public.client_chat_messages
+  add column if not exists edited_at timestamptz;
+
+comment on column public.client_chat_messages.edited_at is
+  'Horodatage de la dernière modification du message (badge edited).';
+
+alter table public.client_chat_messages replica identity full;
 
 -- Realtime timeline (service_reports + planning_assignments for greeter updates)
 alter table public.service_reports replica identity full;

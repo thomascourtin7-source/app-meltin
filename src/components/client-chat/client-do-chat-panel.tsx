@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Send } from "lucide-react";
 
+import { ClientChatAgentMessage } from "@/components/client-chat/client-chat-agent-message";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { readPlanningAuthSession } from "@/lib/auth/planning-auth-session";
 import { cn } from "@/lib/utils";
 import { useClientDoChat } from "@/lib/client-chat/use-client-do-chat";
 
@@ -69,13 +71,25 @@ export function ClientDoChatPanel({
   const t = COPY[locale];
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
-  const { messages, loading, error, sending, sendMessage } = useClientDoChat({
+  const currentAgentName = useMemo(
+    () => readPlanningAuthSession()?.displayName?.trim() ?? "",
+    []
+  );
+  const { messages, loading, error, sending, sendMessage, editMessage, deleteMessage } =
+    useClientDoChat({
     mode,
     shareToken,
     spreadsheetId,
     serviceId,
     clientSenderName: locale === "en" ? "CLIENT / ORDERER" : undefined,
   });
+
+  const canManageMessage = (senderName: string) => {
+    if (mode !== "agent" || !currentAgentName) return false;
+    return (
+      senderName.trim().toLowerCase() === currentAgentName.toLowerCase()
+    );
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -133,6 +147,24 @@ export function ClientDoChatPanel({
           messages.map((m) => {
             const isClient = m.sender_type === "client";
             const senderLabel = isClient ? t.clientSender : m.sender_name;
+            const timeLabel = formatMessageTime(m.created_at, locale);
+
+            if (!isClient && mode === "agent") {
+              return (
+                <div key={m.id} className="flex justify-end">
+                  <ClientChatAgentMessage
+                    message={m}
+                    senderLabel={senderLabel}
+                    timeLabel={timeLabel}
+                    locale={locale}
+                    canManage={canManageMessage(m.sender_name)}
+                    onEdit={editMessage}
+                    onDelete={deleteMessage}
+                  />
+                </div>
+              );
+            }
+
             return (
               <div
                 key={m.id}
@@ -149,8 +181,13 @@ export function ClientDoChatPanel({
                   <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide opacity-70">
                     {senderLabel}
                     <span className="ml-2 font-normal normal-case opacity-60">
-                      {formatMessageTime(m.created_at, locale)}
+                      {timeLabel}
                     </span>
+                    {!isClient && m.edited_at ? (
+                      <span className="ml-1 font-normal normal-case opacity-50">
+                        ({locale === "en" ? "edited" : "modifié"})
+                      </span>
+                    ) : null}
                   </div>
                   <p className="whitespace-pre-wrap break-words">{m.message}</p>
                 </div>

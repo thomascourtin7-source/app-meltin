@@ -600,6 +600,7 @@ function DepartureEtaButton({
         <TimeField
           value={etaHHMM ?? ""}
           disabled={disabled}
+          minuteStep={5}
           ariaLabel="Heure d’arrivée estimée (ETA)"
           className="flex-1 justify-center text-[#0a192f]"
           selectClassName="min-w-[2.25rem] px-0 text-[#0a192f]"
@@ -1194,6 +1195,7 @@ function ServiceBlockInner({
             spreadsheetId={spreadsheetId}
             serviceId={reportServiceId}
             passengerLabel={row.client.trim() || "Passager"}
+            flightNumbers={row.vol.trim() || undefined}
             variant="planning"
           />
         ) : null}
@@ -1707,6 +1709,7 @@ function ServiceBlockInner({
           spreadsheetId={spreadsheetId}
           serviceId={reportServiceId}
           passengerLabel={row.client.trim() || "Passager"}
+          flightNumbers={row.vol.trim() || undefined}
           variant="planning"
         />
       ) : null}

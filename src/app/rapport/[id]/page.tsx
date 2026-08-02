@@ -1245,6 +1245,7 @@ export default function RapportServicePage() {
               spreadsheetId={spreadsheetId}
               serviceId={serviceId}
               passengerLabel={serviceRow.client.trim() || "Passager"}
+              flightNumbers={serviceRow.vol.trim() || undefined}
               variant="report"
             />
           ) : null}

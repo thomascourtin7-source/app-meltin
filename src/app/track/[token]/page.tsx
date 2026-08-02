@@ -111,6 +111,12 @@ export default function TrackMissionPage() {
           Live Mission Tracking
         </h1>
         <p className="mt-2 text-lg text-[#f5e6b8]/90">{payload.passengerLabel}</p>
+        {payload.flightNumbers ? (
+          <p className="mt-1.5 text-sm font-medium tracking-[0.12em] text-white/55">
+            Flight{" "}
+            <span className="text-[#f5e6b8]/85">{payload.flightNumbers}</span>
+          </p>
+        ) : null}
         <div className="mt-4 flex justify-center">
           <span
             className={cn(

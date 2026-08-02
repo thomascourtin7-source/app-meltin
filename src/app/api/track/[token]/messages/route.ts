@@ -4,6 +4,7 @@ import {
   loadServiceByShareToken,
   loadTrackPayloadByToken,
 } from "@/lib/client-chat/track-server";
+import { CLIENT_CHAT_MESSAGE_SELECT } from "@/lib/client-chat/client-chat-message-select";
 import type { ClientChatMessageRow } from "@/lib/client-chat/types";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -26,9 +27,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
   const { data, error } = await supabase
     .from("client_chat_messages")
-    .select(
-      "id,created_at,spreadsheet_id,service_id,sender_type,sender_name,message"
-    )
+    .select(CLIENT_CHAT_MESSAGE_SELECT)
     .eq("spreadsheet_id", service.spreadsheet_id)
     .eq("service_id", service.service_id)
     .order("created_at", { ascending: true });
@@ -90,9 +89,7 @@ export async function POST(request: Request, context: RouteContext) {
       sender_name: senderName.slice(0, 120),
       message,
     })
-    .select(
-      "id,created_at,spreadsheet_id,service_id,sender_type,sender_name,message"
-    )
+    .select(CLIENT_CHAT_MESSAGE_SELECT)
     .single();
 
   if (error) {

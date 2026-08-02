@@ -12,6 +12,7 @@ const TRACK_REPORT_SELECT = [
   "service_client",
   "assignee_name",
   "service_type",
+  "service_vol",
   "report_kind",
   "completed_at",
   "is_pec",
@@ -42,6 +43,7 @@ type ServiceRow = {
   service_id: string;
   share_token: string | null;
   passenger_label: string | null;
+  flight_label: string | null;
 };
 
 export async function loadTrackPayloadByToken(
@@ -55,7 +57,7 @@ export async function loadTrackPayloadByToken(
 
   const { data: serviceRow, error: serviceErr } = await supabase
     .from("services")
-    .select("spreadsheet_id,service_id,share_token,passenger_label")
+    .select("spreadsheet_id,service_id,share_token,passenger_label,flight_label")
     .eq("share_token", token)
     .maybeSingle();
 
@@ -76,7 +78,7 @@ export async function loadTrackPayloadByToken(
       .maybeSingle(),
   ]);
 
-  const reportRow = report as { service_client?: unknown } | null;
+  const reportRow = report as { service_client?: unknown; service_vol?: unknown } | null;
   const reportClient =
     typeof reportRow?.service_client === "string"
       ? reportRow.service_client.trim()
@@ -121,6 +123,14 @@ export async function loadTrackPayloadByToken(
     agentUpdatedAt
   );
 
+  const reportVol =
+    typeof reportRow?.service_vol === "string"
+      ? reportRow.service_vol.trim()
+      : "";
+  const storedFlight =
+    typeof service.flight_label === "string" ? service.flight_label.trim() : "";
+  const flightNumbers = reportVol || storedFlight || null;
+
   return {
     shareToken: token,
     spreadsheetId: service.spreadsheet_id,
@@ -131,6 +141,7 @@ export async function loadTrackPayloadByToken(
     statusTone: status.tone,
     timeline,
     missionReport: timeline.missionReport,
+    flightNumbers,
   };
 }
 

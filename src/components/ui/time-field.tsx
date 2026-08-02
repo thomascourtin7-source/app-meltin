@@ -8,6 +8,17 @@ const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) =>
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, i) =>
   String(i).padStart(2, "0")
 );
+const MINUTE_OPTIONS_STEP_5 = Array.from({ length: 12 }, (_, i) =>
+  String(i * 5).padStart(2, "0")
+);
+
+function resolveMinuteOptions(step: 1 | 5, currentMm: string): string[] {
+  const base = step === 5 ? MINUTE_OPTIONS_STEP_5 : MINUTE_OPTIONS;
+  if (currentMm && !base.includes(currentMm)) {
+    return [...base, currentMm].sort();
+  }
+  return base;
+}
 
 /** Décompose une valeur `HH:MM` en heures / minutes (vide si non valide). */
 export function parseHHMM(value: string | null | undefined): {
@@ -36,6 +47,7 @@ export function TimeField({
   ariaLabel,
   className,
   selectClassName,
+  minuteStep = 1,
 }: {
   value: string | null | undefined;
   /** Reçoit `HH:MM` (ou `""` si tout est remis à zéro). */
@@ -44,8 +56,11 @@ export function TimeField({
   ariaLabel?: string;
   className?: string;
   selectClassName?: string;
+  /** Intervalle des minutes (5 = ETA départs). */
+  minuteStep?: 1 | 5;
 }) {
   const { hh, mm } = parseHHMM(value);
+  const minuteOptions = resolveMinuteOptions(minuteStep, mm);
 
   const emit = (nextHH: string, nextMM: string) => {
     if (!nextHH && !nextMM) {
@@ -90,7 +105,7 @@ export function TimeField({
         className={selectBase}
       >
         <option value="">--</option>
-        {MINUTE_OPTIONS.map((m) => (
+        {minuteOptions.map((m) => (
           <option key={m} value={m}>
             {m}
           </option>

@@ -1,7 +1,11 @@
 -- Token public de suivi D.O. (Donneur d'Ordre) — URL /track/[share_token]
 alter table public.services
   add column if not exists share_token text,
-  add column if not exists passenger_label text;
+  add column if not exists passenger_label text,
+  add column if not exists flight_label text;
+
+comment on column public.services.flight_label is
+  'Numéro(s) de vol affichés sur la page D.O.';
 
 create unique index if not exists services_share_token_uidx
   on public.services (share_token)

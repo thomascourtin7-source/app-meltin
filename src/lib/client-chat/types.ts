@@ -11,6 +11,7 @@ export type ClientChatMessageRow = {
   sender_type: ClientChatSenderType;
   sender_name: string;
   message: string;
+  edited_at?: string | null;
 };
 
 export type TrackServicePayload = {
@@ -23,6 +24,7 @@ export type TrackServicePayload = {
   statusTone: "default" | "active" | "done" | "alert";
   timeline: TrackMissionSnapshot;
   missionReport: TrackMissionReportSummary | null;
+  flightNumbers: string | null;
 };
 
 export type ShareLinkPayload = {

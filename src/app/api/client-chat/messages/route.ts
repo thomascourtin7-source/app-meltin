@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requirePlanningAgentBearer } from "@/lib/auth/planning-agent-server";
+import { CLIENT_CHAT_MESSAGE_SELECT } from "@/lib/client-chat/client-chat-message-select";
 import type { ClientChatMessageRow } from "@/lib/client-chat/types";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -28,9 +29,7 @@ export async function GET(request: Request) {
 
   const { data, error } = await supabase
     .from("client_chat_messages")
-    .select(
-      "id,created_at,spreadsheet_id,service_id,sender_type,sender_name,message"
-    )
+    .select(CLIENT_CHAT_MESSAGE_SELECT)
     .eq("spreadsheet_id", spreadsheetId)
     .eq("service_id", serviceId)
     .order("created_at", { ascending: true });
@@ -96,9 +95,7 @@ export async function POST(request: Request) {
       sender_name: auth.agentName.slice(0, 120),
       message,
     })
-    .select(
-      "id,created_at,spreadsheet_id,service_id,sender_type,sender_name,message"
-    )
+    .select(CLIENT_CHAT_MESSAGE_SELECT)
     .single();
 
   if (error) {

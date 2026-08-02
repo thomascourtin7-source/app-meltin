@@ -14,6 +14,7 @@ type ServiceDoChatSectionProps = {
   spreadsheetId: string;
   serviceId: string;
   passengerLabel: string;
+  flightNumbers?: string;
   variant?: "planning" | "report";
 };
 
@@ -21,6 +22,7 @@ export function ServiceDoChatSection({
   spreadsheetId,
   serviceId,
   passengerLabel,
+  flightNumbers,
   variant = "planning",
 }: ServiceDoChatSectionProps) {
   const [open, setOpen] = useState(false);
@@ -51,6 +53,7 @@ export function ServiceDoChatSection({
           spreadsheetId={spreadsheetId}
           serviceId={serviceId}
           passengerLabel={passengerLabel}
+          flightNumbers={flightNumbers}
           variant={variant}
           className="mb-3"
           onTrackingActivated={() => setDoTrackingActive(true)}

@@ -13,6 +13,7 @@ type DoShareLinkButtonProps = {
   spreadsheetId: string;
   serviceId: string;
   passengerLabel: string;
+  flightNumbers?: string;
   className?: string;
   variant?: "planning" | "report";
   onTrackingActivated?: () => void;
@@ -22,6 +23,7 @@ export function DoShareLinkButton({
   spreadsheetId,
   serviceId,
   passengerLabel,
+  flightNumbers,
   className,
   variant = "planning",
   onTrackingActivated,
@@ -50,6 +52,7 @@ export function DoShareLinkButton({
           spreadsheetId,
           serviceId,
           passengerLabel,
+          flightNumbers: flightNumbers?.trim() || undefined,
         }),
       });
       const json: unknown = await res.json();
@@ -81,6 +84,7 @@ export function DoShareLinkButton({
     spreadsheetId,
     serviceId,
     passengerLabel,
+    flightNumbers,
     onTrackingActivated,
   ]);
 

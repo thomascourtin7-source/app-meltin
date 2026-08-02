@@ -14,6 +14,24 @@ type UseClientDoChatOpts = {
   clientSenderName?: string;
 };
 
+function sortMessages(rows: ClientChatMessageRow[]): ClientChatMessageRow[] {
+  return [...rows].sort(
+    (a, b) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+}
+
+function mergeMessage(
+  prev: ClientChatMessageRow[],
+  row: ClientChatMessageRow
+): ClientChatMessageRow[] {
+  const idx = prev.findIndex((m) => m.id === row.id);
+  if (idx === -1) return sortMessages([...prev, row]);
+  const next = [...prev];
+  next[idx] = row;
+  return next;
+}
+
 export function useClientDoChat(opts: UseClientDoChatOpts) {
   const [messages, setMessages] = useState<ClientChatMessageRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,14 +136,39 @@ export function useClientDoChat(opts: UseClientDoChatOpts) {
         (payload) => {
           const row = payload.new as ClientChatMessageRow;
           if (row.spreadsheet_id !== spreadsheetId) return;
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === row.id)) return prev;
-            return [...prev, row].sort(
-              (a, b) =>
-                new Date(a.created_at).getTime() -
-                new Date(b.created_at).getTime()
-            );
-          });
+          setMessages((prev) => mergeMessage(prev, row));
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "client_chat_messages",
+          filter: `service_id=eq.${serviceId}`,
+        },
+        (payload) => {
+          const row = payload.new as ClientChatMessageRow;
+          if (row.spreadsheet_id !== spreadsheetId) return;
+          setMessages((prev) => mergeMessage(prev, row));
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "client_chat_messages",
+          filter: `service_id=eq.${serviceId}`,
+        },
+        (payload) => {
+          const oldRow = payload.old as { id?: string; spreadsheet_id?: string };
+          if (oldRow.spreadsheet_id && oldRow.spreadsheet_id !== spreadsheetId) {
+            return;
+          }
+          const id = oldRow.id;
+          if (!id) return;
+          setMessages((prev) => prev.filter((m) => m.id !== id));
         }
       )
       .subscribe();
@@ -204,12 +247,73 @@ export function useClientDoChat(opts: UseClientDoChatOpts) {
     [opts.mode, opts.shareToken, opts.spreadsheetId, opts.serviceId, opts.clientSenderName]
   );
 
+  const editMessage = useCallback(async (messageId: string, text: string) => {
+    const session = readPlanningAuthSession();
+    if (!session?.token) throw new Error("Session requise.");
+    const message = text.trim();
+    if (!message) throw new Error("Message vide.");
+
+    const res = await fetch(
+      `/api/client-chat/messages/${encodeURIComponent(messageId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.token}`,
+        },
+        body: JSON.stringify({ message }),
+      }
+    );
+    const json: unknown = await res.json();
+    if (!res.ok) {
+      const msg =
+        json &&
+        typeof json === "object" &&
+        "error" in json &&
+        typeof (json as { error: unknown }).error === "string"
+          ? (json as { error: string }).error
+          : "Modification impossible.";
+      throw new Error(msg);
+    }
+    const parsed = json as { message?: ClientChatMessageRow };
+    if (parsed.message) {
+      setMessages((prev) => mergeMessage(prev, parsed.message!));
+    }
+  }, []);
+
+  const deleteMessage = useCallback(async (messageId: string) => {
+    const session = readPlanningAuthSession();
+    if (!session?.token) throw new Error("Session requise.");
+
+    const res = await fetch(
+      `/api/client-chat/messages/${encodeURIComponent(messageId)}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.token}` },
+      }
+    );
+    const json: unknown = await res.json();
+    if (!res.ok) {
+      const msg =
+        json &&
+        typeof json === "object" &&
+        "error" in json &&
+        typeof (json as { error: unknown }).error === "string"
+          ? (json as { error: string }).error
+          : "Suppression impossible.";
+      throw new Error(msg);
+    }
+    setMessages((prev) => prev.filter((m) => m.id !== messageId));
+  }, []);
+
   return {
     messages,
     loading,
     error,
     sending,
     sendMessage,
+    editMessage,
+    deleteMessage,
     reload: loadMessages,
   };
 }

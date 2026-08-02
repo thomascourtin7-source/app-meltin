@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requirePlanningAgentBearer } from "@/lib/auth/planning-agent-server";
 import { isDoLinkAuthorizedUser } from "@/lib/client-chat/do-tracking-access";
+import { ensureDoWelcomeMessage } from "@/lib/client-chat/do-welcome-message";
 import { buildTrackUrl } from "@/lib/client-chat/share-token";
 import { generateShareToken } from "@/lib/client-chat/share-token-server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -41,6 +42,10 @@ export async function POST(request: Request) {
     typeof (body as { passengerLabel?: unknown }).passengerLabel === "string"
       ? (body as { passengerLabel: string }).passengerLabel.trim()
       : "";
+  const flightNumbers =
+    typeof (body as { flightNumbers?: unknown }).flightNumbers === "string"
+      ? (body as { flightNumbers: string }).flightNumbers.trim()
+      : "";
 
   if (!spreadsheetId || !serviceId) {
     return NextResponse.json(
@@ -51,7 +56,7 @@ export async function POST(request: Request) {
 
   const { data: existing, error: readErr } = await supabase
     .from("services")
-    .select("share_token,passenger_label,is_pec,is_starred,eta_time,is_do_tracking_active")
+    .select("share_token,passenger_label,flight_label,is_pec,is_starred,eta_time,is_do_tracking_active")
     .eq("spreadsheet_id", spreadsheetId)
     .eq("service_id", serviceId)
     .maybeSingle();
@@ -75,6 +80,7 @@ export async function POST(request: Request) {
           service_id: serviceId,
           share_token: shareToken,
           passenger_label: passengerLabel || null,
+          flight_label: flightNumbers || null,
           is_do_tracking_active: true,
           is_pec:
             typeof (existing as { is_pec?: unknown } | null)?.is_pec === "boolean"
@@ -105,6 +111,9 @@ export async function POST(request: Request) {
     if (passengerLabel) {
       updatePayload.passenger_label = passengerLabel;
     }
+    if (flightNumbers) {
+      updatePayload.flight_label = flightNumbers;
+    }
     await supabase
       .from("services")
       .update(updatePayload)
@@ -121,6 +130,16 @@ export async function POST(request: Request) {
 
   const origin = request.headers.get("origin") ?? undefined;
   const trackUrl = buildTrackUrl(shareToken, origin);
+
+  try {
+    await ensureDoWelcomeMessage(supabase, {
+      spreadsheetId,
+      serviceId,
+      fallbackUserName: auth.agentName,
+    });
+  } catch (e) {
+    console.error("[share-link] welcome message failed", e);
+  }
 
   return NextResponse.json({ shareToken, trackUrl });
 }

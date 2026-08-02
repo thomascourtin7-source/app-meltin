@@ -144,10 +144,14 @@ export function useTrackMissionLive(shareToken: string) {
               prev.snapshot.agentUpdatedAt
             );
             const nextPayload = buildPayloadFromParts(prev.payload, snap);
+            const serviceVol =
+              typeof row.service_vol === "string" ? row.service_vol.trim() : "";
             return {
               payload: {
                 ...nextPayload,
                 passengerLabel: prev.payload.passengerLabel,
+                flightNumbers:
+                  serviceVol || prev.payload.flightNumbers,
               },
               snapshot: snap,
               timeline: buildTrackTimelineEvents(snap),
