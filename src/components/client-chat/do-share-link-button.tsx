@@ -5,7 +5,7 @@ import { Check, Copy, Link2, MessageCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useDoLinkAccess } from "@/lib/client-chat/use-do-link-access";
-import { buildWhatsAppShareUrl } from "@/lib/client-chat/share-token";
+import { buildDoTrackingShareMessage, buildWhatsAppShareUrl } from "@/lib/client-chat/share-token";
 import { readPlanningAuthSession } from "@/lib/auth/planning-auth-session";
 import { cn } from "@/lib/utils";
 
@@ -91,23 +91,20 @@ export function DoShareLinkButton({
   const copyLink = async () => {
     const url = await ensureLink();
     if (!url) return;
+    const message = buildDoTrackingShareMessage(url);
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(message);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      window.prompt("Copiez le lien de suivi :", url);
+      window.prompt("Copiez le message de suivi :", message);
     }
   };
 
   const shareWhatsApp = async () => {
     const url = await ensureLink();
     if (!url) return;
-    window.open(
-      buildWhatsAppShareUrl(url, passengerLabel),
-      "_blank",
-      "noopener,noreferrer"
-    );
+    window.open(buildWhatsAppShareUrl(url), "_blank", "noopener,noreferrer");
   };
 
   if (!canShare) return null;
