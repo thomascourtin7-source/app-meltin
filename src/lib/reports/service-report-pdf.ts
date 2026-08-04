@@ -61,6 +61,18 @@ export type ServiceReportPdfData = {
 };
 
 async function tryFetchLogoDataUrl(): Promise<string | null> {
+  if (typeof window === "undefined") {
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const buf = await readFile(
+        join(process.cwd(), "public/icons/icon-192x192.png")
+      );
+      return `data:image/png;base64,${buf.toString("base64")}`;
+    } catch {
+      return null;
+    }
+  }
   try {
     const res = await fetch("/icons/icon-192x192.png");
     if (!res.ok) return null;
@@ -85,6 +97,11 @@ async function tryFetchImageDataUrl(url: string): Promise<string | null> {
       signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
+    if (typeof window === "undefined") {
+      const buf = Buffer.from(await res.arrayBuffer());
+      const mime = res.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
+      return `data:${mime};base64,${buf.toString("base64")}`;
+    }
     const blob = await res.blob();
     const dataUrl: string = await new Promise((resolve, reject) => {
       const fr = new FileReader();
@@ -99,6 +116,7 @@ async function tryFetchImageDataUrl(url: string): Promise<string | null> {
 }
 
 async function getImageSize(dataUrl: string): Promise<{ w: number; h: number } | null> {
+  if (typeof window === "undefined") return null;
   try {
     const img = new Image();
     const p = new Promise<{ w: number; h: number }>((resolve, reject) => {

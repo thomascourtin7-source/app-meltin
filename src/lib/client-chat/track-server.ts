@@ -1,4 +1,5 @@
 import { pecStatusFromStored, pecStatusToIsPec } from "@/lib/planning/pec-status";
+import { resolveServiceReportKind } from "@/lib/planning/service-kind";
 import { resolveTrackAgentNames } from "@/lib/client-chat/assigned-agents";
 import {
   formatPassengerServiceTitleEn,
@@ -6,6 +7,7 @@ import {
 } from "@/lib/client-chat/service-status";
 import { snapshotFromReportRow } from "@/lib/client-chat/track-timeline";
 import type { TrackServicePayload } from "@/lib/client-chat/types";
+import type { ServiceReportRowSnapshotForPdf } from "@/lib/reports/service-report-pdf";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const TRACK_REPORT_SELECT = [
@@ -36,6 +38,42 @@ const TRACK_REPORT_SELECT = [
   "vip_lounge",
   "boarding_end_of_service",
   "bags_status",
+].join(",");
+
+const TRACK_PDF_REPORT_SELECT = [
+  "report_kind",
+  "photo_url",
+  "service_client",
+  "service_type",
+  "service_date",
+  "service_vol",
+  "service_rdv1",
+  "service_rdv2",
+  "service_dest_prov",
+  "service_tel",
+  "service_driver_info",
+  "assignee_name",
+  "meeting_time",
+  "end_of_service",
+  "pax",
+  "deplanning",
+  "immigration_speed",
+  "immigration_security_speed",
+  "travel_class",
+  "checkin_bags",
+  "customs_control",
+  "place_end_of_service",
+  "tax_refund",
+  "tax_refund_speed",
+  "tax_refund_by",
+  "boarding_end_of_service",
+  "vip_lounge",
+  "comments",
+  "bags_status",
+  "transit_bags",
+  "no_show",
+  "no_checked_bags",
+  "completed_at",
 ].join(",");
 
 type ServiceRow = {
@@ -156,4 +194,38 @@ export async function loadServiceByShareToken(shareToken: string) {
     .eq("share_token", token)
     .maybeSingle();
   return (data as ServiceRow | null) ?? null;
+}
+
+export async function loadTrackReportPdfByToken(shareToken: string): Promise<{
+  row: ServiceReportRowSnapshotForPdf;
+  reportKind: "arrival" | "departure" | "transit";
+} | null> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return null;
+
+  const token = shareToken.trim();
+  if (!token) return null;
+
+  const service = await loadServiceByShareToken(token);
+  if (!service) return null;
+
+  const { data: report, error } = await supabase
+    .from("service_reports")
+    .select(TRACK_PDF_REPORT_SELECT)
+    .eq("spreadsheet_id", service.spreadsheet_id)
+    .eq("service_id", service.service_id)
+    .maybeSingle();
+
+  if (error || !report) return null;
+
+  const completedAt = (report as { completed_at?: string | null }).completed_at;
+  if (typeof completedAt !== "string" || !completedAt.trim()) return null;
+
+  const row = report as unknown as ServiceReportRowSnapshotForPdf;
+  const reportKind = resolveServiceReportKind({
+    reportKindStored: row.report_kind,
+    serviceType: row.service_type,
+  });
+
+  return { row, reportKind };
 }

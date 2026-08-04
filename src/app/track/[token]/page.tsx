@@ -75,9 +75,15 @@ function GreeterAgentsList({ agentNameFormatted }: { agentNameFormatted: string 
 export default function TrackMissionPage() {
   const params = useParams();
   const token = typeof params.token === "string" ? params.token : "";
-  const { payload, timeline, missionReport, loading, error } =
-    useTrackMissionLive(token);
+  const { payload, timeline, loading, error } = useTrackMissionLive(token);
   const agentCount = assignedAgentCountFromFormatted(payload?.agentName ?? null);
+  const isMissionCompleted =
+    payload?.statusTone === "done" ||
+    Boolean(payload?.timeline?.completedAt?.trim());
+  const reportPdfUrl =
+    isMissionCompleted && token.trim()
+      ? `/api/track/${encodeURIComponent(token.trim())}/report-pdf`
+      : null;
 
   if (loading) {
     return (
@@ -139,29 +145,33 @@ export default function TrackMissionPage() {
               {greeterCardTitle(agentCount)}
             </p>
             <GreeterAgentsList agentNameFormatted={payload.agentName} />
-            <p className="mt-3 text-sm text-white/55">
-              Chat live with your Meltin team below.
-            </p>
+            {!isMissionCompleted ? (
+              <p className="mt-3 text-sm text-white/55">
+                Chat live with your Meltin team below.
+              </p>
+            ) : null}
           </div>
         </div>
       </section>
 
       <MissionTimeline
         events={timeline}
-        missionReport={missionReport}
+        reportPdfUrl={reportPdfUrl}
         className="mb-6"
       />
 
-      <section className="flex flex-1 flex-col">
-        <ClientDoChatPanel
-          mode="public"
-          locale="en"
-          shareToken={token}
-          spreadsheetId={payload.spreadsheetId}
-          serviceId={payload.serviceId}
-          className="border-white/10 bg-[#0b1220]/90 text-white [&_textarea]:border-white/15 [&_textarea]:bg-white/5 [&_textarea]:text-white [&_textarea]:placeholder:text-white/40"
-        />
-      </section>
+      {!isMissionCompleted ? (
+        <section className="flex flex-1 flex-col">
+          <ClientDoChatPanel
+            mode="public"
+            locale="en"
+            shareToken={token}
+            spreadsheetId={payload.spreadsheetId}
+            serviceId={payload.serviceId}
+            className="border-white/10 bg-[#0b1220]/90 text-white [&_textarea]:border-white/15 [&_textarea]:bg-white/5 [&_textarea]:text-white [&_textarea]:placeholder:text-white/40"
+          />
+        </section>
+      ) : null}
 
       <footer className="mt-8 text-center text-xs text-white/35">
         Meltin — premium airport assistance
