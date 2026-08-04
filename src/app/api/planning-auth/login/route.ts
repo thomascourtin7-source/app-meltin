@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 
 import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
+import { normalizeAgentRole } from "@/lib/auth/agent-role";
 import { slugFromDisplayName } from "@/lib/auth/planning-auth-slugs";
 import { isPlanningAssignmentOnlySlug } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -78,6 +79,7 @@ export async function POST(request: Request) {
   }
 
   const displayName = dbName;
+  const role = normalizeAgentRole((row as { role?: unknown }).role);
   const sessionToken = randomUUID();
 
   // Session multi-appareils : enregistre un token indépendant (ne déconnecte pas les autres).
@@ -94,5 +96,6 @@ export async function POST(request: Request) {
     slug,
     displayName,
     token: sessionToken,
+    role,
   });
 }

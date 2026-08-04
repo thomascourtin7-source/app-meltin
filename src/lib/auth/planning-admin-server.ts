@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { isPlanningAdminDisplayName } from "@/lib/planning/planning-admins";
+import { isAgentAdminRole } from "@/lib/auth/agent-role";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export type PlanningAdminAuthResult =
@@ -18,18 +18,14 @@ async function isPlanningAdminInDatabase(
     .maybeSingle();
 
   if (error || !data) {
-    return isPlanningAdminDisplayName(name);
+    return false;
   }
 
   if ((data as { is_active?: boolean }).is_active === false) {
     return false;
   }
 
-  const role = String((data as { role?: unknown }).role ?? "")
-    .trim()
-    .toLowerCase();
-  if (role === "admin") return true;
-  return isPlanningAdminDisplayName(name);
+  return isAgentAdminRole((data as { role?: unknown }).role);
 }
 
 /**

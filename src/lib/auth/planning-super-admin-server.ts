@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server";
 
-import {
-  isPlanningSuperAdminDisplayName,
-} from "@/lib/planning/planning-super-admins";
+import { isAgentAdminRole } from "@/lib/auth/agent-role";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export type PlanningSuperAdminAuthResult =
   | { ok: true; agentName: string }
   | { ok: false; response: NextResponse };
 
-/** Javed, JAVED ORDI, Thomas uniquement. */
+/** Comptes avec `role = admin` dans `agents_auth`. */
 export async function requirePlanningSuperAdminBearer(
   request: Request
 ): Promise<PlanningSuperAdminAuthResult> {
@@ -58,11 +56,28 @@ export async function requirePlanningSuperAdminBearer(
     };
   }
 
-  if (!isPlanningSuperAdminDisplayName(name)) {
+  const { data: agentRow, error: agentErr } = await supabase
+    .from("agents_auth")
+    .select("role,is_active")
+    .ilike("name", name)
+    .maybeSingle();
+
+  if (agentErr) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: agentErr.message }, { status: 500 }),
+    };
+  }
+
+  if (
+    !agentRow ||
+    (agentRow as { is_active?: boolean }).is_active === false ||
+    !isAgentAdminRole((agentRow as { role?: unknown }).role)
+  ) {
     return {
       ok: false,
       response: NextResponse.json(
-        { error: "Action réservée à Javed, JAVED ORDI et Thomas." },
+        { error: "Action réservée aux administrateurs." },
         { status: 403 }
       ),
     };

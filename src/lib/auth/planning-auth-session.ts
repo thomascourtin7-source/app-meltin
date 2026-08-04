@@ -2,6 +2,8 @@ import {
   MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT,
   MELTIN_TEAM_REGISTER_NAME_KEY,
 } from "@/components/planning/register-team-button";
+import type { AgentAuthRole } from "@/lib/auth/agent-role";
+import { normalizeAgentRole } from "@/lib/auth/agent-role";
 import { CHAT_USERNAME_STORAGE_KEY } from "@/lib/chat/constants";
 
 /** Session planning + jeton serveur ; persistance illimitée (pas d’expiration côté client). */
@@ -15,6 +17,7 @@ export type PlanningAuthSession = {
   slug: string;
   displayName: string;
   token: string;
+  role?: AgentAuthRole;
 };
 
 export function getOrCreatePlanningDeviceId(): string {
@@ -44,8 +47,10 @@ function parseSession(raw: string | null): PlanningAuthSession | null {
     const slug = typeof o.slug === "string" ? o.slug.trim() : "";
     const displayName = typeof o.displayName === "string" ? o.displayName.trim() : "";
     const token = typeof o.token === "string" ? o.token.trim() : "";
+    const roleRaw = typeof o.role === "string" ? o.role.trim() : "";
+    const role = roleRaw ? normalizeAgentRole(roleRaw) : undefined;
     if (!slug || !displayName || !token) return null;
-    return { slug, displayName, token };
+    return { slug, displayName, token, ...(role ? { role } : {}) };
   } catch {
     return null;
   }
@@ -72,18 +77,29 @@ export function hasPlanningAuthSession(): boolean {
 /** Enregistre la session en localStorage jusqu’à déconnexion explicite (aucune TTL appliquée ici). */
 export function persistPlanningAuthSession(session: PlanningAuthSession): void {
   if (typeof window === "undefined") return;
+  const normalized: PlanningAuthSession = {
+    ...session,
+    ...(session.role ? { role: normalizeAgentRole(session.role) } : {}),
+  };
   window.localStorage.setItem(
     MELTIN_PLANNING_AUTH_SESSION_KEY,
-    JSON.stringify(session)
+    JSON.stringify(normalized)
   );
-  window.localStorage.setItem(MELTIN_TEAM_REGISTER_NAME_KEY, session.displayName);
-  window.localStorage.setItem(CHAT_USERNAME_STORAGE_KEY, session.displayName);
+  window.localStorage.setItem(MELTIN_TEAM_REGISTER_NAME_KEY, normalized.displayName);
+  window.localStorage.setItem(CHAT_USERNAME_STORAGE_KEY, normalized.displayName);
   window.dispatchEvent(new Event(MELTIN_AUTH_SESSION_CHANGED_EVENT));
   window.dispatchEvent(
     new CustomEvent(MELTIN_TEAM_REGISTER_NAME_CHANGED_EVENT, {
-      detail: { name: session.displayName },
+      detail: { name: normalized.displayName },
     })
   );
+}
+
+/** Met à jour le rôle en session locale (ex. après promotion admin). */
+export function patchPlanningAuthSessionRole(role: AgentAuthRole): void {
+  const session = readPlanningAuthSession();
+  if (!session) return;
+  persistPlanningAuthSession({ ...session, role: normalizeAgentRole(role) });
 }
 
 export function clearPlanningAuthSession(): void {

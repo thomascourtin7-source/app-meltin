@@ -1,19 +1,11 @@
-import { planningDisplayNameEquals } from "@/lib/planning/planning-team";
+import { isAgentAdminRole } from "@/lib/auth/agent-role";
 
-/** Administrateurs autorisés à modifier les assignations et le planning « demain ». */
-export const ADMINS = [
-  "Pravin",
-  "Deva",
-  "Thomas",
-  "Simon",
-  "Karthik",
-  "Javed",
-  "Elias",
-  "JAVED ORDI",
-] as const;
+/** Droits administrateur basés sur `agents_auth.role`. */
+export function isPlanningAdminRole(role: unknown): boolean {
+  return isAgentAdminRole(role);
+}
 
-export function isPlanningAdminDisplayName(name: string): boolean {
-  const t = name.trim();
-  if (!t) return false;
-  return ADMINS.some((admin) => planningDisplayNameEquals(admin, t));
+/** @deprecated Utiliser {@link isPlanningAdminRole} avec le rôle en session / base. */
+export function isPlanningAdminDisplayName(_name: string): boolean {
+  return false;
 }

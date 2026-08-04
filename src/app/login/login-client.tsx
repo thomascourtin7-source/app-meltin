@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
+import { normalizeAgentRole } from "@/lib/auth/agent-role";
 import {
   getOrCreatePlanningDeviceId,
   persistPlanningAuthSession,
@@ -35,7 +36,13 @@ type RegistryPayload = {
   error?: string;
 };
 
-type AuthOkPayload = { slug: string; displayName: string; token: string; error?: string };
+type AuthOkPayload = {
+  slug: string;
+  displayName: string;
+  token: string;
+  role?: string;
+  error?: string;
+};
 
 export function LoginClient() {
   const router = useRouter();
@@ -101,6 +108,7 @@ export function LoginClient() {
         slug: payload.slug,
         displayName: payload.displayName,
         token: payload.token,
+        role: normalizeAgentRole(payload.role),
       });
       await ensureServiceWorkerRegistered();
       const sub = await subscribeChatPush(payload.displayName);

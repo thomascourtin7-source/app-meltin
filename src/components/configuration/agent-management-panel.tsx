@@ -20,11 +20,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { readPlanningAuthSession } from "@/lib/auth/planning-auth-session";
+import { readPlanningAuthSession, patchPlanningAuthSessionRole } from "@/lib/auth/planning-auth-session";
 import {
   notifyAgentsCatalogChanged,
 } from "@/hooks/use-planning-agent-catalog";
 import type { ManagedAgentRow } from "@/lib/planning/planning-agent-catalog";
+import { planningDisplayNameEquals } from "@/lib/planning/planning-team";
 
 type ManageResponse = {
   agents?: ManagedAgentRow[];
@@ -60,6 +61,7 @@ export function AgentManagementPanel() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const loadAgents = useCallback(async () => {
     setError(null);
@@ -101,12 +103,37 @@ export function AgentManagementPanel() {
   };
 
   const handleRoleChange = async (name: string, role: "admin" | "agent") => {
+    const previousRole =
+      agents.find((agent) => agent.name === name)?.role ?? "agent";
+    if (previousRole === role) return;
+
+    setAgents((current) =>
+      current.map((agent) =>
+        agent.name === name ? { ...agent, role } : agent
+      )
+    );
     setBusy(true);
     setError(null);
+    setSuccessMessage(null);
     try {
       const rows = await manageFetch("PATCH", { name, role });
       await afterMutation(rows);
+      setSuccessMessage("Rôle mis à jour avec succès.");
+      window.setTimeout(() => setSuccessMessage(null), 3000);
+
+      const session = readPlanningAuthSession();
+      if (
+        session &&
+        planningDisplayNameEquals(session.displayName, name)
+      ) {
+        patchPlanningAuthSessionRole(role);
+      }
     } catch (e) {
+      setAgents((current) =>
+        current.map((agent) =>
+          agent.name === name ? { ...agent, role: previousRole } : agent
+        )
+      );
       setError(e instanceof Error ? e.message : "Mise à jour impossible.");
     } finally {
       setBusy(false);
@@ -135,8 +162,8 @@ export function AgentManagementPanel() {
       <CardHeader>
         <CardTitle>Gestion des agents</CardTitle>
         <CardDescription>
-          Ajouter, retirer ou promouvoir des administrateurs. Réservé à Javed,
-          JAVED ORDI et Thomas.
+          Ajouter, retirer ou promouvoir des administrateurs. Réservé aux comptes
+          avec le rôle Admin.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -159,6 +186,15 @@ export function AgentManagementPanel() {
             Ajouter l&apos;agent
           </Button>
         </div>
+
+        {successMessage ? (
+          <p
+            className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300"
+            role="status"
+          >
+            {successMessage}
+          </p>
+        ) : null}
 
         {error ? (
           <p className="text-sm text-destructive" role="alert">

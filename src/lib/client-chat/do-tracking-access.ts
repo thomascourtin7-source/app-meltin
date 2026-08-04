@@ -1,12 +1,6 @@
-const DO_LINK_AUTHORIZED_NAMES = new Set([
-  "javed",
-  "javed ordi",
-  "thomas",
-]);
+import { isAgentAdminRole } from "@/lib/auth/agent-role";
+import type { AgentAuthRole } from "@/lib/auth/agent-role";
 
-export function isDoLinkAuthorizedUser(
-  displayName: string | null | undefined
-): boolean {
-  const normalized = displayName?.trim().toLowerCase() ?? "";
-  return DO_LINK_AUTHORIZED_NAMES.has(normalized);
+export function isDoLinkAuthorizedUser(role: AgentAuthRole | null | undefined): boolean {
+  return isAgentAdminRole(role);
 }

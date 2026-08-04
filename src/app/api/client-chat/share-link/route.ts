@@ -1,19 +1,14 @@
 import { NextResponse } from "next/server";
 
-import { requirePlanningAgentBearer } from "@/lib/auth/planning-agent-server";
-import { isDoLinkAuthorizedUser } from "@/lib/client-chat/do-tracking-access";
+import { requirePlanningAdminBearer } from "@/lib/auth/planning-admin-server";
 import { ensureDoWelcomeMessage } from "@/lib/client-chat/do-welcome-message";
 import { buildTrackUrl } from "@/lib/client-chat/share-token";
 import { generateShareToken } from "@/lib/client-chat/share-token-server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
-  const auth = await requirePlanningAgentBearer(request);
+  const auth = await requirePlanningAdminBearer(request);
   if (!auth.ok) return auth.response;
-
-  if (!isDoLinkAuthorizedUser(auth.agentName)) {
-    return NextResponse.json({ error: "Non autorisé." }, { status: 403 });
-  }
 
   const supabase = getSupabaseAdmin();
   if (!supabase) {

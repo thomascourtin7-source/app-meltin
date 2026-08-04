@@ -118,6 +118,7 @@ import {
   readPlanningAuthSession,
 } from "@/lib/auth/planning-auth-session";
 import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
+import { useAgentAuthRole } from "@/hooks/use-agent-auth-role";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { setPlanningAssigneesRealtimeChannel } from "@/lib/planning/planning-assignees-realtime";
 
@@ -1875,15 +1876,16 @@ export function DailyServicesView() {
   const [meName, setMeName] = useState<string>("");
   const [meSlug, setMeSlug] = useState<string>("");
   const isPlanningAdmin = usePlanningAdminClient();
+  const { role: meRole } = useAgentAuthRole();
   const { operationalLabels, filterBarLabels, assignableOptions } =
     usePlanningAgentCatalog();
   const planningSuperAdminBypass = useMemo(
-    () => isPlanningSuperAdminSession({ slug: meSlug, displayName: meName }),
-    [meSlug, meName]
+    () => isPlanningSuperAdminSession({ role: meRole }),
+    [meRole]
   );
   const vipStarEditorSession = useMemo(
-    () => isPlanningVipStarEditorSession({ slug: meSlug, displayName: meName }),
-    [meSlug, meName]
+    () => isPlanningVipStarEditorSession({ role: meRole }),
+    [meRole]
   );
   const showAgentFilterBar = useMemo(
     () => isPlanningAgentFilterBarSession({ slug: meSlug, displayName: meName }),
