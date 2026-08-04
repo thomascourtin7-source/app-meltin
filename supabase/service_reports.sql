@@ -46,7 +46,10 @@ alter table public.service_reports
   add column if not exists is_pec boolean not null default false,
   add column if not exists pec_status text,
   add column if not exists completed_at timestamptz,
-  add column if not exists photo_url text;
+  add column if not exists photo_url text,
+  add column if not exists on_position_at timestamptz,
+  add column if not exists pec_at timestamptz,
+  add column if not exists photo_at timestamptz;
 
 create unique index if not exists service_reports_spreadsheet_service_uidx
   on public.service_reports (spreadsheet_id, service_id);

@@ -81,19 +81,19 @@ export function MissionTimeline({
             const isReportLink = event.kind === "mission_report";
 
             return (
-              <li key={event.id} className="relative flex gap-4 pb-6 last:pb-0">
+              <li key={event.id} className="relative flex gap-5 pb-7 last:pb-0">
                 {!isLast ? (
                   <span
-                    className="absolute left-[15px] top-8 h-[calc(100%-8px)] w-px bg-gradient-to-b from-[#D4AF37]/50 to-white/10"
+                    className="absolute left-[19px] top-10 h-[calc(100%-12px)] w-px bg-gradient-to-b from-[#D4AF37]/50 to-white/10"
                     aria-hidden
                   />
                 ) : null}
 
-                <div className="relative z-[1] flex size-8 shrink-0 items-center justify-center rounded-full border border-[#D4AF37]/40 bg-[#D4AF37]/10">
-                  <Icon className="size-4 text-[#D4AF37]" aria-hidden />
+                <div className="relative z-[1] flex size-10 shrink-0 items-center justify-center rounded-full border border-[#D4AF37]/40 bg-[#D4AF37]/10">
+                  <Icon className="size-5 text-[#D4AF37]" aria-hidden />
                 </div>
 
-                <div className="min-w-0 flex-1 pt-0.5">
+                <div className="min-w-0 flex-1 pt-1">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                     {isReportLink && reportPdfUrl ? (
                       <a
@@ -103,7 +103,7 @@ export function MissionTimeline({
                         download
                         className="inline-flex items-center gap-1.5 text-sm font-medium text-[#D4AF37] underline decoration-[#D4AF37]/40 underline-offset-2 transition hover:text-[#f5e6b8] hover:decoration-[#D4AF37]"
                       >
-                        <Download className="size-3.5 shrink-0" aria-hidden />
+                        <Download className="size-4 shrink-0" aria-hidden />
                         {event.title}
                       </a>
                     ) : (

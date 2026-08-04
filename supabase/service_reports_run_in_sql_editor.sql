@@ -55,7 +55,10 @@ alter table public.service_reports
   add column if not exists completed_at timestamptz,
   add column if not exists photo_url text,
   add column if not exists no_show boolean not null default false,
-  add column if not exists no_checked_bags boolean not null default false;
+  add column if not exists no_checked_bags boolean not null default false,
+  add column if not exists on_position_at timestamptz,
+  add column if not exists pec_at timestamptz,
+  add column if not exists photo_at timestamptz;
 
 -- 3. Commentaires (documentation)
 comment on column public.service_reports.deplanning is

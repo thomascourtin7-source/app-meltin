@@ -1,4 +1,7 @@
 import {
+  resolveTrackEventAt,
+} from "@/lib/client-chat/track-timeline-at";
+import {
   isEnPlaceLikeStatus,
   pecStatusFromStored,
   type PecStatus,
@@ -20,6 +23,9 @@ export type TrackMissionSnapshot = {
   photoUrl: string | null;
   completedAt: string | null;
   updatedAt: string | null;
+  onPositionAt: string | null;
+  pecAt: string | null;
+  photoAt: string | null;
   agentName: string | null;
   agentUpdatedAt: string | null;
   serviceType: string | null;
@@ -103,7 +109,7 @@ export function buildTrackTimelineEvents(
       id: "on_position",
       kind: "on_position",
       title: resolveOnPositionTitle(snap),
-      at: snap.updatedAt,
+      at: resolveTrackEventAt(snap.onPositionAt, snap.updatedAt),
     });
   }
 
@@ -112,7 +118,7 @@ export function buildTrackTimelineEvents(
       id: "passenger_met",
       kind: "passenger_met",
       title: "Greeter has met the passenger",
-      at: snap.updatedAt,
+      at: resolveTrackEventAt(snap.pecAt, snap.updatedAt),
     });
   }
 
@@ -121,7 +127,7 @@ export function buildTrackTimelineEvents(
       id: "photo",
       kind: "photo",
       title: "Service Photo Confirmation",
-      at: snap.updatedAt,
+      at: resolveTrackEventAt(snap.photoAt, snap.updatedAt),
       photoUrl: snap.photoUrl.trim(),
     });
   }
@@ -154,6 +160,9 @@ export function snapshotFromReportRow(
     photo_url?: string | null;
     completed_at?: string | null;
     updated_at?: string | null;
+    on_position_at?: string | null;
+    pec_at?: string | null;
+    photo_at?: string | null;
   } | null,
   agentName: string | null,
   agentUpdatedAt: string | null
@@ -173,6 +182,18 @@ export function snapshotFromReportRow(
     updatedAt:
       typeof row?.updated_at === "string" && row.updated_at.trim()
         ? row.updated_at.trim()
+        : null,
+    onPositionAt:
+      typeof row?.on_position_at === "string" && row.on_position_at.trim()
+        ? row.on_position_at.trim()
+        : null,
+    pecAt:
+      typeof row?.pec_at === "string" && row.pec_at.trim()
+        ? row.pec_at.trim()
+        : null,
+    photoAt:
+      typeof row?.photo_at === "string" && row.photo_at.trim()
+        ? row.photo_at.trim()
         : null,
     agentName,
     agentUpdatedAt,

@@ -136,9 +136,9 @@ export default function TrackMissionPage() {
       </header>
 
       <section className="mb-6 rounded-2xl border border-white/10 bg-gradient-to-br from-[#0f172a] to-[#1e293b] p-5 shadow-xl">
-        <div className="flex items-start gap-4">
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-full border border-[#D4AF37]/40 bg-[#D4AF37]/10">
-            <UserRound className="size-6 text-[#D4AF37]" aria-hidden />
+        <div className="flex items-start gap-5">
+          <div className="flex size-16 shrink-0 items-center justify-center rounded-full border border-[#D4AF37]/40 bg-[#D4AF37]/10">
+            <UserRound className="size-8 text-[#D4AF37]" aria-hidden />
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-white/50">

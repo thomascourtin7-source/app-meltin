@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveRequestUrl } from "@/lib/http/resolve-request-url";
+import { applyFrozenTimelineTimestamps } from "@/lib/client-chat/track-timeline-at";
 import {
   applyPecFieldsToServiceReportPayload,
   resolvePecStatusFromBody,
@@ -171,7 +172,9 @@ export async function POST(request: Request) {
 
   const { data: existingRow } = await supabase
     .from("service_reports")
-    .select("pec_status,is_pec")
+    .select(
+      "pec_status,is_pec,photo_url,on_position_at,pec_at,photo_at"
+    )
     .eq("spreadsheet_id", spreadsheetId)
     .eq("service_id", serviceId)
     .maybeSingle();
@@ -196,6 +199,22 @@ export async function POST(request: Request) {
       reportKind,
     });
   }
+
+  const nextPhotoUrl =
+    typeof payload.photo_url === "string"
+      ? payload.photo_url.trim()
+      : typeof existingRow?.photo_url === "string"
+        ? existingRow.photo_url.trim()
+        : null;
+
+  applyFrozenTimelineTimestamps(payload, {
+    existing: (existingRow as Parameters<
+      typeof applyFrozenTimelineTimestamps
+    >[1]["existing"]) ?? null,
+    nextPecStatus:
+      hasExplicitPecInBody && pecStatus !== null ? pecStatus : null,
+    nextPhotoUrl,
+  });
 
   const { data, error: upErr } = await supabase
     .from("service_reports")

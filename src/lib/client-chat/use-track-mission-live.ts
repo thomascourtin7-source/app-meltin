@@ -48,6 +48,18 @@ function buildPayloadFromParts(
   };
 }
 
+function mergeFrozenTimelineFields(
+  prev: TrackMissionSnapshot,
+  next: TrackMissionSnapshot
+): TrackMissionSnapshot {
+  return {
+    ...next,
+    onPositionAt: next.onPositionAt ?? prev.onPositionAt,
+    pecAt: next.pecAt ?? prev.pecAt,
+    photoAt: next.photoAt ?? prev.photoAt,
+  };
+}
+
 export function useTrackMissionLive(shareToken: string) {
   const [state, setState] = useState<LiveTrackState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -138,10 +150,13 @@ export function useTrackMissionLive(shareToken: string) {
             const agentName =
               resolveTrackAgentNames(null, row.assignee_name) ??
               prev.snapshot.agentName;
-            const snap = snapshotFromReportRow(
-              row as Parameters<typeof snapshotFromReportRow>[0],
-              agentName,
-              prev.snapshot.agentUpdatedAt
+            const snap = mergeFrozenTimelineFields(
+              prev.snapshot,
+              snapshotFromReportRow(
+                row as Parameters<typeof snapshotFromReportRow>[0],
+                agentName,
+                prev.snapshot.agentUpdatedAt
+              )
             );
             const nextPayload = buildPayloadFromParts(prev.payload, snap);
             const serviceVol =
