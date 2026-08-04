@@ -128,8 +128,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const origin = request.headers.get("origin") ?? undefined;
-  const trackUrl = buildTrackUrl(shareToken, origin);
+  const trackUrl = buildTrackUrl(shareToken);
 
   try {
     await ensureDoWelcomeMessage(supabase, {
