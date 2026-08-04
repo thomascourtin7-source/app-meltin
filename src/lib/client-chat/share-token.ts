@@ -6,11 +6,21 @@ export function buildTrackUrl(shareToken: string): string {
   return `${MELTIN_TRACKING_ORIGIN}/track/${encodeURIComponent(token)}`;
 }
 
-export function buildDoTrackingShareMessage(trackUrl: string): string {
-  return `📱✈️ Airport Live\n\n📍SERVICE TRACKING\n💬 CHAT WITH AGENT\n\n${trackUrl.trim()}`;
+export function buildDoTrackingShareMessage(
+  trackUrl: string,
+  passengerName?: string
+): string {
+  const name = passengerName?.trim();
+  const header = name ? `Service of ${name}\n\n` : "";
+  return `${header}📱✈️ Airport Live\n\n📍SERVICE TRACKING\n💬 CHAT WITH AGENT\n\n${trackUrl.trim()}`;
 }
 
-export function buildWhatsAppShareUrl(trackUrl: string): string {
-  const text = encodeURIComponent(buildDoTrackingShareMessage(trackUrl));
+export function buildWhatsAppShareUrl(
+  trackUrl: string,
+  passengerName?: string
+): string {
+  const text = encodeURIComponent(
+    buildDoTrackingShareMessage(trackUrl, passengerName)
+  );
   return `https://wa.me/?text=${text}`;
 }

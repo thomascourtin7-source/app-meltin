@@ -91,7 +91,7 @@ export function DoShareLinkButton({
   const copyLink = async () => {
     const url = await ensureLink();
     if (!url) return;
-    const message = buildDoTrackingShareMessage(url);
+    const message = buildDoTrackingShareMessage(url, passengerLabel);
     try {
       await navigator.clipboard.writeText(message);
       setCopied(true);
@@ -104,7 +104,7 @@ export function DoShareLinkButton({
   const shareWhatsApp = async () => {
     const url = await ensureLink();
     if (!url) return;
-    window.open(buildWhatsAppShareUrl(url), "_blank", "noopener,noreferrer");
+    window.open(buildWhatsAppShareUrl(url, passengerLabel), "_blank", "noopener,noreferrer");
   };
 
   if (!canShare) return null;
