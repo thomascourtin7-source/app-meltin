@@ -3,6 +3,8 @@ export const BAGS_STATUS_VALUES = [
   "checked_through",
   "no_bags",
   "collect_paris_recheck",
+  "miss_flight_end_hotel",
+  "miss_flight_end_lounge",
 ] as const;
 
 export type BagsStatusValue = (typeof BAGS_STATUS_VALUES)[number];
@@ -22,6 +24,14 @@ export const TRANSIT_BAGS_STATUS_OPTIONS: ReadonlyArray<{
   {
     value: "collect_paris_recheck",
     label: "Collect in Paris & re-check (Récupérer à Paris & ré-enregistrer)",
+  },
+  {
+    value: "miss_flight_end_hotel",
+    label: "miss the flight - end at hotel",
+  },
+  {
+    value: "miss_flight_end_lounge",
+    label: "miss the flight - end at lounge /next flight",
   },
 ];
 

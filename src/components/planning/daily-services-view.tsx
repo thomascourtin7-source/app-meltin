@@ -108,6 +108,10 @@ import {
 } from "@/lib/planning/pec-status";
 import { detectServiceReportKind, resolveServiceReportKind } from "@/lib/planning/service-kind";
 import {
+  buildGreeterPassengerWhatsAppUrl,
+  resolveGreeterWhatsAppName,
+} from "@/lib/planning/greeter-whatsapp-message";
+import {
   SERVICE_REPORTS_SWR_KEY_0,
   type ServiceReportsSwrBundle,
 } from "@/lib/planning/service-reports-swr";
@@ -929,6 +933,20 @@ function ServiceBlockInner({
     () => detectServiceReportKind(row.type),
     [row.type]
   );
+  const greeterWhatsAppUrl = useMemo(() => {
+    const greeterName = resolveGreeterWhatsAppName({
+      assigneeLabels: assigneeDisplayLabels,
+      meName,
+      urgentAssigneeLabel: PLANNING_URGENT_ASSIGNEE_DISPLAY,
+    });
+    if (!greeterName) return null;
+    return buildGreeterPassengerWhatsAppUrl({
+      telField: row.tel,
+      greeterName,
+      serviceKind: reportKind,
+      flightNumber: row.vol,
+    });
+  }, [assigneeDisplayLabels, meName, reportKind, row.tel, row.vol]);
   const showDepartureEta = reportKind === "departure" && typeof onEtaCommit === "function";
   /** ETA : coordination interne uniquement tant que le rapport n’est pas terminé (`completed_at` / batch). */
   const showDepartureEtaControl = showDepartureEta && !isReportCompleted;
@@ -1682,12 +1700,24 @@ function ServiceBlockInner({
                 </span>
                 <PlanningPhoneRichText text={destProv || "—"} tone="inherit" />
               </p>
-              <p>
-                <span className="font-semibold text-slate-200">
-                  {"Tél. : "}
-                </span>
-                <PlanningPhoneRichText text={row.tel.trim() || "—"} tone="inherit" />
-              </p>
+              <div>
+                <p>
+                  <span className="font-semibold text-slate-200">
+                    {"Tél. : "}
+                  </span>
+                  <PlanningPhoneRichText text={row.tel.trim() || "—"} tone="inherit" />
+                </p>
+                {greeterWhatsAppUrl ? (
+                  <a
+                    href={greeterWhatsAppUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition-colors hover:border-emerald-400/60 hover:bg-emerald-500/20"
+                  >
+                    💬 Envoyer un message
+                  </a>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>

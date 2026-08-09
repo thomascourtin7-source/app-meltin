@@ -453,6 +453,12 @@ export async function generateServiceReportPdf(
     didParseCell: (hook) => {
       if (hook.section === "head") hook.cell.colSpan = 2;
       if (hook.section === "body" && hook.column.index === 1) {
+        const label = Array.isArray(hook.row.raw)
+          ? String(hook.row.raw[0] ?? "").trim()
+          : "";
+        if (label === "BAGAGES (BAGS)") {
+          hook.cell.styles.overflow = "linebreak";
+        }
         hook.cell.styles.minCellHeight =
           hook.row.index === reportDetails.length - 1 ? 48 : 0; // comments row
       }

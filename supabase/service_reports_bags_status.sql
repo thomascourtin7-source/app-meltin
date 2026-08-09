@@ -3,4 +3,4 @@ alter table public.service_reports
   add column if not exists bags_status text;
 
 comment on column public.service_reports.bags_status is
-  'Transit uniquement : checked_through | no_bags | collect_paris_recheck';
+  'Transit uniquement : checked_through | no_bags | collect_paris_recheck | miss_flight_end_hotel | miss_flight_end_lounge';
