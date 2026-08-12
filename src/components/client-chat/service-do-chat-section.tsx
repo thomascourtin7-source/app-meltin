@@ -80,7 +80,7 @@ export function ServiceDoChatSection({
                 className="rounded-md border border-red-500/70 bg-red-950/40 px-2 py-0.5 text-[11px] font-bold uppercase leading-tight tracking-wide text-red-300 shadow-[0_0_10px_rgba(239,68,68,0.85),0_0_22px_rgba(239,68,68,0.45)] animate-pulse"
                 role="status"
               >
-                Attention enculé le chat est ouvert !!!
+                Attention le chat est ouvert !!!
               </span>
               {unreadCount > 0 ? (
                 <span
