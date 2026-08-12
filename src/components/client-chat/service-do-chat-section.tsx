@@ -73,12 +73,18 @@ export function ServiceDoChatSection({
             )}
             onClick={() => setOpen((v) => !v)}
           >
-            <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
-              <MessagesSquare className="size-4 shrink-0" aria-hidden />
-              <span>Chat D.O.</span>
+            <span className="inline-flex flex-wrap items-center gap-2">
+              <MessagesSquare className="size-4" aria-hidden />
+              Chat D.O.
               <span
-                className="rounded-md border border-red-500/70 bg-red-950/40 px-2 py-0.5 text-[11px] font-bold uppercase leading-tight tracking-wide text-red-300 shadow-[0_0_10px_rgba(239,68,68,0.85),0_0_22px_rgba(239,68,68,0.45)] animate-pulse"
-                role="status"
+                className={cn(
+                  "rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide",
+                  "text-red-300",
+                  "shadow-[0_0_6px_rgba(248,113,113,0.95),0_0_14px_rgba(239,68,68,0.75),0_0_24px_rgba(220,38,38,0.45)]",
+                  "ring-1 ring-red-400/70",
+                  isPlanning ? "bg-red-950/50" : "bg-red-500/10",
+                  "animate-pulse"
+                )}
               >
                 Attention le chat est ouvert !!!
               </span>
