@@ -452,14 +452,9 @@ export default function RapportServicePage() {
       setSubmitError("Service introuvable pour ce rapport.");
       return;
     }
-    const isArrivalNoShow = reportKind === "arrival" && noShow;
-    if (isArrivalNoShow && !comments.trim()) {
-      setSubmitError(
-        "Veuillez renseigner les COMMENTS (circonstances du No Show)."
-      );
-      return;
-    }
-    if (!isArrivalNoShow && reportKind === "transit" && !bagsStatus.trim()) {
+    const isNoShowReport =
+      (reportKind === "arrival" || reportKind === "transit") && noShow;
+    if (!isNoShowReport && reportKind === "transit" && !bagsStatus.trim()) {
       setSubmitError("Veuillez sélectionner le statut bagages (Bagages).");
       return;
     }
@@ -496,77 +491,78 @@ export default function RapportServicePage() {
         assignee_name: primaryAssignee,
         report_kind: reportKind,
         completed_at: new Date().toISOString(),
-        meeting_time: isArrivalNoShow ? null : meeting_time,
-        end_of_service: isArrivalNoShow ? null : end_of_service,
-        photo_url: isArrivalNoShow ? null : latest?.photo_url ?? null,
+        meeting_time: isNoShowReport ? null : meeting_time,
+        end_of_service: isNoShowReport ? null : end_of_service,
+        photo_url: latest?.photo_url ?? null,
         pec_status: latest ? pecStatusFromStored(latest) : "vide",
         is_pec: latest ? pecStatusToIsPec(pecStatusFromStored(latest)) : false,
-        no_show: reportKind === "arrival" ? noShow : false,
-        no_checked_bags: isArrivalNoShow ? false : noCheckedBags,
-        pax: isArrivalNoShow ? null : pax,
+        no_show:
+          reportKind === "arrival" || reportKind === "transit" ? noShow : false,
+        no_checked_bags: isNoShowReport ? false : noCheckedBags,
+        pax: isNoShowReport ? null : pax,
         comments: comments || null,
         immigration_speed:
-          !isArrivalNoShow && reportKind === "arrival"
+          !isNoShowReport && reportKind === "arrival"
             ? immigrationSpeed || null
             : null,
         immigration_security_speed:
           reportKind !== "arrival" ? immigrationSecuritySpeed || null : null,
         deplanning:
-          !isArrivalNoShow &&
+          !isNoShowReport &&
           (reportKind === "arrival" || reportKind === "transit")
             ? deplaning || null
             : null,
         service_started_at: null,
         travel_class:
-          !isArrivalNoShow &&
+          !isNoShowReport &&
           (reportKind === "departure" ||
             reportKind === "arrival" ||
             reportKind === "transit")
             ? travelClass || null
             : null,
         checkin_bags:
-          !isArrivalNoShow && reportKind === "arrival" && !noCheckedBags
+          !isNoShowReport && reportKind === "arrival" && !noCheckedBags
             ? checkinBags
             : null,
         customs_control:
-          !isArrivalNoShow && reportKind === "arrival"
+          !isNoShowReport && reportKind === "arrival"
             ? customsControl || null
             : null,
         tax_refund:
-          reportKind === "departure" && !isArrivalNoShow
+          reportKind === "departure" && !isNoShowReport
             ? taxRefundBooleanFromUi(taxRefund)
             : null,
         tax_refund_speed:
           reportKind === "departure" &&
-          !isArrivalNoShow &&
+          !isNoShowReport &&
           taxRefund === "Yes"
             ? taxRefundSpeedLine || null
             : null,
         tax_refund_by:
           reportKind === "departure" &&
-          !isArrivalNoShow &&
+          !isNoShowReport &&
           taxRefund === "Yes"
             ? refundTaxBy || null
             : null,
         checkin: null,
         immigration_security: null,
         vip_lounge:
-          !isArrivalNoShow && reportKind === "transit"
+          !isNoShowReport && reportKind === "transit"
             ? vipLounge || null
             : null,
         boarding_end_of_service:
-          reportKind === "departure" && !isArrivalNoShow
+          reportKind === "departure" && !isNoShowReport
             ? endOfServicePlace || null
-            : reportKind === "transit" && !isArrivalNoShow
+            : reportKind === "transit" && !isNoShowReport
               ? transitEndOfService || null
               : null,
         transit_bags: null,
         bags_status:
-          !isArrivalNoShow && reportKind === "transit"
+          !isNoShowReport && reportKind === "transit"
             ? bagsStatus.trim()
             : null,
         place_end_of_service:
-          !isArrivalNoShow && reportKind === "arrival"
+          !isNoShowReport && reportKind === "arrival"
             ? placeEndOfService || null
             : null,
       };
@@ -604,21 +600,20 @@ export default function RapportServicePage() {
     }
   }
 
-  const isArrivalNoShowUi = reportKind === "arrival" && noShow;
-  const showArrivalFields = !isArrivalNoShowUi && reportKind === "arrival";
-  const showDepartureFields = !isArrivalNoShowUi && reportKind === "departure";
-  const showTransitFields = !isArrivalNoShowUi && reportKind === "transit";
+  const isNoShowUi =
+    (reportKind === "arrival" || reportKind === "transit") && noShow;
+  const showArrivalFields = !isNoShowUi && reportKind === "arrival";
+  const showDepartureFields = !isNoShowUi && reportKind === "departure";
+  const showTransitFields = !isNoShowUi && reportKind === "transit";
   const showTaxRefundDetails = showDepartureFields && taxRefund === "Yes";
   const transitBagsMissing =
-    !isArrivalNoShowUi && reportKind === "transit" && !bagsStatus.trim();
-  const noShowCommentsMissing = isArrivalNoShowUi && !comments.trim();
+    !isNoShowUi && reportKind === "transit" && !bagsStatus.trim();
   const endDisabled =
     !formReady ||
     isSubmitting ||
     planningLoading ||
     !serviceRow ||
-    transitBagsMissing ||
-    noShowCommentsMissing;
+    transitBagsMissing;
   return (
     <div className="relative mx-auto w-full max-w-3xl px-4 py-6">
       {isSubmitting || isLeavingPage || !formReady ? (
@@ -685,7 +680,7 @@ export default function RapportServicePage() {
 
           {/* debug banner removed */}
 
-          {reportKind === "arrival" ? (
+          {reportKind === "arrival" || reportKind === "transit" ? (
             <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-amber-400/60 bg-amber-50 p-3 text-sm font-medium text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
               <input
                 type="checkbox"
@@ -700,13 +695,13 @@ export default function RapportServicePage() {
               <span>
                 No Show
                 <span className="ml-1 font-normal text-amber-800/80 dark:text-amber-300/80">
-                  (client absent — seul COMMENTS reste requis)
+                  (client absent — commentaires optionnels)
                 </span>
               </span>
             </label>
           ) : null}
 
-          {isArrivalNoShowUi ? null : (
+          {isNoShowUi ? null : (
           <div className="rounded-lg border border-border/60 bg-muted/25 p-4 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -784,7 +779,7 @@ export default function RapportServicePage() {
           </div>
           )}
 
-          {!isArrivalNoShowUi &&
+          {!isNoShowUi &&
           existingReport?.photo_url?.trim() &&
           reportKind !== "departure" ? (
             <div className="space-y-2">
@@ -801,7 +796,7 @@ export default function RapportServicePage() {
           ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
-            {!isArrivalNoShowUi ? (
+            {!isNoShowUi ? (
             <div className="space-y-1.5">
               <Label>
                 {reportKind === "departure" ? "Number of PAX" : "PAX"}
@@ -824,7 +819,7 @@ export default function RapportServicePage() {
             </div>
             ) : null}
 
-            {isArrivalNoShowUi ? null : reportKind !== "arrival" ? (
+            {isNoShowUi ? null : reportKind !== "arrival" ? (
               <div className="space-y-1.5">
                 <Label>IMMIGRATION &amp; SECURITY SPEED</Label>
                 <Select
@@ -1088,7 +1083,7 @@ export default function RapportServicePage() {
               </>
             ) : null}
 
-            {!isArrivalNoShowUi && reportKind === "departure" ? (
+            {!isNoShowUi && reportKind === "departure" ? (
               <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm font-medium sm:col-span-2">
                 <input
                   type="checkbox"
@@ -1180,7 +1175,7 @@ export default function RapportServicePage() {
               </>
             ) : null}
 
-            {!isArrivalNoShowUi && reportKind === "transit" ? (
+            {!isNoShowUi && reportKind === "transit" ? (
               <div className="space-y-1.5 sm:col-span-2">
                 <Label>
                   Bagages (Bags) <span className="text-destructive">*</span>
@@ -1214,12 +1209,7 @@ export default function RapportServicePage() {
             ) : null}
 
             <div className="space-y-1.5 sm:col-span-2">
-              <Label>
-                COMMENTS
-                {isArrivalNoShowUi ? (
-                  <span className="text-destructive"> *</span>
-                ) : null}
-              </Label>
+              <Label>COMMENTS</Label>
               <Textarea
                 value={comments}
                 onChange={(e) => {
@@ -1230,12 +1220,10 @@ export default function RapportServicePage() {
                   }
                 }}
                 placeholder={
-                  isArrivalNoShowUi
-                    ? "Expliquez les circonstances du No Show…"
+                  isNoShowUi
+                    ? "Commentaires optionnels (circonstances du No Show)…"
                     : "..."
                 }
-                aria-required={isArrivalNoShowUi}
-                aria-invalid={noShowCommentsMissing}
               />
             </div>
           </div>

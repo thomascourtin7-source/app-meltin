@@ -107,6 +107,11 @@ export function buildTrackMissionReportSummary(
     );
     pushField(fields, "Comments", row.comments);
   } else {
+    if (row.no_show) {
+      pushField(fields, "No Show", "Yes");
+      pushField(fields, "Comments", row.comments);
+      return fields.length > 0 ? { reportKind: kind, fields } : null;
+    }
     pushField(fields, "Deplanning", row.deplanning);
     pushField(fields, "Travel Class", row.travel_class);
     const lounge = vipLoungePdfLabel(row.vip_lounge);

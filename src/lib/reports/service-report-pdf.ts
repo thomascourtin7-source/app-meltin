@@ -268,7 +268,33 @@ export async function generateServiceReportPdf(
     doc.text(footerText, marginX, doc.internal.pageSize.getHeight() - 28);
   };
 
-  // NO SHOW (arrivée) : bandeau + commentaires uniquement, rien d'autre.
+  const appendReportPhoto = async (startY: number): Promise<number> => {
+    let cursorY = startY;
+    if (!data.photoUrl) return cursorY;
+
+    const photoDataUrl = await tryFetchImageDataUrl(data.photoUrl);
+    if (!photoDataUrl) return cursorY;
+
+    const size = await getImageSize(photoDataUrl);
+    const maxW = pageWidth - marginX * 2;
+    const maxH = 240;
+    const w0 = size?.w ?? 1200;
+    const h0 = size?.h ?? 800;
+    const ratio = Math.min(maxW / w0, maxH / h0, 1);
+    const w = Math.max(120, w0 * ratio);
+    const h = Math.max(80, h0 * ratio);
+    const x = (pageWidth - w) / 2;
+    try {
+      const fmt = photoDataUrl.includes("image/png") ? "PNG" : "JPEG";
+      doc.addImage(photoDataUrl, fmt, x, cursorY, w, h);
+      cursorY += h + 16;
+    } catch {
+      /* ignore */
+    }
+    return cursorY;
+  };
+
+  // NO SHOW (arrivée / transit) : bandeau, commentaires optionnels, photo si présente.
   if (data.noShow) {
     const bannerY = top + 68;
     doc.setFillColor(200, 30, 30);
@@ -294,6 +320,12 @@ export async function generateServiceReportPdf(
         if (hook.section === "head") hook.cell.colSpan = 2;
       },
     });
+
+    const afterComments = (doc as unknown as { lastAutoTable?: { finalY: number } })
+      .lastAutoTable?.finalY;
+    const photoStartY =
+      typeof afterComments === "number" ? afterComments + 16 : bannerY + 120;
+    await appendReportPhoto(photoStartY);
 
     drawFooter();
     return doc;
@@ -417,27 +449,7 @@ export async function generateServiceReportPdf(
 
   let cursorY = typeof afterService === "number" ? afterService + 16 : 220;
 
-  if (data.photoUrl) {
-    const photoDataUrl = await tryFetchImageDataUrl(data.photoUrl);
-    if (photoDataUrl) {
-      const size = await getImageSize(photoDataUrl);
-      const maxW = pageWidth - marginX * 2;
-      const maxH = 240;
-      const w0 = size?.w ?? 1200;
-      const h0 = size?.h ?? 800;
-      const ratio = Math.min(maxW / w0, maxH / h0, 1);
-      const w = Math.max(120, w0 * ratio);
-      const h = Math.max(80, h0 * ratio);
-      const x = (pageWidth - w) / 2;
-      try {
-        const fmt = photoDataUrl.includes("image/png") ? "PNG" : "JPEG";
-        doc.addImage(photoDataUrl, fmt, x, cursorY, w, h);
-        cursorY += h + 16;
-      } catch {
-        /* ignore */
-      }
-    }
-  }
+  cursorY = await appendReportPhoto(cursorY);
 
   autoTable(doc, {
     startY: cursorY,
