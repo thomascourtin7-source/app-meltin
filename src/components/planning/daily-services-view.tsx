@@ -75,6 +75,7 @@ import { usePlanningAgentCatalog } from "@/hooks/use-planning-agent-catalog";
 import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
 import { ServiceAssignmentHistory } from "@/components/planning/service-assignment-history";
+import { ServiceLbStatusControl } from "@/components/planning/service-lb-status-control";
 import { ServiceDoChatSection } from "@/components/client-chat/service-do-chat-section";
 import { ServicePhotoCopyPreview } from "@/components/service-photo-copy-preview";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
@@ -125,11 +126,17 @@ import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
 import { useAgentAuthRole } from "@/hooks/use-agent-auth-role";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { setPlanningAssigneesRealtimeChannel } from "@/lib/planning/planning-assignees-realtime";
+import {
+  emptyLbStatusEntry,
+  type LbStatus,
+  type ServiceLbStatusEntry,
+} from "@/lib/planning/lb-status";
 
 const FORCE_REFRESH_EVENT = "meltin_planning_force_refresh";
 
 type ServicesFlagsPayload = {
   isStarredByServiceId: Record<string, boolean>;
+  lbStatusByServiceId: Record<string, ServiceLbStatusEntry>;
 };
 
 function ClientVipStarControl({
@@ -628,6 +635,8 @@ type ServiceBlockProps = {
   planningSuperAdminBypass: boolean;
   /** Favori VIP (`services.is_starred`), visible par tous. */
   isStarred: boolean;
+  lbStatusEntry: ServiceLbStatusEntry;
+  onSetLbStatus: (opts: { serviceId: string; status: LbStatus }) => Promise<void>;
   /** Javed, JAVED ORDI et Thomas peuvent basculer l’étoile VIP. */
   vipStarInteractive: boolean;
   onToggleVipStar: (opts: { serviceId: string }) => Promise<void>;
@@ -683,6 +692,9 @@ function serviceBlockMemoAreEqual(
   if (prev.onEtaCommit !== next.onEtaCommit) return false;
   if (prev.planningSuperAdminBypass !== next.planningSuperAdminBypass) return false;
   if (prev.isStarred !== next.isStarred) return false;
+  if (prev.lbStatusEntry.status !== next.lbStatusEntry.status) return false;
+  if (prev.lbStatusEntry.updatedBy !== next.lbStatusEntry.updatedBy) return false;
+  if (prev.lbStatusEntry.updatedAt !== next.lbStatusEntry.updatedAt) return false;
   if (prev.vipStarInteractive !== next.vipStarInteractive) return false;
   if (prev.meName !== next.meName) return false;
   if (prev.planningReadOnly !== next.planningReadOnly) return false;
@@ -709,6 +721,7 @@ function serviceBlockMemoAreEqual(
   const nextAnchors = (next.agentScrollAnchorIds ?? []).join("\u0001");
   if (prevAnchors !== nextAnchors) return false;
   if (prev.onToggleVipStar !== next.onToggleVipStar) return false;
+  if (prev.onSetLbStatus !== next.onSetLbStatus) return false;
   return true;
 }
 
@@ -726,6 +739,8 @@ function ServiceBlockInner({
   assignees: assigneesRaw,
   planningSuperAdminBypass,
   isStarred,
+  lbStatusEntry,
+  onSetLbStatus,
   vipStarInteractive,
   onToggleVipStar,
   meName,
@@ -1084,7 +1099,7 @@ function ServiceBlockInner({
     ) : null;
 
   const serviceCardSurfaceClass = cn(
-    "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border-2 px-4 py-4 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:py-5",
+    "relative mb-6 w-full max-w-4xl last:mb-0 md:mx-auto rounded-xl border-2 px-4 pb-4 pt-10 shadow-lg -mx-1 sm:mx-auto sm:px-5 sm:pb-5 sm:pt-10",
     showUnassignedTodayAlert
       ? "border-red-500 bg-red-950/20 text-white"
       : cn(
@@ -1095,6 +1110,20 @@ function ServiceBlockInner({
     hasTimeConflict && showConflictUi && "ring-2 ring-red-500/60"
   );
 
+  const lbStatusControl = (
+    <div className="absolute right-3 top-3 z-10">
+      <ServiceLbStatusControl
+        status={lbStatusEntry.status}
+        updatedBy={lbStatusEntry.updatedBy}
+        updatedAt={lbStatusEntry.updatedAt}
+        disabled={planningReadOnly}
+        onSelect={(status) =>
+          onSetLbStatus({ serviceId: reportServiceId, status })
+        }
+      />
+    </div>
+  );
+
   if (isReportCompleted) {
     return (
       <div
@@ -1103,6 +1132,7 @@ function ServiceBlockInner({
         className={serviceCardSurfaceClass}
       >
         {scrollAnchors}
+        {lbStatusControl}
         {hasTimeConflict && showConflictUi ? (
           <div
             className="mb-3 flex items-center gap-1.5 text-xs font-medium text-red-200"
@@ -1230,6 +1260,7 @@ function ServiceBlockInner({
       className={cn(serviceCardSurfaceClass, !showUnassignedTodayAlert && "text-white")}
     >
       {scrollAnchors}
+      {lbStatusControl}
       {hasTimeConflict && showConflictUi ? (
         <div
           className="mb-3 flex items-center gap-1.5 text-xs font-medium text-red-200"
@@ -2218,10 +2249,15 @@ export function DailyServicesView() {
             : "Impossible de charger les favoris VIP.";
         throw new Error(msg);
       }
-      const p = json as { isStarredByServiceId?: unknown };
+      const p = json as {
+        isStarredByServiceId?: unknown;
+        lbStatusByServiceId?: unknown;
+      };
       const isStarredByServiceId: Record<string, boolean> = {};
+      const lbStatusByServiceId: Record<string, ServiceLbStatusEntry> = {};
       for (const id of serviceIds) {
         isStarredByServiceId[id] = false;
+        lbStatusByServiceId[id] = emptyLbStatusEntry();
       }
       if (p.isStarredByServiceId && typeof p.isStarredByServiceId === "object") {
         for (const [k, v] of Object.entries(
@@ -2230,7 +2266,33 @@ export function DailyServicesView() {
           isStarredByServiceId[k] = v === true;
         }
       }
-      return { isStarredByServiceId };
+      if (p.lbStatusByServiceId && typeof p.lbStatusByServiceId === "object") {
+        for (const [k, v] of Object.entries(
+          p.lbStatusByServiceId as Record<string, unknown>
+        )) {
+          if (!v || typeof v !== "object") continue;
+          const row = v as {
+            status?: unknown;
+            updatedBy?: unknown;
+            updatedAt?: unknown;
+          };
+          lbStatusByServiceId[k] = {
+            status:
+              row.status === "large" || row.status === "block"
+                ? row.status
+                : null,
+            updatedBy:
+              typeof row.updatedBy === "string" && row.updatedBy.trim()
+                ? row.updatedBy.trim()
+                : null,
+            updatedAt:
+              typeof row.updatedAt === "string" && row.updatedAt.trim()
+                ? row.updatedAt.trim()
+                : null,
+          };
+        }
+      }
+      return { isStarredByServiceId, lbStatusByServiceId };
     },
     []
   );
@@ -2275,6 +2337,9 @@ export function DailyServicesView() {
             ...(cur?.isStarredByServiceId ?? {}),
             [sid]: next,
           },
+          lbStatusByServiceId: {
+            ...(cur?.lbStatusByServiceId ?? {}),
+          },
         }),
         { revalidate: false }
       );
@@ -2304,6 +2369,97 @@ export function DailyServicesView() {
       servicesFlagsData?.isStarredByServiceId,
       spreadsheetId,
     ]
+  );
+
+  const setLbStatus = useCallback(
+    async (opts: { serviceId: string; status: LbStatus }) => {
+      if (!spreadsheetId) {
+        throw new Error("spreadsheetId manquant.");
+      }
+      const sid = opts.serviceId;
+      const agentName =
+        meName.trim() ||
+        readPlanningAuthSession()?.displayName?.trim() ||
+        "Agent";
+      const nowIso = new Date().toISOString();
+      const optimistic: ServiceLbStatusEntry =
+        opts.status === null
+          ? emptyLbStatusEntry()
+          : {
+              status: opts.status,
+              updatedBy: agentName,
+              updatedAt: nowIso,
+            };
+
+      void mutateServicesFlags(
+        (cur) => ({
+          isStarredByServiceId: { ...(cur?.isStarredByServiceId ?? {}) },
+          lbStatusByServiceId: {
+            ...(cur?.lbStatusByServiceId ?? {}),
+            [sid]: optimistic,
+          },
+        }),
+        { revalidate: false }
+      );
+
+      try {
+        const res = await fetch("/api/services/lb-status", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            spreadsheet_id: spreadsheetId,
+            service_id: sid,
+            lb_status: opts.status,
+            lb_updated_by: opts.status === null ? null : agentName,
+          }),
+        });
+        const json = (await res.json()) as {
+          error?: string;
+          service?: {
+            lb_status?: unknown;
+            lb_updated_by?: unknown;
+            lb_updated_at?: unknown;
+          };
+        };
+        if (!res.ok) {
+          throw new Error(json?.error || "Sauvegarde Large/Block impossible.");
+        }
+        const svc = json.service;
+        if (svc) {
+          void mutateServicesFlags(
+            (cur) => ({
+              isStarredByServiceId: { ...(cur?.isStarredByServiceId ?? {}) },
+              lbStatusByServiceId: {
+                ...(cur?.lbStatusByServiceId ?? {}),
+                [sid]: {
+                  status:
+                    svc.lb_status === "large" || svc.lb_status === "block"
+                      ? svc.lb_status
+                      : null,
+                  updatedBy:
+                    typeof svc.lb_updated_by === "string" &&
+                    svc.lb_updated_by.trim()
+                      ? svc.lb_updated_by.trim()
+                      : null,
+                  updatedAt:
+                    typeof svc.lb_updated_at === "string" &&
+                    svc.lb_updated_at.trim()
+                      ? svc.lb_updated_at.trim()
+                      : null,
+                },
+              },
+            }),
+            { revalidate: false }
+          );
+        } else {
+          void mutateServicesFlags(undefined, { revalidate: true });
+        }
+      } catch (e) {
+        void mutateServicesFlags(undefined, { revalidate: true });
+        throw e;
+      }
+    },
+    [meName, mutateServicesFlags, spreadsheetId]
   );
 
   /** Snapshot pour rollback ETA (sans second fetch SWR). */
@@ -3048,6 +3204,15 @@ export function DailyServicesView() {
         false
       ),
     [servicesFlagsData?.isStarredByServiceId, effectiveReportIdByCanonical]
+  );
+  const lbStatusByServiceId = useMemo(
+    () =>
+      rekeyByEffectiveId(
+        servicesFlagsData?.lbStatusByServiceId,
+        effectiveReportIdByCanonical,
+        emptyLbStatusEntry()
+      ),
+    [servicesFlagsData?.lbStatusByServiceId, effectiveReportIdByCanonical]
   );
 
   const agentLabels = operationalLabels;
@@ -4228,6 +4393,10 @@ export function DailyServicesView() {
                   showAssignmentHistory={planningSuperAdminBypass}
                   assignableAgentOptions={assignableOptions}
                   isStarred={Boolean(isStarredByServiceId[reportSid])}
+                  lbStatusEntry={
+                    lbStatusByServiceId[reportSid] ?? emptyLbStatusEntry()
+                  }
+                  onSetLbStatus={setLbStatus}
                   vipStarInteractive={vipStarEditorSession}
                   onToggleVipStar={toggleVipStar}
                   meName={meName}

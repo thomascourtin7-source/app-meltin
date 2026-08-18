@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
   const { data, error } = await supabase
     .from("services")
-    .select("service_id,is_pec,is_starred")
+    .select("service_id,is_pec,is_starred,lb_status,lb_updated_by,lb_updated_at")
     .eq("spreadsheet_id", spreadsheetId)
     .in("service_id", serviceIds);
 
@@ -57,14 +57,30 @@ export async function POST(request: Request) {
 
   const isPecByServiceId: Record<string, boolean> = {};
   const isStarredByServiceId: Record<string, boolean> = {};
+  const lbStatusByServiceId: Record<
+    string,
+    {
+      status: "large" | "block" | null;
+      updatedBy: string | null;
+      updatedAt: string | null;
+    }
+  > = {};
   for (const id of serviceIds) {
     isPecByServiceId[id] = false;
     isStarredByServiceId[id] = false;
+    lbStatusByServiceId[id] = {
+      status: null,
+      updatedBy: null,
+      updatedAt: null,
+    };
   }
   for (const row of data ?? []) {
     const sid = (row as { service_id?: unknown }).service_id;
     const isPec = (row as { is_pec?: unknown }).is_pec;
     const isStarred = (row as { is_starred?: unknown }).is_starred;
+    const lbStatus = (row as { lb_status?: unknown }).lb_status;
+    const lbUpdatedBy = (row as { lb_updated_by?: unknown }).lb_updated_by;
+    const lbUpdatedAt = (row as { lb_updated_at?: unknown }).lb_updated_at;
     if (typeof sid !== "string") continue;
     if (typeof isPec === "boolean") {
       isPecByServiceId[sid] = isPec;
@@ -72,8 +88,24 @@ export async function POST(request: Request) {
     if (typeof isStarred === "boolean") {
       isStarredByServiceId[sid] = isStarred;
     }
+    lbStatusByServiceId[sid] = {
+      status:
+        lbStatus === "large" || lbStatus === "block" ? lbStatus : null,
+      updatedBy:
+        typeof lbUpdatedBy === "string" && lbUpdatedBy.trim()
+          ? lbUpdatedBy.trim()
+          : null,
+      updatedAt:
+        typeof lbUpdatedAt === "string" && lbUpdatedAt.trim()
+          ? lbUpdatedAt.trim()
+          : null,
+    };
   }
 
-  return NextResponse.json({ isPecByServiceId, isStarredByServiceId });
+  return NextResponse.json({
+    isPecByServiceId,
+    isStarredByServiceId,
+    lbStatusByServiceId,
+  });
 }
 
