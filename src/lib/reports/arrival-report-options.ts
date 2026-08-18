@@ -17,6 +17,7 @@ export const PLACE_END_OF_SERVICE_OPTIONS = [
   "Driver late pax waited",
   "Driver late pax took taxi/uber",
   "Taxi/uber",
+  "Arrival hall",
   "End at the train station",
 ] as const;
 
