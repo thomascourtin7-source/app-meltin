@@ -78,6 +78,7 @@ import { ServiceAssignmentHistory } from "@/components/planning/service-assignme
 import { ServiceLbStatusControl } from "@/components/planning/service-lb-status-control";
 import { ServiceDoChatSection } from "@/components/client-chat/service-do-chat-section";
 import { useDoChatFocusMode } from "@/lib/client-chat/use-do-chat-focus-mode";
+import { findPlanningRowByServiceId } from "@/lib/client-chat/do-chat-awaiting-reply";
 import { ServicePhotoCopyPreview } from "@/components/service-photo-copy-preview";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
 import {
@@ -314,6 +315,89 @@ function serviceRowUiKey(row: DailyServiceRow): string {
     String(row.rdv1 ?? "").trim().toLowerCase(),
     String(row.rdv2 ?? "").trim().toLowerCase(),
   ].join("\u0001");
+}
+
+function buildAssigneesMapForRows(
+  rows: DailyServiceRow[],
+  mapByServiceId: Record<string, string>,
+  draftByRowKey: Record<string, string[]>,
+  cache: Map<string, { key: string; list: string[] }>
+): Record<string, string[]> {
+  const usedKeys = new Set<string>();
+  const next: Record<string, string[]> = {};
+
+  for (const row of rows) {
+    const rowKey = serviceRowUiKey(row);
+    usedKeys.add(rowKey);
+
+    let slugs: string[];
+    if (Object.prototype.hasOwnProperty.call(draftByRowKey, rowKey)) {
+      slugs = normalizeAssigneeListFromStored(draftByRowKey[rowKey]);
+    } else {
+      let agentName = "";
+      for (const id of serviceLookupIdsFromRow(row)) {
+        const name = mapByServiceId[id]?.trim();
+        if (name) {
+          agentName = name;
+          break;
+        }
+      }
+      if (agentName) {
+        slugs = parseAssigneeNameToSlugs(agentName);
+      } else {
+        const label = matchSheetAssigneeToTeamLabel(row.sheetAssignee || "");
+        if (label) {
+          const slug =
+            assigneeSlugFromNotifyLabel(label) ?? DEFAULT_PLANNING_ASSIGNEE_SLUG;
+          slugs = normalizeAssigneeListFromStored([
+            normalizeAssigneeStoredValue(slug),
+          ]);
+        } else {
+          slugs = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
+        }
+      }
+    }
+
+    const fingerprint = slugs.join("\u0001");
+    const cached = cache.get(rowKey);
+    if (cached && cached.key === fingerprint) {
+      next[rowKey] = cached.list;
+    } else {
+      cache.set(rowKey, { key: fingerprint, list: slugs });
+      next[rowKey] = slugs;
+    }
+  }
+
+  return next;
+}
+
+function resolveReportFlagForRow(
+  row: DailyServiceRow,
+  src: Record<string, boolean> | undefined
+): boolean {
+  if (!src) return false;
+  for (const id of serviceLookupIdsFromRow(row)) {
+    if (src[id] === true) return true;
+  }
+  return src[serviceReportIdFromRow(row)] === true;
+}
+
+function resolveReportValueForRow<T>(
+  row: DailyServiceRow,
+  src: Record<string, T> | undefined,
+  fallback: T
+): T {
+  if (!src) return fallback;
+  for (const id of serviceLookupIdsFromRow(row)) {
+    if (Object.prototype.hasOwnProperty.call(src, id)) {
+      return src[id] as T;
+    }
+  }
+  const canonical = serviceReportIdFromRow(row);
+  if (Object.prototype.hasOwnProperty.call(src, canonical)) {
+    return src[canonical] as T;
+  }
+  return fallback;
 }
 
 /**
@@ -2121,7 +2205,6 @@ export function DailyServicesView() {
     : undefined;
   const planningPayload =
     planningDataForDate ?? planningFallbackForDate ?? undefined;
-  const spreadsheetId = planningPayload?.spreadsheetId?.trim() ?? "";
 
   /** Dès qu’on a affiché un planning une fois, on ne remplace plus toute la vue par le loader (Realtime, revalidate, etc.). */
   const planningShellHydratedRef = useRef(false);
@@ -2143,6 +2226,68 @@ export function DailyServicesView() {
   const isTodaySelected = selectedKey === todayYmd;
   const isTomorrowSelected = selectedKey === tomorrowYmd;
   const isCustomDateSelected = !isTodaySelected && !isTomorrowSelected;
+
+  const focusPrefetchTodayKey =
+    meSlug.trim() && !isTodaySelected
+      ? `/api/planning-services?date=${encodeURIComponent(todayYmd)}`
+      : null;
+  const focusPrefetchTomorrowKey =
+    meSlug.trim() && !isTomorrowSelected
+      ? `/api/planning-services?date=${encodeURIComponent(tomorrowYmd)}`
+      : null;
+
+  const { data: focusPrefetchTodayData } = useSWR(
+    focusPrefetchTodayKey,
+    planningServicesFetcher,
+    {
+      refreshInterval: 0,
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
+  const { data: focusPrefetchTomorrowData } = useSWR(
+    focusPrefetchTomorrowKey,
+    planningServicesFetcher,
+    {
+      refreshInterval: 0,
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
+
+  const effectiveTodayRows = useMemo(() => {
+    const rows = isTodaySelected
+      ? (planningPayload?.rows ?? [])
+      : (focusPrefetchTodayData?.rows ?? []);
+    return rows.filter(
+      (r) => normalizeCanonicalDateKey(r.dateIso) === todayYmd
+    );
+  }, [
+    focusPrefetchTodayData?.rows,
+    isTodaySelected,
+    planningPayload?.rows,
+    todayYmd,
+  ]);
+
+  const effectiveTomorrowRows = useMemo(() => {
+    const rows = isTomorrowSelected
+      ? (planningPayload?.rows ?? [])
+      : (focusPrefetchTomorrowData?.rows ?? []);
+    return rows.filter(
+      (r) => normalizeCanonicalDateKey(r.dateIso) === tomorrowYmd
+    );
+  }, [
+    focusPrefetchTomorrowData?.rows,
+    isTomorrowSelected,
+    planningPayload?.rows,
+    tomorrowYmd,
+  ]);
+
+  const spreadsheetId =
+    planningPayload?.spreadsheetId?.trim() ??
+    focusPrefetchTodayData?.spreadsheetId?.trim() ??
+    focusPrefetchTomorrowData?.spreadsheetId?.trim() ??
+    "";
 
   const serviceIdsForAssignments = useMemo(() => {
     const rows = planningPayload?.rows ?? [];
@@ -2239,6 +2384,120 @@ export function DailyServicesView() {
   );
   mutateAssignmentsRef.current = mutateAssignments;
 
+  const todayPrefetchServiceIds = useMemo(
+    () => [
+      ...new Set(
+        effectiveTodayRows
+          .flatMap((r) => serviceLookupIdsFromRow(r))
+          .filter(Boolean)
+      ),
+    ],
+    [effectiveTodayRows]
+  );
+
+  const tomorrowPrefetchServiceIds = useMemo(
+    () => [
+      ...new Set(
+        effectiveTomorrowRows
+          .flatMap((r) => serviceLookupIdsFromRow(r))
+          .filter(Boolean)
+      ),
+    ],
+    [effectiveTomorrowRows]
+  );
+
+  const todayFocusAssignmentsKey = useMemo(() => {
+    if (!spreadsheetId || !meSlug.trim() || isTodaySelected) return null;
+    if (todayPrefetchServiceIds.length === 0) return null;
+    return [
+      "planningAssignmentsFocus",
+      spreadsheetId,
+      todayYmd,
+      todayPrefetchServiceIds.join("||"),
+    ] as const;
+  }, [
+    spreadsheetId,
+    meSlug,
+    isTodaySelected,
+    todayPrefetchServiceIds,
+    todayYmd,
+  ]);
+
+  const tomorrowFocusAssignmentsKey = useMemo(() => {
+    if (!spreadsheetId || !meSlug.trim() || isTomorrowSelected) return null;
+    if (tomorrowPrefetchServiceIds.length === 0) return null;
+    return [
+      "planningAssignmentsFocus",
+      spreadsheetId,
+      tomorrowYmd,
+      tomorrowPrefetchServiceIds.join("||"),
+    ] as const;
+  }, [
+    spreadsheetId,
+    meSlug,
+    isTomorrowSelected,
+    tomorrowPrefetchServiceIds,
+    tomorrowYmd,
+  ]);
+
+  const { data: todayFocusAssignmentsData } = useSWR<PlanningAssignmentsPayload>(
+    todayFocusAssignmentsKey,
+    () =>
+      loadAssignmentsBatch({
+        serviceIds: todayPrefetchServiceIds,
+        serviceDate: todayYmd,
+        rows: effectiveTodayRows,
+        spreadsheetId,
+      }),
+    { revalidateOnFocus: true, keepPreviousData: true }
+  );
+
+  const { data: tomorrowFocusAssignmentsData } = useSWR<PlanningAssignmentsPayload>(
+    tomorrowFocusAssignmentsKey,
+    () =>
+      loadAssignmentsBatch({
+        serviceIds: tomorrowPrefetchServiceIds,
+        serviceDate: tomorrowYmd,
+        rows: effectiveTomorrowRows,
+        spreadsheetId,
+      }),
+    { revalidateOnFocus: true, keepPreviousData: true }
+  );
+
+  const todayAssignmentsByServiceId = isTodaySelected
+    ? (assignmentsData?.assigneesByServiceId ?? {})
+    : (todayFocusAssignmentsData?.assigneesByServiceId ?? {});
+
+  const tomorrowAssignmentsByServiceId = isTomorrowSelected
+    ? (assignmentsData?.assigneesByServiceId ?? {})
+    : (tomorrowFocusAssignmentsData?.assigneesByServiceId ?? {});
+
+  const todayAssigneesMap = useMemo(
+    () =>
+      buildAssigneesMapForRows(
+        effectiveTodayRows,
+        todayAssignmentsByServiceId,
+        assigneesDraftByRowKey,
+        assigneesListCacheRef.current
+      ),
+    [effectiveTodayRows, todayAssignmentsByServiceId, assigneesDraftByRowKey]
+  );
+
+  const tomorrowAssigneesMap = useMemo(
+    () =>
+      buildAssigneesMapForRows(
+        effectiveTomorrowRows,
+        tomorrowAssignmentsByServiceId,
+        assigneesDraftByRowKey,
+        assigneesListCacheRef.current
+      ),
+    [
+      effectiveTomorrowRows,
+      tomorrowAssignmentsByServiceId,
+      assigneesDraftByRowKey,
+    ]
+  );
+
   const loadServicesFlagsBatch = useCallback(
     async (
       sheetId: string,
@@ -2308,23 +2567,48 @@ export function DailyServicesView() {
     []
   );
 
+  const serviceIdsForDoChatFlags = useMemo(() => {
+    const base = serviceIdsForAssignments;
+    if (!meSlug.trim()) return base;
+    const rows = [...effectiveTodayRows, ...effectiveTomorrowRows];
+    const extra = rows
+      .filter((row) => {
+        const key = serviceRowUiKey(row);
+        const dateKey = normalizeCanonicalDateKey(row.dateIso);
+        const map =
+          dateKey === tomorrowYmd ? tomorrowAssigneesMap : todayAssigneesMap;
+        return isServiceAssignedToSessionAgent(map[key], meSlug);
+      })
+      .flatMap((r) => serviceLookupIdsFromRow(r))
+      .filter(Boolean);
+    return [...new Set([...base, ...extra])];
+  }, [
+    effectiveTodayRows,
+    effectiveTomorrowRows,
+    meSlug,
+    serviceIdsForAssignments,
+    todayAssigneesMap,
+    tomorrowAssigneesMap,
+    tomorrowYmd,
+  ]);
+
   const servicesFlagsKey = useMemo(() => {
     if (!spreadsheetId) return null;
-    if (serviceIdsForAssignments.length === 0) return null;
+    if (serviceIdsForDoChatFlags.length === 0) return null;
     return [
       "servicesFlags",
       spreadsheetId,
       selectedKey,
-      serviceIdsForAssignments.join("||"),
+      serviceIdsForDoChatFlags.join("||"),
     ] as const;
-  }, [selectedKey, serviceIdsForAssignments, spreadsheetId]);
+  }, [selectedKey, serviceIdsForDoChatFlags, spreadsheetId]);
 
   const {
     data: servicesFlagsData,
     mutate: mutateServicesFlags,
   } = useSWR<ServicesFlagsPayload>(
     servicesFlagsKey,
-    () => loadServicesFlagsBatch(spreadsheetId, serviceIdsForAssignments),
+    () => loadServicesFlagsBatch(spreadsheetId, serviceIdsForDoChatFlags),
     {
       refreshInterval: 0,
       revalidateOnFocus: true,
@@ -2575,56 +2859,12 @@ export function DailyServicesView() {
 
   const assignees = useMemo(() => {
     const rows = planningPayload?.rows ?? [];
-    const mapByServiceId = assignmentsData?.assigneesByServiceId ?? {};
-    const cache = assigneesListCacheRef.current;
-    const usedKeys = new Set<string>();
-    const next: Record<string, string[]> = {};
-
-    for (const row of rows) {
-      const rowKey = serviceRowUiKey(row);
-      usedKeys.add(rowKey);
-
-      let slugs: string[];
-      if (Object.prototype.hasOwnProperty.call(assigneesDraftByRowKey, rowKey)) {
-        slugs = normalizeAssigneeListFromStored(assigneesDraftByRowKey[rowKey]);
-      } else {
-        let agentName = "";
-        for (const id of serviceLookupIdsFromRow(row)) {
-          const name = mapByServiceId[id]?.trim();
-          if (name) {
-            agentName = name;
-            break;
-          }
-        }
-        if (agentName) {
-          slugs = parseAssigneeNameToSlugs(agentName);
-        } else {
-          const label = matchSheetAssigneeToTeamLabel(row.sheetAssignee || "");
-          if (label) {
-            const slug =
-              assigneeSlugFromNotifyLabel(label) ?? DEFAULT_PLANNING_ASSIGNEE_SLUG;
-            slugs = normalizeAssigneeListFromStored([
-              normalizeAssigneeStoredValue(slug),
-            ]);
-          } else {
-            slugs = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
-          }
-        }
-      }
-
-      const fingerprint = slugs.join("\u0001");
-      const cached = cache.get(rowKey);
-      if (cached && cached.key === fingerprint) {
-        next[rowKey] = cached.list;
-      } else {
-        cache.set(rowKey, { key: fingerprint, list: slugs });
-        next[rowKey] = slugs;
-      }
-    }
-    for (const k of cache.keys()) {
-      if (!usedKeys.has(k)) cache.delete(k);
-    }
-    return next;
+    return buildAssigneesMapForRows(
+      rows,
+      assignmentsData?.assigneesByServiceId ?? {},
+      assigneesDraftByRowKey,
+      assigneesListCacheRef.current
+    );
   }, [
     assigneesDraftByRowKey,
     assignmentsData?.assigneesByServiceId,
@@ -2829,21 +3069,35 @@ export function DailyServicesView() {
 
   const myMonitoredServiceIds = useMemo(() => {
     if (!meSlug.trim()) return [];
-    const rows = planningPayload?.rows ?? [];
-    return [
-      ...new Set(
-        rows
-          .filter((row) =>
-            isServiceAssignedToSessionAgent(
-              assignees[serviceRowUiKey(row)],
-              meSlug
-            )
-          )
-          .map((row) => serviceReportIdFromRow(row))
-          .filter(Boolean)
-      ),
-    ];
-  }, [planningPayload?.rows, assignees, meSlug]);
+    const ids = new Set<string>();
+    for (const row of effectiveTodayRows) {
+      if (
+        isServiceAssignedToSessionAgent(
+          todayAssigneesMap[serviceRowUiKey(row)],
+          meSlug
+        )
+      ) {
+        ids.add(serviceReportIdFromRow(row));
+      }
+    }
+    for (const row of effectiveTomorrowRows) {
+      if (
+        isServiceAssignedToSessionAgent(
+          tomorrowAssigneesMap[serviceRowUiKey(row)],
+          meSlug
+        )
+      ) {
+        ids.add(serviceReportIdFromRow(row));
+      }
+    }
+    return [...ids];
+  }, [
+    effectiveTodayRows,
+    effectiveTomorrowRows,
+    meSlug,
+    todayAssigneesMap,
+    tomorrowAssigneesMap,
+  ]);
 
   const { focusServiceId, refresh: refreshDoChatFocusMode } = useDoChatFocusMode({
     spreadsheetId,
@@ -2851,7 +3105,86 @@ export function DailyServicesView() {
     enabled: Boolean(meSlug.trim() && spreadsheetId),
   });
 
+  const focusBlockingRow = useMemo(
+    () =>
+      focusServiceId
+        ? findPlanningRowByServiceId(
+            effectiveTodayRows,
+            focusServiceId,
+            serviceReportIdFromRow,
+            serviceLookupIdsFromRow
+          ) ??
+          findPlanningRowByServiceId(
+            effectiveTomorrowRows,
+            focusServiceId,
+            serviceReportIdFromRow,
+            serviceLookupIdsFromRow
+          )
+        : undefined,
+    [focusServiceId, effectiveTodayRows, effectiveTomorrowRows]
+  );
+
+  const focusBlockingDateKey = useMemo(() => {
+    if (!focusBlockingRow) return null;
+    return normalizeCanonicalDateKey(focusBlockingRow.dateIso);
+  }, [focusBlockingRow]);
+
+  const isCrossDayDoChatFocus = Boolean(
+    focusServiceId &&
+      focusBlockingDateKey &&
+      focusBlockingDateKey !== selectedKey
+  );
+
+  const crossDayFocusRows = useMemo(() => {
+    if (focusBlockingDateKey === tomorrowYmd) return effectiveTomorrowRows;
+    if (focusBlockingDateKey === todayYmd) return effectiveTodayRows;
+    return [];
+  }, [focusBlockingDateKey, effectiveTodayRows, effectiveTomorrowRows, todayYmd, tomorrowYmd]);
+
+  const crossDayReportKey = useMemo(() => {
+    if (!isCrossDayDoChatFocus || !spreadsheetId || !focusBlockingDateKey) {
+      return null;
+    }
+    const ids = [
+      ...new Set(
+        crossDayFocusRows.flatMap((r) => serviceLookupIdsFromRow(r)).filter(Boolean)
+      ),
+    ];
+    if (ids.length === 0) return null;
+    return [
+      SERVICE_REPORTS_SWR_KEY_0,
+      spreadsheetId,
+      focusBlockingDateKey,
+      ids.join("||"),
+      "doChatCrossDay",
+    ] as const;
+  }, [
+    crossDayFocusRows,
+    focusBlockingDateKey,
+    isCrossDayDoChatFocus,
+    spreadsheetId,
+  ]);
+
+  const { data: crossDayReportExistence } = useSWR<ReportsData>(
+    crossDayReportKey,
+    () =>
+      fetchReportExistence({
+        spreadsheetId,
+        serviceIds: [
+          ...new Set(
+            crossDayFocusRows
+              .flatMap((r) => serviceLookupIdsFromRow(r))
+              .filter(Boolean)
+          ),
+        ],
+        serviceDate: focusBlockingDateKey!,
+        rows: crossDayFocusRows,
+      }),
+    { revalidateOnFocus: false }
+  );
+
   const displayRows = useMemo(() => {
+    if (isCrossDayDoChatFocus) return [];
     if (!focusServiceId) return visibleRows;
     const match = filtered.find(
       (row) =>
@@ -2859,7 +3192,18 @@ export function DailyServicesView() {
         serviceLookupIdsFromRow(row).includes(focusServiceId)
     );
     return match ? [match] : visibleRows;
-  }, [focusServiceId, visibleRows, filtered]);
+  }, [filtered, focusServiceId, isCrossDayDoChatFocus, visibleRows]);
+
+  const crossDayFocusBannerLabel = useMemo(() => {
+    if (!isCrossDayDoChatFocus) return null;
+    if (focusBlockingDateKey === tomorrowYmd) {
+      return "⚠️ ATTENTION : Veuillez répondre au donneur d'ordre sur la mission de demain";
+    }
+    if (focusBlockingDateKey === todayYmd) {
+      return "⚠️ ATTENTION : Veuillez répondre au donneur d'ordre sur la mission d'aujourd'hui";
+    }
+    return "⚠️ ATTENTION : Veuillez répondre au donneur d'ordre sur une autre mission";
+  }, [focusBlockingDateKey, isCrossDayDoChatFocus, todayYmd, tomorrowYmd]);
 
   /**
    * Reçoit un clic de notification (deep-link). Bascule sur la date du service,
@@ -4379,7 +4723,13 @@ export function DailyServicesView() {
           <Loader2 className="size-5 animate-spin" aria-hidden />
           Chargement du planning…
         </div>
-      ) : displayRows.length === 0 ? (
+      ) : focusServiceId && !focusBlockingRow ? (
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed py-20 text-muted-foreground">
+          <Loader2 className="size-5 animate-spin" aria-hidden />
+          Chargement de la mission en attente…
+        </div>
+      ) : displayRows.length === 0 &&
+        !(isCrossDayDoChatFocus && focusBlockingRow) ? (
         <p className="rounded-xl border border-dashed px-4 py-12 text-center text-muted-foreground">
           {meOnly
             ? "Aucun service assigné à vous"
@@ -4391,7 +4741,7 @@ export function DailyServicesView() {
         </p>
       ) : (
         <>
-          {reportExistenceError ? (
+          {reportExistenceError && !isCrossDayDoChatFocus ? (
             <div
               className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive"
               role="alert"
@@ -4401,7 +4751,14 @@ export function DailyServicesView() {
                 : "Erreur chargement des rapports."}
             </div>
           ) : null}
-          {focusServiceId ? (
+          {isCrossDayDoChatFocus && crossDayFocusBannerLabel ? (
+            <div
+              role="alert"
+              className="mx-auto mb-6 max-w-2xl rounded-xl border-2 border-red-500/70 bg-red-950/50 px-5 py-5 text-center text-base font-bold leading-snug text-red-100 shadow-[0_0_24px_rgba(239,68,68,0.25)]"
+            >
+              {crossDayFocusBannerLabel}
+            </div>
+          ) : focusServiceId && !isCrossDayDoChatFocus ? (
             <div
               role="alert"
               className="mb-4 rounded-xl border border-red-500/50 bg-red-950/40 px-4 py-3 text-sm font-semibold text-red-100"
@@ -4410,7 +4767,128 @@ export function DailyServicesView() {
             </div>
           ) : null}
           <div className="w-full">
-            {displayRows.map((row) => {
+            {isCrossDayDoChatFocus && focusBlockingRow
+              ? (() => {
+                  const row = focusBlockingRow;
+                  const rowKey = serviceRowUiKey(row);
+                  const reportSid = serviceReportIdFromRow(row);
+                  const assigneesMap =
+                    focusBlockingDateKey === tomorrowYmd
+                      ? tomorrowAssigneesMap
+                      : todayAssigneesMap;
+                  const assigneeList = normalizeAssigneeListFromStored(
+                    assigneesMap[rowKey]
+                  );
+                  const rowsForDay =
+                    focusBlockingDateKey === tomorrowYmd
+                      ? effectiveTomorrowRows
+                      : effectiveTodayRows;
+                  const etaSource =
+                    focusBlockingDateKey === tomorrowYmd
+                      ? isTomorrowSelected
+                        ? assignmentsData
+                        : tomorrowFocusAssignmentsData
+                      : isTodaySelected
+                        ? assignmentsData
+                        : todayFocusAssignmentsData;
+                  const crossDayReports = crossDayReportExistence;
+                  const agentScrollAnchorIds = assigneeList
+                    .map((slug) => assigneeSlugToNotifyLabel(slug))
+                    .filter((label): label is string => Boolean(label))
+                    .map((label) =>
+                      buildServiceCardDomId(
+                        label,
+                        getChronologyIndexForAgentRow(
+                          label,
+                          row,
+                          rowsForDay,
+                          assigneesMap
+                        )
+                      )
+                    );
+                  return (
+                    <ServiceBlock
+                      key={rowKey}
+                      row={row}
+                      rowKey={rowKey}
+                      reportServiceId={reportSid}
+                      spreadsheetId={spreadsheetId}
+                      assignees={assigneeList}
+                      agentScrollAnchorIds={agentScrollAnchorIds}
+                      showUnassignedTodayAlert={
+                        focusBlockingDateKey === todayYmd &&
+                        isServiceUnassigned(assigneeList)
+                      }
+                      planningSuperAdminBypass={planningSuperAdminBypass}
+                      showAssignmentHistory={planningSuperAdminBypass}
+                      assignableAgentOptions={assignableOptions}
+                      isStarred={resolveReportFlagForRow(
+                        row,
+                        servicesFlagsData?.isStarredByServiceId
+                      )}
+                      lbStatusEntry={
+                        resolveReportValueForRow(
+                          row,
+                          servicesFlagsData?.lbStatusByServiceId,
+                          emptyLbStatusEntry()
+                        )
+                      }
+                      onSetLbStatus={setLbStatus}
+                      vipStarInteractive={vipStarEditorSession}
+                      onToggleVipStar={toggleVipStar}
+                      meName={meName}
+                      onAssigneesChange={setAssigneesForRow}
+                      hasTimeConflict={conflictRowKeys.has(rowKey)}
+                      showConflictUi={prepModeActive}
+                      isReportCompleted={resolveReportFlagForRow(
+                        row,
+                        crossDayReports?.isCompletedByServiceId
+                      )}
+                      pecStatus={resolveReportValueForRow(
+                        row,
+                        crossDayReports?.pecStatusByServiceId,
+                        "vide" as PecStatus
+                      )}
+                      hasPhoto={resolveReportFlagForRow(
+                        row,
+                        crossDayReports?.hasPhotoByServiceId
+                      )}
+                      servicePhotoPreviewUrl={resolveReportValueForRow<
+                        string | null
+                      >(
+                        row,
+                        crossDayReports?.photoUrlByServiceId ?? undefined,
+                        null
+                      )}
+                      onCyclePecStatus={async ({ serviceId }) =>
+                        cyclePecStatus({ serviceId, row })
+                      }
+                      onSetPecStatus={async ({ serviceId, status }) =>
+                        persistPecStatus({ serviceId, row, next: status })
+                      }
+                      onCapturePhoto={async ({ serviceId, row: r, file }) =>
+                        capturePhoto({ serviceId, row: r, file })
+                      }
+                      onOpenReportForm={openReportForm}
+                      onDownloadReportPdf={downloadReportPdfAndRefreshStatuses}
+                      onDeleteReport={deleteReport}
+                      planningReadOnly={!isPlanningAdmin}
+                      serviceEtaHHMM={
+                        resolveReportValueForRow<string | null>(
+                          row,
+                          etaSource?.etaTimeByServiceId ?? undefined,
+                          null
+                        )
+                      }
+                      onEtaCommit={onAnyServiceEtaCommit}
+                      forceDoChatOpen
+                      onDoChatAgentReplySent={() => {
+                        void refreshDoChatFocusMode();
+                      }}
+                    />
+                  );
+                })()
+              : displayRows.map((row) => {
               const rowKey = serviceRowUiKey(row);
               const reportSid = serviceReportIdFromRow(row);
               const assigneeList = normalizeAssigneeListFromStored(

@@ -18,3 +18,28 @@ export function pickFocusServiceIdFromAwaiting(
 ): string | null {
   return awaitingReplyServiceIds[0]?.trim() || null;
 }
+
+/** Trouve une ligne planning à partir d'un `service_id` (canonique ou legacy). */
+export function findPlanningRowByServiceId<
+  T extends {
+    dateIso: string;
+    sheetId?: string;
+    client?: string;
+    type?: string;
+    vol?: string;
+    rdv1?: string;
+    rdv2?: string;
+  },
+>(
+  rows: T[],
+  serviceId: string,
+  resolveCanonicalId: (row: T) => string,
+  lookupIds: (row: T) => string[]
+): T | undefined {
+  const sid = serviceId.trim();
+  if (!sid) return undefined;
+  return rows.find(
+    (row) =>
+      resolveCanonicalId(row) === sid || lookupIds(row).includes(sid)
+  );
+}
