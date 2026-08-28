@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, MessagesSquare } from "lucide-react";
 
 import { ClientDoChatPanel } from "@/components/client-chat/client-do-chat-panel";
@@ -16,6 +16,9 @@ type ServiceDoChatSectionProps = {
   passengerLabel: string;
   flightNumbers?: string;
   variant?: "planning" | "report";
+  /** Focus mode planning : ouvre le chat automatiquement. */
+  forceOpen?: boolean;
+  onAgentReplySent?: () => void;
 };
 
 export function ServiceDoChatSection({
@@ -24,6 +27,8 @@ export function ServiceDoChatSection({
   passengerLabel,
   flightNumbers,
   variant = "planning",
+  forceOpen = false,
+  onAgentReplySent,
 }: ServiceDoChatSectionProps) {
   const [open, setOpen] = useState(false);
   const isPlanning = variant === "planning";
@@ -36,6 +41,10 @@ export function ServiceDoChatSection({
     enabled: isDoTrackingActive,
     chatOpen: open,
   });
+
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
 
   if (!canShareLink && !isDoTrackingActive) {
     return null;
@@ -112,6 +121,7 @@ export function ServiceDoChatSection({
                 spreadsheetId={spreadsheetId}
                 serviceId={serviceId}
                 compact
+                onAgentReplySent={onAgentReplySent}
                 className={
                   isPlanning
                     ? "border-[#D4AF37]/20 bg-[#0b1220]/60 text-white [&_textarea]:border-white/15 [&_textarea]:bg-white/5 [&_textarea]:text-white"

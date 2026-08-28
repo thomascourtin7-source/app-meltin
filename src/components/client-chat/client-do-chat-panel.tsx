@@ -18,6 +18,7 @@ type ClientDoChatPanelProps = {
   serviceId?: string;
   className?: string;
   compact?: boolean;
+  onAgentReplySent?: () => void;
 };
 
 const COPY = {
@@ -67,6 +68,7 @@ export function ClientDoChatPanel({
   serviceId,
   className,
   compact = false,
+  onAgentReplySent,
 }: ClientDoChatPanelProps) {
   const t = COPY[locale];
   const [draft, setDraft] = useState("");
@@ -101,6 +103,7 @@ export function ClientDoChatPanel({
     setDraft("");
     try {
       await sendMessage(text);
+      onAgentReplySent?.();
     } catch (e) {
       setDraft(text);
       window.alert(e instanceof Error ? e.message : t.sendError);
@@ -111,6 +114,7 @@ export function ClientDoChatPanel({
     if (sending) return;
     try {
       await sendMessage(text);
+      onAgentReplySent?.();
     } catch (e) {
       window.alert(e instanceof Error ? e.message : t.sendError);
     }

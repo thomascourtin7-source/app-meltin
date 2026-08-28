@@ -77,6 +77,7 @@ import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich
 import { ServiceAssignmentHistory } from "@/components/planning/service-assignment-history";
 import { ServiceLbStatusControl } from "@/components/planning/service-lb-status-control";
 import { ServiceDoChatSection } from "@/components/client-chat/service-do-chat-section";
+import { useDoChatFocusMode } from "@/lib/client-chat/use-do-chat-focus-mode";
 import { ServicePhotoCopyPreview } from "@/components/service-photo-copy-preview";
 import { usePlanningPreparation } from "@/components/planning/planning-preparation-context";
 import {
@@ -679,6 +680,8 @@ type ServiceBlockProps = {
   /** Javed, JAVED ORDI, Thomas : historique des changements d’assignation. */
   showAssignmentHistory?: boolean;
   assignableAgentOptions?: PlanningAgentOption[];
+  forceDoChatOpen?: boolean;
+  onDoChatAgentReplySent?: () => void;
 };
 
 function serviceBlockMemoAreEqual(
@@ -722,6 +725,8 @@ function serviceBlockMemoAreEqual(
   if (prevAnchors !== nextAnchors) return false;
   if (prev.onToggleVipStar !== next.onToggleVipStar) return false;
   if (prev.onSetLbStatus !== next.onSetLbStatus) return false;
+  if (prev.forceDoChatOpen !== next.forceDoChatOpen) return false;
+  if (prev.onDoChatAgentReplySent !== next.onDoChatAgentReplySent) return false;
   return true;
 }
 
@@ -764,6 +769,8 @@ function ServiceBlockInner({
   showUnassignedTodayAlert = false,
   showAssignmentHistory = false,
   assignableAgentOptions,
+  forceDoChatOpen = false,
+  onDoChatAgentReplySent,
 }: ServiceBlockProps) {
   const assignees = Array.isArray(assigneesRaw) ? assigneesRaw : [];
   const assigneeOptions = assignableAgentOptions ?? assignableAgents();
@@ -1246,6 +1253,8 @@ function ServiceBlockInner({
             passengerLabel={row.client.trim() || "Passager"}
             flightNumbers={row.vol.trim() || undefined}
             variant="planning"
+            forceOpen={forceDoChatOpen}
+            onAgentReplySent={onDoChatAgentReplySent}
           />
         ) : null}
         {copyToast}
@@ -1773,6 +1782,8 @@ function ServiceBlockInner({
           passengerLabel={row.client.trim() || "Passager"}
           flightNumbers={row.vol.trim() || undefined}
           variant="planning"
+          forceOpen={forceDoChatOpen}
+          onAgentReplySent={onDoChatAgentReplySent}
         />
       ) : null}
 
@@ -2815,6 +2826,40 @@ export function DailyServicesView() {
     }
     return filtered;
   }, [agentFilterLabel, assignees, filtered, meOnly, meSlug, showMeFilter]);
+
+  const myMonitoredServiceIds = useMemo(() => {
+    if (!meSlug.trim()) return [];
+    const rows = planningPayload?.rows ?? [];
+    return [
+      ...new Set(
+        rows
+          .filter((row) =>
+            isServiceAssignedToSessionAgent(
+              assignees[serviceRowUiKey(row)],
+              meSlug
+            )
+          )
+          .map((row) => serviceReportIdFromRow(row))
+          .filter(Boolean)
+      ),
+    ];
+  }, [planningPayload?.rows, assignees, meSlug]);
+
+  const { focusServiceId, refresh: refreshDoChatFocusMode } = useDoChatFocusMode({
+    spreadsheetId,
+    monitoredServiceIds: myMonitoredServiceIds,
+    enabled: Boolean(meSlug.trim() && spreadsheetId),
+  });
+
+  const displayRows = useMemo(() => {
+    if (!focusServiceId) return visibleRows;
+    const match = filtered.find(
+      (row) =>
+        serviceReportIdFromRow(row) === focusServiceId ||
+        serviceLookupIdsFromRow(row).includes(focusServiceId)
+    );
+    return match ? [match] : visibleRows;
+  }, [focusServiceId, visibleRows, filtered]);
 
   /**
    * Reçoit un clic de notification (deep-link). Bascule sur la date du service,
@@ -4334,7 +4379,7 @@ export function DailyServicesView() {
           <Loader2 className="size-5 animate-spin" aria-hidden />
           Chargement du planning…
         </div>
-      ) : visibleRows.length === 0 ? (
+      ) : displayRows.length === 0 ? (
         <p className="rounded-xl border border-dashed px-4 py-12 text-center text-muted-foreground">
           {meOnly
             ? "Aucun service assigné à vous"
@@ -4356,8 +4401,16 @@ export function DailyServicesView() {
                 : "Erreur chargement des rapports."}
             </div>
           ) : null}
+          {focusServiceId ? (
+            <div
+              role="alert"
+              className="mb-4 rounded-xl border border-red-500/50 bg-red-950/40 px-4 py-3 text-sm font-semibold text-red-100"
+            >
+              ⚠️ Message Donneur d&apos;Ordre en attente de réponse
+            </div>
+          ) : null}
           <div className="w-full">
-            {visibleRows.map((row) => {
+            {displayRows.map((row) => {
               const rowKey = serviceRowUiKey(row);
               const reportSid = serviceReportIdFromRow(row);
               const assigneeList = normalizeAssigneeListFromStored(
@@ -4426,6 +4479,10 @@ export function DailyServicesView() {
                     assignmentsData?.etaTimeByServiceId?.[reportSid] ?? null
                   }
                   onEtaCommit={onAnyServiceEtaCommit}
+                  forceDoChatOpen={focusServiceId === reportSid}
+                  onDoChatAgentReplySent={() => {
+                    void refreshDoChatFocusMode();
+                  }}
                 />
               );
             })}
