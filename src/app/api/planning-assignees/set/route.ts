@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { requirePlanningAdminBearer } from "@/lib/auth/planning-admin-server";
+import { syncSheetAssigneeForService } from "@/lib/google/sheets-assignee-sync";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import { hasRealAssigneeAgentName } from "@/lib/planning/planning-assignee-guard";
+import { resolveSpreadsheetIdForDate } from "@/lib/planning/planning-sources";
 import {
   assignmentLogAgentNamesDiffer,
   normalizeAssignmentLogAgentName,
@@ -45,6 +47,37 @@ async function insertServiceAssignmentLogIfChanged(
       message: error.message,
       serviceId: opts.serviceId,
     });
+  }
+}
+
+async function syncAssigneeToGoogleSheet(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdmin>>,
+  opts: {
+    serviceId: string;
+    serviceDate: string;
+    lookupIds: string[];
+    assigneeLabel: string | null;
+  }
+) {
+  try {
+    const spreadsheetId = await resolveSpreadsheetIdForDate(
+      supabase,
+      opts.serviceDate
+    );
+    return await syncSheetAssigneeForService({
+      spreadsheetId,
+      serviceId: opts.serviceId,
+      lookupIds: opts.lookupIds,
+      serviceDate: opts.serviceDate,
+      assigneeLabel: opts.assigneeLabel,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn("[planning-assignees/set] Google Sheet sync failed", {
+      serviceId: opts.serviceId,
+      message,
+    });
+    return { ok: false as const, reason: message };
   }
 }
 
@@ -272,7 +305,13 @@ export async function POST(request: Request) {
             oldAgent: oldAgentForLog,
             newAgent: assigneeName,
           });
-          return NextResponse.json({ ok: true, assignment: first });
+          const sheetSync = await syncAssigneeToGoogleSheet(supabase, {
+            serviceId,
+            serviceDate,
+            lookupIds: uniqueLookupIds,
+            assigneeLabel: assigneeName,
+          });
+          return NextResponse.json({ ok: true, assignment: first, sheetSync });
         } catch {
           // fallthrough to normal error
         }
@@ -288,6 +327,13 @@ export async function POST(request: Request) {
     newAgent: assigneeName,
   });
 
-  return NextResponse.json({ ok: true, assignment: data });
+  const sheetSync = await syncAssigneeToGoogleSheet(supabase, {
+    serviceId,
+    serviceDate,
+    lookupIds: uniqueLookupIds,
+    assigneeLabel: assigneeName,
+  });
+
+  return NextResponse.json({ ok: true, assignment: data, sheetSync });
 }
 

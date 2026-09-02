@@ -125,9 +125,13 @@ function findHeaderRowIndex(
 
 export type ParsedDailyServices = {
   rows: DailyServiceRow[];
+  /** Ligne Sheet (0-based) pour chaque mission parsée. */
+  rowsWithIndex: Array<{ row: DailyServiceRow; sheetRowIndex: number }>;
   headerRowIndex: number;
   /** Index de la colonne DATE (A=0) pour debug */
   dateColumnIndex: number;
+  /** Index colonne Agent / Assigné (-1 si absente). */
+  assigneeColumnIndex: number;
 };
 
 /**
@@ -137,7 +141,13 @@ export function parseDailyServiceRows(
   rows: Array<Array<string | number | boolean | null | undefined>>
 ): ParsedDailyServices {
   if (!rows.length) {
-    return { rows: [], headerRowIndex: -1, dateColumnIndex: -1 };
+    return {
+      rows: [],
+      rowsWithIndex: [],
+      headerRowIndex: -1,
+      dateColumnIndex: -1,
+      assigneeColumnIndex: -1,
+    };
   }
 
   const headerRowIndex = findHeaderRowIndex(rows);
@@ -148,7 +158,6 @@ export function parseDailyServiceRows(
   }
 
   const header = rows[headerRowIndex];
-  const data = rows.slice(headerRowIndex + 1);
 
   const headers = header.map((h) =>
     normalizeHeaderCell(norm(String(h ?? "")))
@@ -174,6 +183,8 @@ export function parseDailyServiceRows(
     "driver",
   ]);
   const assigneeCol = findColumnIndex(headers, [
+    "AGENT",
+    "agent",
     "ASSIGNÉ",
     "ASSIGNE",
     "ASSIGNATION",
@@ -202,7 +213,11 @@ export function parseDailyServiceRows(
   }
 
   const out: DailyServiceRow[] = [];
-  for (const row of data) {
+  const rowsWithIndex: Array<{ row: DailyServiceRow; sheetRowIndex: number }> =
+    [];
+
+  for (let sheetRowIndex = headerRowIndex + 1; sheetRowIndex < rows.length; sheetRowIndex++) {
+    const row = rows[sheetRowIndex];
     if (!row || !Array.isArray(row) || row.length === 0) continue;
 
     const rawDate = row[dateCol] as unknown;
@@ -238,10 +253,16 @@ export function parseDailyServiceRows(
       destProv: destCol >= 0 ? cell(row, destCol) : "",
       sheetAssignee: assigneeCol >= 0 ? cell(row, assigneeCol) : "",
     });
+    rowsWithIndex.push({
+      row: out[out.length - 1]!,
+      sheetRowIndex,
+    });
   }
   return {
     rows: out,
+    rowsWithIndex,
     headerRowIndex,
     dateColumnIndex: dateCol,
+    assigneeColumnIndex: assigneeCol,
   };
 }

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { readGoogleSpreadsheetId } from "@/lib/google/sheets-config";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 
@@ -87,9 +88,7 @@ export function todayIsoParis(): string {
 /** ID Google Sheet issu des variables d’environnement (logique historique). */
 export function readEnvPlanningSpreadsheetId(): string | null {
   const id =
-    process.env.PLANNING_SPREADSHEET_ID?.trim() ||
-    process.env.NEXT_PUBLIC_PLANNING_SPREADSHEET_ID?.trim() ||
-    DEFAULT_PLANNING_SPREADSHEET_ID.trim();
+    readGoogleSpreadsheetId() || DEFAULT_PLANNING_SPREADSHEET_ID.trim();
   return id || null;
 }
 
