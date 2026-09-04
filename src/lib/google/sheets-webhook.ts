@@ -51,7 +51,7 @@ async function writeViaAppsScriptWebhook(
       tabName: payload.tabName,
       rowNumber: payload.rowNumber,
       columnNumber,
-      value: payload.value,
+      value: payload.value ?? "",
     }),
     cache: "no-store",
     redirect: "follow",

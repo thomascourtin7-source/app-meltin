@@ -95,6 +95,7 @@ import {
   serviceReportIdFromRow,
 } from "@/lib/reports/service-report-id";
 import {
+  canSeeServiceAssignmentHistory,
   isPlanningAgentFilterBarSession,
   isPlanningSuperAdminSession,
   isPlanningVipStarEditorSession,
@@ -727,6 +728,8 @@ type ServiceBlockProps = {
   onToggleVipStar: (opts: { serviceId: string }) => Promise<void>;
   /** Profil courant (« S’enregistrer »), pour permissions photo / PEC. */
   meName: string;
+  /** Slug de session (ex. `javed_ordo`) — historique d’assignation. */
+  meSlug?: string;
   onAssigneesChange: (
     key: string,
     next: string[],
@@ -761,8 +764,6 @@ type ServiceBlockProps = {
   ) => Promise<void>;
   agentScrollAnchorIds?: string[];
   showUnassignedTodayAlert?: boolean;
-  /** Javed, JAVED ORDI, Thomas : historique des changements d’assignation. */
-  showAssignmentHistory?: boolean;
   assignableAgentOptions?: PlanningAgentOption[];
   forceDoChatOpen?: boolean;
   onDoChatAgentReplySent?: () => void;
@@ -784,6 +785,7 @@ function serviceBlockMemoAreEqual(
   if (prev.lbStatusEntry.updatedAt !== next.lbStatusEntry.updatedAt) return false;
   if (prev.vipStarInteractive !== next.vipStarInteractive) return false;
   if (prev.meName !== next.meName) return false;
+  if ((prev.meSlug ?? "") !== (next.meSlug ?? "")) return false;
   if (prev.planningReadOnly !== next.planningReadOnly) return false;
   if (prev.hasTimeConflict !== next.hasTimeConflict) return false;
   if (prev.showConflictUi !== next.showConflictUi) return false;
@@ -792,7 +794,6 @@ function serviceBlockMemoAreEqual(
   if (prev.hasPhoto !== next.hasPhoto) return false;
   if (prev.servicePhotoPreviewUrl !== next.servicePhotoPreviewUrl) return false;
   if (prev.showUnassignedTodayAlert !== next.showUnassignedTodayAlert) return false;
-  if (prev.showAssignmentHistory !== next.showAssignmentHistory) return false;
   if (serviceBlockRowFingerprint(prev.row) !== serviceBlockRowFingerprint(next.row)) {
     return false;
   }
@@ -833,6 +834,7 @@ function ServiceBlockInner({
   vipStarInteractive,
   onToggleVipStar,
   meName,
+  meSlug = "",
   onAssigneesChange,
   hasTimeConflict = false,
   showConflictUi = false,
@@ -851,7 +853,6 @@ function ServiceBlockInner({
   onEtaCommit,
   agentScrollAnchorIds = [],
   showUnassignedTodayAlert = false,
-  showAssignmentHistory = false,
   assignableAgentOptions,
   forceDoChatOpen = false,
   onDoChatAgentReplySent,
@@ -859,6 +860,10 @@ function ServiceBlockInner({
   const assignees = Array.isArray(assigneesRaw) ? assigneesRaw : [];
   const assigneeOptions = assignableAgentOptions ?? assignableAgents();
   const isUrgent = assignees.some((a) => isUrgentAssignee(a));
+  const showAssignmentHistory = canSeeServiceAssignmentHistory({
+    slug: meSlug,
+    displayName: meName,
+  });
   const fileRef = useRef<HTMLInputElement>(null);
   const assigneesSectionRef = useRef<HTMLDivElement>(null);
   /**
@@ -956,7 +961,7 @@ function ServiceBlockInner({
       next.push(DEFAULT_PLANNING_ASSIGNEE_SLUG);
     }
     next[slot] = normalizeAssigneeStoredValue(value);
-    onAssigneesChange(rowKey, next);
+    onAssigneesChange(rowKey, next, { allowDeassign: true });
   };
 
   const handleAddAssignee = () => {
@@ -1011,7 +1016,8 @@ function ServiceBlockInner({
     if (assignees.length <= 1) return;
     onAssigneesChange(
       rowKey,
-      assignees.filter((_, i) => i !== slot)
+      assignees.filter((_, i) => i !== slot),
+      { allowDeassign: true }
     );
   };
 
@@ -4271,21 +4277,29 @@ export function DailyServicesView() {
               return;
             }
 
-            // App-First : le serveur a refusé d'effacer un agent réel existant.
-            // On resynchronise pour réafficher l'agent préservé (pas de notif).
-            let okBody: { preserved?: boolean } | null = null;
+            type SetAssigneeOkBody = {
+              preserved?: boolean;
+              sheetSync?: { ok?: boolean; reason?: string };
+              assignment?: { agent_name?: string | null };
+            };
+            let okBody: SetAssigneeOkBody | null = null;
             try {
-              okBody = (await res.json()) as { preserved?: boolean };
+              okBody = (await res.json()) as SetAssigneeOkBody;
             } catch {
               okBody = null;
             }
-            if (okBody?.preserved) {
+
+            const savedUnassigned =
+              allowDeassign &&
+              (agentNameMerged == null || !agentNameMerged.trim());
+
+            // App-First : le serveur a refusé d'effacer (écriture auto 🚨).
+            // Ne pas rollback une désassignation manuelle.
+            if (okBody?.preserved && !savedUnassigned) {
               clearDraft();
               await mutateAssignments(undefined, { revalidate: true });
               return;
             }
-
-            await mutateReportsRef.current?.(undefined, { revalidate: true });
 
             const sidSaved = sidSavedForPost;
             void mutateAssignments(
@@ -4297,8 +4311,6 @@ export function DailyServicesView() {
                     ? undefined
                     : agentNameMerged;
 
-                // Purge stricte : retire l’assignation sous TOUTES les clés
-                // (canonique + legacy) pour que l’ancien agent disparaisse partout.
                 for (const id of lookupIds) {
                   delete baseAssign[id];
                 }
@@ -4314,6 +4326,7 @@ export function DailyServicesView() {
             );
 
             clearDraft();
+            void mutateReportsRef.current?.(undefined, { revalidate: true });
 
             // 🚨 Clic alarme (urgence) : déclenche un envoi global immédiat.
             if (safe.includes(URGENT_ASSIGNEE) && !hadUrgent) {
@@ -4362,12 +4375,8 @@ export function DailyServicesView() {
           } catch (e) {
             logErreurSupabase({ stage: "setAssigneesForRow (async)", error: e });
             console.error(e);
-            setAssigneesDraftByRowKey((p) => {
-              if (!Object.prototype.hasOwnProperty.call(p, keyTrim)) return p;
-              const n = { ...p };
-              delete n[keyTrim];
-              return n;
-            });
+            // Ne pas rollback si l’API a déjà répondu : le draft a été
+            // nettoyé après succès. Un échec réseau avant le POST, oui.
           }
         })();
       } catch (error) {
@@ -4820,7 +4829,6 @@ export function DailyServicesView() {
                         isServiceUnassigned(assigneeList)
                       }
                       planningSuperAdminBypass={planningSuperAdminBypass}
-                      showAssignmentHistory={planningSuperAdminBypass}
                       assignableAgentOptions={assignableOptions}
                       isStarred={resolveReportFlagForRow(
                         row,
@@ -4837,6 +4845,7 @@ export function DailyServicesView() {
                       vipStarInteractive={vipStarEditorSession}
                       onToggleVipStar={toggleVipStar}
                       meName={meName}
+                      meSlug={meSlug}
                       onAssigneesChange={setAssigneesForRow}
                       hasTimeConflict={conflictRowKeys.has(rowKey)}
                       showConflictUi={prepModeActive}
@@ -4921,7 +4930,6 @@ export function DailyServicesView() {
                     isTodaySelected && isServiceUnassigned(assigneeList)
                   }
                   planningSuperAdminBypass={planningSuperAdminBypass}
-                  showAssignmentHistory={planningSuperAdminBypass}
                   assignableAgentOptions={assignableOptions}
                   isStarred={Boolean(isStarredByServiceId[reportSid])}
                   lbStatusEntry={
@@ -4931,6 +4939,7 @@ export function DailyServicesView() {
                   vipStarInteractive={vipStarEditorSession}
                   onToggleVipStar={toggleVipStar}
                   meName={meName}
+                  meSlug={meSlug}
                   onAssigneesChange={setAssigneesForRow}
                   hasTimeConflict={conflictRowKeys.has(rowKey)}
                   showConflictUi={prepModeActive}

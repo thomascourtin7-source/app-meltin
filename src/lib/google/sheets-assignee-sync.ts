@@ -105,20 +105,25 @@ export async function syncSheetAssigneeForService(
 
   const tabName = parseSheetTabName(getPlanningSheetRange());
   const sheetRowNumber = match.sheetRowIndex + 1;
-  const cellValue = (opts.assigneeLabel ?? "").trim();
+  const cellValue = (opts.assigneeLabel ?? "").toString();
 
-  const writeResult = await writeSheetAssigneeCell({
-    spreadsheetId,
-    tabName,
-    columnIndex: assigneeColumnIndex,
-    rowNumber: sheetRowNumber,
-    value: cellValue,
-  });
+  try {
+    const writeResult = await writeSheetAssigneeCell({
+      spreadsheetId,
+      tabName,
+      columnIndex: assigneeColumnIndex,
+      rowNumber: sheetRowNumber,
+      value: cellValue,
+    });
 
-  return {
-    ok: true,
-    updatedRange: writeResult.updatedRange,
-    sheetRowNumber,
-    writeMethod: writeResult.method,
-  };
+    return {
+      ok: true,
+      updatedRange: writeResult.updatedRange,
+      sheetRowNumber,
+      writeMethod: writeResult.method,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: message };
+  }
 }

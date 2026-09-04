@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { requirePlanningAdminBearer } from "@/lib/auth/planning-admin-server";
 import { syncSheetAssigneeForService } from "@/lib/google/sheets-assignee-sync";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
-import { hasRealAssigneeAgentName } from "@/lib/planning/planning-assignee-guard";
+import { hasRealAssigneeAgentName, isExplicitUnassignedInput } from "@/lib/planning/planning-assignee-guard";
 import { resolveSpreadsheetIdForDate } from "@/lib/planning/planning-sources";
 import {
   assignmentLogAgentNamesDiffer,
@@ -125,12 +125,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const slugs = Array.isArray(b.assigneeSlugs)
-    ? b.assigneeSlugs.filter((x): x is string => typeof x === "string")
-    : [];
+  const slugs = isExplicitUnassignedInput(b.assigneeSlugs)
+    ? []
+    : Array.isArray(b.assigneeSlugs)
+      ? b.assigneeSlugs.filter((x): x is string => typeof x === "string")
+      : typeof b.assigneeSlugs === "string"
+        ? [b.assigneeSlugs]
+        : [];
 
-  // Retrait d'agent autorisé UNIQUEMENT sur action manuelle explicite (croix).
-  const allowDeassign = b.allowDeassign === true;
+  // Retrait d'agent : action manuelle UI (`allowDeassign: true`) OU valeur
+  // explicitement vide / « Non assigné » / null.
+  const allowDeassign =
+    b.allowDeassign === true || isExplicitUnassignedInput(b.assigneeSlugs);
 
   const lookupIdsRaw = (b as Body).lookupIds;
   const lookupIds = [
@@ -168,18 +174,12 @@ export async function POST(request: Request) {
     }
   }
 
-  // `serializeAssigneeSlugsToName` renvoie `null` si plus aucun agent réel
-  // (retrait/croix) : aucune virgule vide ni nom résiduel.
+  // `serializeAssigneeSlugsToName` renvoie `null` si plus aucun agent réel.
   const assigneeName = serializeAssigneeSlugsToName(slugs);
   const incomingHasRealAgent = hasRealAssigneeAgentName(assigneeName);
 
-  // ───────────────────────────────────────────────────────────────────────
-  // PROTECTION « App-First » (règle anti-désassignation automatique)
-  // Si un agent RÉEL est déjà assigné en base et que l'écriture entrante ne
-  // contient aucun agent réel (vide, ou 🚨 seul), on REFUSE STRICTEMENT
-  // d'effacer — sauf retrait manuel explicite (`allowDeassign: true`, la croix).
-  // Aucune synchronisation / aucun automatisme ne peut vider un agent.
-  // ───────────────────────────────────────────────────────────────────────
+  // Garde-fou 🚨 / sync auto : ne pas écraser un agent réel par du vide,
+  // sauf désassignation manuelle explicite.
   if (existingAgentName && !incomingHasRealAgent && !allowDeassign) {
     console.warn(
       "[planning-assignees/set] App-First : écriture sans agent réel ignorée (agent existant préservé).",
@@ -203,7 +203,7 @@ export async function POST(request: Request) {
   const payload = {
     service_id: serviceId,
     service_date: serviceDate,
-    agent_name: assigneeName,
+    agent_name: incomingHasRealAgent ? assigneeName : null,
     eta_time: existingEta,
     updated_at: new Date().toISOString(),
   };
@@ -225,12 +225,13 @@ export async function POST(request: Request) {
       });
     }
 
-    const newName = (assigneeName ?? "").trim();
+    const newName = (payload.agent_name ?? "").trim();
     const deletableIds = (legacyRows ?? [])
       .filter((r) => {
         const agent = (r as { agent_name?: string | null }).agent_name ?? null;
-        if (!hasRealAssigneeAgentName(agent)) return true; // ligne vide → purge OK
-        return (agent ?? "").trim() === newName; // même agent → migration de clé OK
+        if (!incomingHasRealAgent && allowDeassign) return true;
+        if (!hasRealAssigneeAgentName(agent)) return true;
+        return (agent ?? "").trim() === newName;
       })
       .map((r) => (r as { service_id: string }).service_id);
 
@@ -248,14 +249,41 @@ export async function POST(request: Request) {
     }
   }
 
-  // Une ligne par `service_id` (index UNIQUE) : upsert remplace `agent_name` par la chaîne sérialisée.
-  const { data, error } = await supabase
+  // Une ligne par `service_id` (index UNIQUE) : upsert remplace `agent_name`.
+  let data: { service_id: string; agent_name: string | null; eta_time: string | null } | null =
+    null;
+  const { data: upserted, error } = await supabase
     .from("planning_assignments")
     .upsert(payload, { onConflict: "service_id" })
     .select("service_id,agent_name,eta_time")
-    .single();
+    .maybeSingle();
 
-  if (error) {
+  if (!error) {
+    data = upserted as typeof data;
+  } else if (!incomingHasRealAgent) {
+    console.warn("[planning-assignees/set] upsert null échoué, suppression de la ligne", {
+      message: error.message,
+      serviceId,
+    });
+    const { error: deleteError } = await supabase
+      .from("planning_assignments")
+      .delete()
+      .eq("service_id", serviceId);
+    if (deleteError) {
+      console.error("[planning-assignees/set] delete after null upsert", {
+        message: deleteError.message,
+        serviceId,
+      });
+      return NextResponse.json({ error: deleteError.message }, { status: 500 });
+    }
+    data = {
+      service_id: serviceId,
+      agent_name: null,
+      eta_time: existingEta,
+    };
+  }
+
+  if (error && incomingHasRealAgent) {
     console.error("[planning-assignees/set] Supabase upsert", {
       message: error.message,
       code: error.code,

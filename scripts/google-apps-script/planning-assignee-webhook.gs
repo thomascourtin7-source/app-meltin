@@ -42,7 +42,7 @@ function doPost(e) {
     var tabName = String(body.tabName || "Feuille 1").trim();
     var rowNumber = Number(body.rowNumber);
     var columnNumber = Number(body.columnNumber);
-    var value = body.value != null ? String(body.value) : "";
+    var value = body.value == null ? "" : String(body.value);
 
     if (!spreadsheetId || !rowNumber || !columnNumber) {
       return jsonResponse({
