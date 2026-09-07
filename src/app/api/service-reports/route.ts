@@ -137,10 +137,11 @@ export async function POST(request: Request) {
   const reportKind =
     typeof b.report_kind === "string" ? b.report_kind.trim().toLowerCase() : "";
   const isCompleting = b.completed_at != null && b.completed_at !== "";
+  const isNoShow = b.no_show === true;
   const bagsStatusRaw =
     typeof b.bags_status === "string" ? b.bags_status.trim() : "";
 
-  if (isCompleting && reportKind === "transit") {
+  if (isCompleting && reportKind === "transit" && !isNoShow) {
     if (!isValidBagsStatus(bagsStatusRaw)) {
       return NextResponse.json(
         {

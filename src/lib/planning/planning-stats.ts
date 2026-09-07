@@ -2,8 +2,12 @@ import { DateTime } from "luxon";
 
 import {
   PLANNING_ASSIGNEE_OPTIONS,
+  PLANNING_URGENT_ASSIGNEE_DISPLAY,
+  DEFAULT_PLANNING_ASSIGNEE_SLUG,
+  assigneeSlugToNotifyLabel,
   isUrgentAssignee,
   displayAgents,
+  parseAssigneeNameToSlugs,
   planningDisplayNameEquals,
 } from "@/lib/planning/planning-team";
 
@@ -123,11 +127,91 @@ export function canonicalAgentLabel(raw: string | null): string | null {
   if (raw == null) return null;
   const t = raw.trim();
   if (!t) return null;
+  if (/^non assign[ée]$/i.test(t) || t === "__none__" || t === "null") {
+    return null;
+  }
   for (const o of PLANNING_ASSIGNEE_OPTIONS) {
     if (o.value === "__none__" || isUrgentAssignee(o.value)) continue;
     if (planningDisplayNameEquals(o.label, t)) return o.label;
   }
   return t;
+}
+
+function isPlaceholderAgentLabel(label: string): boolean {
+  const t = label.trim();
+  if (!t) return true;
+  if (isUrgentAssignee(t) || t === PLANNING_URGENT_ASSIGNEE_DISPLAY) return true;
+  if (/^non assign[ée]$/i.test(t) || t === "__none__" || t === "null") return true;
+  return false;
+}
+
+/**
+ * Tous les agents réels d’une assignation (« Deva;Thomas », virgules, « + »).
+ * N’utilise pas seulement le premier nom.
+ */
+export function agentLabelsFromStoredAssigneeName(
+  raw: string | null | undefined
+): string[] {
+  const labels: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (value: string | null | undefined) => {
+    const canonical = canonicalAgentLabel(value ?? null);
+    if (!canonical || isPlaceholderAgentLabel(canonical)) return;
+    const key = canonical.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    labels.push(canonical);
+  };
+
+  const slugs = parseAssigneeNameToSlugs(raw);
+  for (const slug of slugs) {
+    if (slug === DEFAULT_PLANNING_ASSIGNEE_SLUG || isUrgentAssignee(slug)) {
+      continue;
+    }
+    add(assigneeSlugToNotifyLabel(slug) ?? slug);
+  }
+
+  if (raw?.trim()) {
+    for (const part of String(raw).split(/[;|,+/]/)) {
+      add(part.trim());
+    }
+  }
+
+  return labels;
+}
+
+/** Fusionne plusieurs champs `agent_name` (rapport + planning_assignments). */
+export function mergeStoredAssigneeNames(
+  ...raws: Array<string | null | undefined>
+): string | null {
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  for (const raw of raws) {
+    for (const label of agentLabelsFromStoredAssigneeName(raw)) {
+      const key = label.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      labels.push(label);
+    }
+  }
+  return labels.length > 0 ? labels.join(";") : null;
+}
+
+/** Rapport comptable comme accueil : complété et/ou No-Show validé. */
+export function isStatsCountableReport(row: {
+  completed_at?: string | null;
+  no_show?: boolean | string | null;
+}): boolean {
+  const completed = row.completed_at != null && String(row.completed_at).trim() !== "";
+  if (completed) return true;
+  const noShow = row.no_show;
+  if (noShow === true) return true;
+  if (typeof noShow === "string") {
+    const t = noShow.trim().toLowerCase().replace(/[_ ]+/g, "-");
+    if (t === "true" || t === "no-show" || t === "noshow") return true;
+  }
+  return false;
 }
 
 export function defaultScoreAgentLabels(): string[] {
@@ -168,23 +252,27 @@ export function computePlanningScores(
   };
 
   for (const row of rows) {
-    const agent = canonicalAgentLabel(row.assignee_name);
-    if (!agent) continue;
-    agentLabels.add(agent);
-    accueils.set(agent, (accueils.get(agent) ?? 0) + 1);
+    const agents = agentLabelsFromStoredAssigneeName(row.assignee_name);
+    if (agents.length === 0) continue;
 
     const date =
       typeof row.service_date === "string"
         ? row.service_date.slice(0, 10)
         : "";
-    if (!date) continue;
-
     const bounds = serviceStartEndMinutes(row);
-    const agg = ensureDay(agent, date);
-    if (bounds) {
-      agg.hasTime = true;
-      agg.minStart = Math.min(agg.minStart, bounds.start);
-      agg.maxEnd = Math.max(agg.maxEnd, bounds.end);
+
+    for (const agent of agents) {
+      agentLabels.add(agent);
+      accueils.set(agent, (accueils.get(agent) ?? 0) + 1);
+
+      if (!date) continue;
+
+      const agg = ensureDay(agent, date);
+      if (bounds) {
+        agg.hasTime = true;
+        agg.minStart = Math.min(agg.minStart, bounds.start);
+        agg.maxEnd = Math.max(agg.maxEnd, bounds.end);
+      }
     }
   }
 

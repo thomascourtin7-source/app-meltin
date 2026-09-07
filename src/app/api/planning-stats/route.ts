@@ -5,30 +5,14 @@ import { fetchDailyServicesFromSheet } from "@/lib/google/fetch-daily-services";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import {
   computePlanningScores,
+  isStatsCountableReport,
+  mergeStoredAssigneeNames,
   type PlanningStatsPeriod,
   planningStatsPeriodMeta,
   type StatsReportInput,
 } from "@/lib/planning/planning-stats";
 import { resolveSpreadsheetIdForDate } from "@/lib/planning/planning-sources";
-import {
-  PLANNING_URGENT_ASSIGNEE_DISPLAY,
-  PLANNING_URGENT_ASSIGNEE_SLUG,
-} from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-
-/** Premier agent réel d'un `agent_name` (« A;B », 🚨 ignoré). */
-function firstRealAgentName(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  for (const part of String(raw).split(/[;|,+/]/)) {
-    const t = part.trim();
-    if (!t) continue;
-    if (t === PLANNING_URGENT_ASSIGNEE_DISPLAY || t === PLANNING_URGENT_ASSIGNEE_SLUG) {
-      continue;
-    }
-    return t;
-  }
-  return null;
-}
 
 const PAGE_SIZE = 1000;
 
@@ -78,36 +62,41 @@ export async function GET(request: Request) {
   }
 
   type ReportRow = StatsReportInput & { service_id: string };
-  const reportRows: ReportRow[] = [];
-  let from = 0;
+  const reportByKey = new Map<string, ReportRow>();
 
-  for (;;) {
-    const { data, error } = await supabase
-      .from("service_reports")
-      .select(
-        "service_id, assignee_name, service_date, meeting_time, end_of_service, service_started_at, completed_at"
-      )
-      .eq("spreadsheet_id", resolvedSpreadsheetId)
-      .gte("service_date", meta.start)
-      .lte("service_date", meta.end)
-      .not("completed_at", "is", null)
-      .range(from, from + PAGE_SIZE - 1);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    const chunk = data ?? [];
+  const ingestReportChunk = (chunk: unknown[]) => {
     for (const r of chunk) {
       const o = r as Record<string, unknown>;
-      reportRows.push({
-        service_id: typeof o.service_id === "string" ? o.service_id : "",
+      const completedAt =
+        typeof o.completed_at === "string"
+          ? o.completed_at
+          : o.completed_at != null
+            ? String(o.completed_at)
+            : null;
+      const noShow = o.no_show;
+      if (
+        !isStatsCountableReport({
+          completed_at: completedAt,
+          no_show:
+            typeof noShow === "boolean" || typeof noShow === "string"
+              ? noShow
+              : null,
+        })
+      ) {
+        continue;
+      }
+      const serviceId = typeof o.service_id === "string" ? o.service_id : "";
+      const serviceDate =
+        typeof o.service_date === "string"
+          ? o.service_date.slice(0, 10)
+          : String(o.service_date ?? "").slice(0, 10);
+      const key = serviceId || `${serviceDate}:${o.assignee_name ?? ""}`;
+      if (reportByKey.has(key)) continue;
+      reportByKey.set(key, {
+        service_id: serviceId,
         assignee_name:
           typeof o.assignee_name === "string" ? o.assignee_name : null,
-        service_date:
-          typeof o.service_date === "string"
-            ? o.service_date.slice(0, 10)
-            : String(o.service_date ?? "").slice(0, 10),
+        service_date: serviceDate,
         meeting_time:
           typeof o.meeting_time === "string" ? o.meeting_time : null,
         end_of_service:
@@ -118,44 +107,110 @@ export async function GET(request: Request) {
             : null,
       });
     }
+  };
 
+  const REPORT_COLUMNS =
+    "service_id, assignee_name, service_date, meeting_time, end_of_service, service_started_at, completed_at, no_show";
+
+  const paginateFilteredReports = async (mode: "or" | "completed" | "no_show") => {
+    let from = 0;
+    for (;;) {
+      let query = supabase
+        .from("service_reports")
+        .select(REPORT_COLUMNS)
+        .eq("spreadsheet_id", resolvedSpreadsheetId)
+        .gte("service_date", meta.start)
+        .lte("service_date", meta.end);
+      if (mode === "or") {
+        query = query.or("completed_at.not.is.null,no_show.eq.true");
+      } else if (mode === "completed") {
+        query = query.not("completed_at", "is", null);
+      } else {
+        query = query.eq("no_show", true);
+      }
+      const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+      if (error) return error.message;
+      const chunk = data ?? [];
+      ingestReportChunk(chunk);
+      if (chunk.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+      if (from > 200_000) break;
+    }
+    return null;
+  };
+
+  const orError = await paginateFilteredReports("or");
+  if (orError) {
+    reportByKey.clear();
+    const completedError = await paginateFilteredReports("completed");
+    if (completedError) {
+      return NextResponse.json({ error: completedError }, { status: 500 });
+    }
+    const noShowError = await paginateFilteredReports("no_show");
+    if (noShowError) {
+      console.warn("[planning-stats] no_show fallback", noShowError);
+    }
+  }
+
+  const reportRows = [...reportByKey.values()];
+
+  // Tous les agents de `planning_assignments` (co-assignations « Deva;Thomas »),
+  // pas seulement le premier nom, ni seulement les rapports sans assignee_name.
+  const assignmentNameByServiceId = new Map<string, string | null>();
+  const mergeAssignment = (sid: string, agentName: string | null) => {
+    if (!sid) return;
+    assignmentNameByServiceId.set(
+      sid,
+      mergeStoredAssigneeNames(assignmentNameByServiceId.get(sid), agentName)
+    );
+  };
+
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("planning_assignments")
+      .select("service_id, agent_name")
+      .gte("service_date", meta.start)
+      .lte("service_date", meta.end)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.warn("[planning-stats] planning_assignments période", error.message);
+      break;
+    }
+    const chunk = data ?? [];
+    for (const a of chunk) {
+      const o = a as { service_id?: unknown; agent_name?: unknown };
+      const sid = typeof o.service_id === "string" ? o.service_id.trim() : "";
+      const agent = typeof o.agent_name === "string" ? o.agent_name : null;
+      mergeAssignment(sid, agent);
+    }
     if (chunk.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
     if (from > 200_000) break;
   }
 
-  // Repli : rapport complété sans `assignee_name` → on récupère l'agent assigné
-  // dans `planning_assignments` (source réelle des attributions).
-  const missingAgentIds = [
-    ...new Set(
-      reportRows
-        .filter((r) => !firstRealAgentName(r.assignee_name) && r.service_id)
-        .map((r) => r.service_id)
-    ),
+  const reportServiceIds = [
+    ...new Set(reportRows.map((r) => r.service_id).filter(Boolean)),
   ];
-  if (missingAgentIds.length > 0) {
-    const agentByServiceId = new Map<string, string>();
-    for (let i = 0; i < missingAgentIds.length; i += PAGE_SIZE) {
-      const ids = missingAgentIds.slice(i, i + PAGE_SIZE);
-      const { data: assignRows } = await supabase
-        .from("planning_assignments")
-        .select("service_id, agent_name")
-        .in("service_id", ids);
-      for (const a of assignRows ?? []) {
-        const o = a as { service_id?: unknown; agent_name?: unknown };
-        const sid = typeof o.service_id === "string" ? o.service_id : "";
-        const agent = firstRealAgentName(
-          typeof o.agent_name === "string" ? o.agent_name : null
-        );
-        if (sid && agent) agentByServiceId.set(sid, agent);
-      }
+  for (let i = 0; i < reportServiceIds.length; i += PAGE_SIZE) {
+    const ids = reportServiceIds.slice(i, i + PAGE_SIZE);
+    const { data: assignRows } = await supabase
+      .from("planning_assignments")
+      .select("service_id, agent_name")
+      .in("service_id", ids);
+    for (const a of assignRows ?? []) {
+      const o = a as { service_id?: unknown; agent_name?: unknown };
+      const sid = typeof o.service_id === "string" ? o.service_id.trim() : "";
+      const agent = typeof o.agent_name === "string" ? o.agent_name : null;
+      mergeAssignment(sid, agent);
     }
-    for (const r of reportRows) {
-      if (!firstRealAgentName(r.assignee_name)) {
-        const fromAssign = agentByServiceId.get(r.service_id);
-        if (fromAssign) r.assignee_name = fromAssign;
-      }
-    }
+  }
+
+  for (const r of reportRows) {
+    r.assignee_name = mergeStoredAssigneeNames(
+      r.assignee_name,
+      assignmentNameByServiceId.get(r.service_id)
+    );
   }
 
   const rows: StatsReportInput[] = reportRows.map((r) => ({

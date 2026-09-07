@@ -101,8 +101,8 @@ export function StatsClient() {
             </h1>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Accueils (rapports complétés par agent assigné) et jours sans service
-            sur la période.
+            Accueils (rapports complétés, y compris No-Show ; chaque agent
+            co-assigné est crédité) et jours sans service sur la période.
           </p>
         </div>
         <Button
