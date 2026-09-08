@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
-import { ArrowLeft, Loader2, Trophy } from "lucide-react";
+import { ArrowLeft, Calendar, Loader2, Trophy } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,15 +13,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { WeeklyHoursDialog } from "@/components/stats/weekly-hours-dialog";
 import { readPlanningAuthSession } from "@/lib/auth/planning-auth-session";
 import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
 import { usePlanningAdminClient } from "@/hooks/use-planning-admin-client";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import type {
+  AgentWeeklyHoursGroup,
   PlanningScoreRow,
   PlanningStatsPeriod,
   PlanningStatsPeriodMeta,
 } from "@/lib/planning/planning-stats";
+import { canSeeStatsWeeklyHours } from "@/lib/planning/planning-super-admins";
 import { cn } from "@/lib/utils";
 
 type StatsPayload = {
@@ -29,6 +32,8 @@ type StatsPayload = {
   spreadsheetId: string;
   rows: PlanningScoreRow[];
   totalMissions: number;
+  weeklyHoursByAgent?: Record<string, AgentWeeklyHoursGroup[]>;
+  canViewWeeklyHours?: boolean;
 };
 
 async function fetchStats(url: string, token: string): Promise<StatsPayload> {
@@ -59,6 +64,15 @@ export function StatsClient() {
     DEFAULT_PLANNING_SPREADSHEET_ID;
 
   const [period, setPeriod] = useState<PlanningStatsPeriod>("current_month");
+  const [hoursAgent, setHoursAgent] = useState<string | null>(null);
+
+  const showWeeklyHours = useMemo(() => {
+    const session = readPlanningAuthSession();
+    return canSeeStatsWeeklyHours({
+      slug: session?.slug,
+      displayName: session?.displayName,
+    });
+  }, []);
 
   const swrKey = useMemo(() => {
     if (!isPlanningAdmin) return null;
@@ -196,7 +210,19 @@ export function StatsClient() {
                   )}
                 >
                   <td className="sticky left-0 z-10 whitespace-nowrap border-r border-border/30 bg-card px-3 py-2.5 font-medium backdrop-blur-sm sm:px-4">
-                    {row.agent}
+                    <span className="inline-flex items-center gap-1.5">
+                      {row.agent}
+                      {showWeeklyHours && data.canViewWeeklyHours ? (
+                        <button
+                          type="button"
+                          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          aria-label={`Heures travaillées de ${row.agent}`}
+                          onClick={() => setHoursAgent(row.agent)}
+                        >
+                          <Calendar className="size-3.5" aria-hidden />
+                        </button>
+                      ) : null}
+                    </span>
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums sm:px-4">
                     {row.accueils}
@@ -228,6 +254,14 @@ export function StatsClient() {
 
       {isValidating && data ? (
         <p className="text-center text-xs text-muted-foreground">Mise à jour…</p>
+      ) : null}
+
+      {showWeeklyHours && hoursAgent ? (
+        <WeeklyHoursDialog
+          agent={hoursAgent}
+          groups={data?.weeklyHoursByAgent?.[hoursAgent] ?? []}
+          onClose={() => setHoursAgent(null)}
+        />
       ) : null}
     </div>
   );

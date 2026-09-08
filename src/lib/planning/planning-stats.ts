@@ -10,6 +10,8 @@ import {
   parseAssigneeNameToSlugs,
   planningDisplayNameEquals,
 } from "@/lib/planning/planning-team";
+import { detectServiceReportKind } from "@/lib/planning/service-kind";
+import { parseTime } from "@/lib/planning/time-conflicts";
 
 /** Fuseau pour mois calendaires et jours OFF. */
 const TZ = "Europe/Paris";
@@ -311,4 +313,193 @@ export function computePlanningScores(
       joursOff: Math.max(0, calendarDays - workedDays),
     };
   });
+}
+
+export type StatsHourServiceInput = {
+  dateIso: string;
+  type: string;
+  rdv1: string;
+  rdv2: string;
+  assignee_name: string | null;
+};
+
+export type AgentWeekHours = {
+  label: string;
+  hours: number;
+};
+
+export type AgentWeeklyHoursGroup = {
+  monthKey: string;
+  monthLabel: string;
+  weeks: AgentWeekHours[];
+};
+
+function rdvColumnMinutes(cell: string | null | undefined): number | null {
+  const times = parseTime(String(cell ?? ""));
+  return times.length > 0 ? times[0]! : null;
+}
+
+function firstServiceStartMinutes(row: StatsHourServiceInput): number | null {
+  return rdvColumnMinutes(row.rdv1) ?? rdvColumnMinutes(`${row.rdv1} ${row.rdv2}`);
+}
+
+function lastServiceEndMinutes(row: StatsHourServiceInput): number | null {
+  const kind = detectServiceReportKind(row.type);
+  if (kind === "arrival") {
+    const start = firstServiceStartMinutes(row);
+    return start == null ? null : start + 60;
+  }
+  const rdv2 = rdvColumnMinutes(row.rdv2);
+  if (rdv2 != null) return rdv2 - 30;
+  const fallback = parseTime(`${row.rdv1} ${row.rdv2}`);
+  if (fallback.length >= 2) return fallback[fallback.length - 1]! - 30;
+  if (fallback.length === 1) return fallback[0]! - 30;
+  return null;
+}
+
+/** Durée d’une journée travaillée (minutes), ou null si horaires illisibles. */
+export function dailyWorkedMinutesFromServices(
+  services: StatsHourServiceInput[]
+): number | null {
+  if (services.length === 0) return null;
+  const sorted = [...services].sort((a, b) => {
+    const da = firstServiceStartMinutes(a) ?? Number.POSITIVE_INFINITY;
+    const db = firstServiceStartMinutes(b) ?? Number.POSITIVE_INFINITY;
+    if (da !== db) return da - db;
+    return String(a.rdv1).localeCompare(String(b.rdv1), "fr");
+  });
+  const start = firstServiceStartMinutes(sorted[0]!);
+  const end = lastServiceEndMinutes(sorted[sorted.length - 1]!);
+  if (start == null || end == null) return null;
+  const duration = end - start;
+  if (duration <= 0) return null;
+  return duration;
+}
+
+/** S1 = semaine contenant le 1er du mois (lundi → dimanche). */
+export function weekIndexInCalendarMonth(dateIso: string): number {
+  const d = DateTime.fromISO(dateIso.slice(0, 10), { zone: TZ }).startOf("day");
+  if (!d.isValid) return 1;
+  const first = d.startOf("month");
+  return Math.floor((d.day + first.weekday - 2) / 7) + 1;
+}
+
+function minutesToHours(minutes: number): number {
+  return Math.round((minutes / 60) * 10) / 10;
+}
+
+function monthLabelFr(year: number, month: number): string {
+  const d = DateTime.fromObject({ year, month, day: 1 }, { zone: TZ }).setLocale(
+    "fr"
+  );
+  const raw = d.toFormat("LLLL yyyy");
+  return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : d.toFormat("MM/yyyy");
+}
+
+/**
+ * Heures travaillées par agent et par semaine du mois (S1, S2, …).
+ * Une journée = RDV 1 du 1er service → fin du dernier service
+ * (arrivée : RDV 1 + 1 h ; départ / transit : RDV 2 − 30 min).
+ */
+export function computeWeeklyHoursByAgent(
+  services: StatsHourServiceInput[],
+  rangeStart: string,
+  rangeEnd: string,
+  agentLabels: string[]
+): Record<string, AgentWeeklyHoursGroup[]> {
+  const startIso = rangeStart.slice(0, 10);
+  const endIso = rangeEnd.slice(0, 10);
+  const byAgentDay = new Map<string, Map<string, StatsHourServiceInput[]>>();
+
+  for (const service of services) {
+    const date = (service.dateIso ?? "").slice(0, 10);
+    if (!date || date < startIso || date > endIso) continue;
+    const agents = agentLabelsFromStoredAssigneeName(service.assignee_name);
+    if (agents.length === 0) continue;
+    for (const agent of agents) {
+      if (!byAgentDay.has(agent)) byAgentDay.set(agent, new Map());
+      const days = byAgentDay.get(agent)!;
+      if (!days.has(date)) days.set(date, []);
+      days.get(date)!.push(service);
+    }
+  }
+
+  const startDt = DateTime.fromISO(startIso, { zone: TZ }).startOf("day");
+  const endDt = DateTime.fromISO(endIso, { zone: TZ }).startOf("day");
+  const monthKeys: Array<{ year: number; month: number; maxWeek: number }> = [];
+  const sameMonth =
+    startDt.isValid &&
+    endDt.isValid &&
+    startDt.year === endDt.year &&
+    startDt.month === endDt.month;
+
+  if (sameMonth) {
+    const lastOfMonth = startDt.endOf("month").startOf("day");
+    monthKeys.push({
+      year: startDt.year,
+      month: startDt.month,
+      maxWeek: weekIndexInCalendarMonth(lastOfMonth.toISODate()!),
+    });
+  } else {
+    const seen = new Set<string>();
+    for (const days of byAgentDay.values()) {
+      for (const date of days.keys()) {
+        const dt = DateTime.fromISO(date, { zone: TZ });
+        if (!dt.isValid) continue;
+        const key = dt.toFormat("yyyy-LL");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const monthEnd = DateTime.min(dt.endOf("month").startOf("day"), endDt);
+        monthKeys.push({
+          year: dt.year,
+          month: dt.month,
+          maxWeek: weekIndexInCalendarMonth(monthEnd.toISODate()!),
+        });
+      }
+    }
+    monthKeys.sort((a, b) => a.year - b.year || a.month - b.month);
+  }
+
+  const labels = [...new Set([...agentLabels, ...byAgentDay.keys()])];
+  const out: Record<string, AgentWeeklyHoursGroup[]> = {};
+
+  for (const agent of labels) {
+    const minuteBuckets = new Map<string, number[]>();
+    for (const { year, month, maxWeek } of monthKeys) {
+      const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+      minuteBuckets.set(monthKey, Array.from({ length: maxWeek }, () => 0));
+    }
+    const days = byAgentDay.get(agent);
+    if (days) {
+      for (const [date, dayServices] of days) {
+        const minutes = dailyWorkedMinutesFromServices(dayServices);
+        if (minutes == null || minutes <= 0) continue;
+        const dt = DateTime.fromISO(date, { zone: TZ });
+        if (!dt.isValid) continue;
+        const monthKey = dt.toFormat("yyyy-LL");
+        const weekIndex = weekIndexInCalendarMonth(date);
+        let bucket = minuteBuckets.get(monthKey);
+        if (!bucket) {
+          bucket = [];
+          minuteBuckets.set(monthKey, bucket);
+        }
+        while (bucket.length < weekIndex) bucket.push(0);
+        bucket[weekIndex - 1] = (bucket[weekIndex - 1] ?? 0) + minutes;
+      }
+    }
+    out[agent] = monthKeys.map(({ year, month, maxWeek }) => {
+      const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+      const bucket = minuteBuckets.get(monthKey) ?? Array.from({ length: maxWeek }, () => 0);
+      return {
+        monthKey,
+        monthLabel: monthLabelFr(year, month),
+        weeks: bucket.map((mins, i) => ({
+          label: `S${i + 1}`,
+          hours: minutesToHours(mins),
+        })),
+      };
+    });
+  }
+
+  return out;
 }

@@ -5,13 +5,17 @@ import { fetchDailyServicesFromSheet } from "@/lib/google/fetch-daily-services";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
 import {
   computePlanningScores,
+  computeWeeklyHoursByAgent,
   isStatsCountableReport,
   mergeStoredAssigneeNames,
   type PlanningStatsPeriod,
   planningStatsPeriodMeta,
+  type StatsHourServiceInput,
   type StatsReportInput,
 } from "@/lib/planning/planning-stats";
+import { canSeeStatsWeeklyHours } from "@/lib/planning/planning-super-admins";
 import { resolveSpreadsheetIdForDate } from "@/lib/planning/planning-sources";
+import { serviceLookupIdsFromRow } from "@/lib/reports/service-report-id";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const PAGE_SIZE = 1000;
@@ -223,16 +227,75 @@ export async function GET(request: Request) {
 
   const scores = computePlanningScores(rows, meta.start, meta.end);
 
-  // Total missions de la période : TOUTES les lignes valides du Google Sheet
-  // (assignées, non assignées ou sous-traitées), sans exception.
+  const includeWeeklyHours = canSeeStatsWeeklyHours({
+    displayName: admin.agentName,
+  });
+
   let totalMissions = 0;
+  let weeklyHoursByAgent:
+    | ReturnType<typeof computeWeeklyHoursByAgent>
+    | undefined;
+
   try {
     const { rows: sheetRows } = await fetchDailyServicesFromSheet(
       resolvedSpreadsheetId
     );
-    totalMissions = sheetRows.filter(
+    const periodSheetRows = sheetRows.filter(
       (r) => r.dateIso >= meta.start && r.dateIso <= meta.end
-    ).length;
+    );
+    totalMissions = periodSheetRows.length;
+
+    if (includeWeeklyHours) {
+      const missingSheetIds = [
+        ...new Set(
+          periodSheetRows
+            .flatMap((row) => serviceLookupIdsFromRow(row))
+            .filter((id) => id && !assignmentNameByServiceId.has(id))
+        ),
+      ];
+      for (let i = 0; i < missingSheetIds.length; i += PAGE_SIZE) {
+        const ids = missingSheetIds.slice(i, i + PAGE_SIZE);
+        const { data: assignRows } = await supabase
+          .from("planning_assignments")
+          .select("service_id, agent_name")
+          .in("service_id", ids);
+        for (const a of assignRows ?? []) {
+          const o = a as { service_id?: unknown; agent_name?: unknown };
+          const sid = typeof o.service_id === "string" ? o.service_id.trim() : "";
+          const agent = typeof o.agent_name === "string" ? o.agent_name : null;
+          mergeAssignment(sid, agent);
+        }
+      }
+
+      const hourServices: StatsHourServiceInput[] = periodSheetRows.map(
+        (row) => {
+          let assigned: string | null = null;
+          for (const id of serviceLookupIdsFromRow(row)) {
+            assigned = mergeStoredAssigneeNames(
+              assigned,
+              assignmentNameByServiceId.get(id)
+            );
+          }
+          if (!assigned) {
+            assigned = mergeStoredAssigneeNames(null, row.sheetAssignee);
+          }
+          return {
+            dateIso: row.dateIso,
+            type: row.type,
+            rdv1: row.rdv1,
+            rdv2: row.rdv2,
+            assignee_name: assigned,
+          };
+        }
+      );
+
+      weeklyHoursByAgent = computeWeeklyHoursByAgent(
+        hourServices,
+        meta.start,
+        meta.end,
+        scores.map((s) => s.agent)
+      );
+    }
   } catch {
     totalMissions = 0;
   }
@@ -242,5 +305,8 @@ export async function GET(request: Request) {
     spreadsheetId: resolvedSpreadsheetId,
     rows: scores,
     totalMissions,
+    ...(includeWeeklyHours
+      ? { weeklyHoursByAgent, canViewWeeklyHours: true }
+      : { canViewWeeklyHours: false }),
   });
 }

@@ -81,3 +81,18 @@ export function canSeeServiceAssignmentHistory(opts: {
     (allowed) => assignmentHistoryIdentityKey(allowed) === name
   );
 }
+
+/**
+ * Heures travaillées par semaine (Tableau des scores) : visible uniquement
+ * pour Thomas.
+ */
+export function canSeeStatsWeeklyHours(opts: {
+  slug?: string | null;
+  displayName?: string | null;
+}): boolean {
+  const slug = opts.slug?.trim().toLowerCase() ?? "";
+  if (slug === "thomas") return true;
+  const name = assignmentHistoryIdentityKey(opts.displayName ?? "");
+  if (!name) return false;
+  return assignmentHistoryIdentityKey("Thomas") === name;
+}
