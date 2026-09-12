@@ -24,6 +24,15 @@ type Body = {
    * vider un agent déjà assigné (règle « App-First »).
    */
   allowDeassign?: unknown;
+  /**
+   * Métadonnées UI (optionnelles) : `manual` / `isManual` / `source: "ui"`.
+   * Une session admin Bearer suffit : les crons n’appellent pas cette route.
+   */
+  manual?: unknown;
+  isManual?: unknown;
+  source?: unknown;
+  automated?: unknown;
+  user_id?: unknown;
 };
 
 async function insertServiceAssignmentLogIfChanged(
@@ -124,6 +133,28 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+
+  const source =
+    typeof b.source === "string" ? b.source.trim().toLowerCase() : "";
+  const explicitlyAutomated =
+    b.automated === true ||
+    source === "cron" ||
+    source === "background" ||
+    source === "sheet-sync";
+  if (explicitlyAutomated) {
+    return NextResponse.json(
+      {
+        error:
+          "Les assignations ne peuvent être modifiées que manuellement depuis l’interface.",
+      },
+      { status: 403 }
+    );
+  }
+
+  const userId =
+    typeof b.user_id === "string" && b.user_id.trim()
+      ? b.user_id.trim()
+      : admin.agentName;
 
   const slugs = isExplicitUnassignedInput(b.assigneeSlugs)
     ? []
@@ -329,7 +360,7 @@ export async function POST(request: Request) {
           const first = arr[0] ?? null;
           await insertServiceAssignmentLogIfChanged(supabase, {
             serviceId,
-            changedBy: admin.agentName,
+            changedBy: userId,
             oldAgent: oldAgentForLog,
             newAgent: assigneeName,
           });
@@ -350,7 +381,7 @@ export async function POST(request: Request) {
 
   await insertServiceAssignmentLogIfChanged(supabase, {
     serviceId,
-    changedBy: admin.agentName,
+    changedBy: userId,
     oldAgent: oldAgentForLog,
     newAgent: assigneeName,
   });

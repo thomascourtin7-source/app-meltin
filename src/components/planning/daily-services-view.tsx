@@ -53,7 +53,6 @@ import {
   isUrgentAssignee,
   planningDisplayNameEquals,
   normalizeAssigneeListFromStored,
-  matchSheetAssigneeToTeamLabel,
   parseAssigneeNameToSlugs,
   serializeAssigneeSlugsToName,
   normalizeAssigneeStoredValue,
@@ -61,9 +60,7 @@ import {
 import {
   collectSnapshotIdentityKeys,
   findRowForStoredIdentityKey,
-  rowKnownInIdentitySet,
 } from "@/lib/planning/service-row-keys";
-import { shouldPreserveExistingAssignee } from "@/lib/planning/planning-assignee-guard";
 import { isPlanningFinalizedForServiceDate } from "@/lib/planning/planning-finalized-storage";
 import { computeConflictRowKeys } from "@/lib/planning/time-conflicts";
 import {
@@ -247,6 +244,11 @@ function hasActiveAlarm(assigneesRaw: unknown): boolean {
   return normalizeAssigneeListFromStored(assigneesRaw).some(isUrgentAssignee);
 }
 
+/** Alarme encore visible dans la colonne Agent du Sheet (sans l’importer comme assignation). */
+function hasSheetVisualAlarm(row: DailyServiceRow): boolean {
+  return String(row.sheetAssignee ?? "").includes("🚨");
+}
+
 /** Snapshots des identités « vues » par jour (détection des nouvelles lignes). */
 const PLANNING_ROW_SNAPSHOT_KEY = "meltin_planning_row_snapshot_v2";
 
@@ -346,16 +348,10 @@ function buildAssigneesMapForRows(
       if (agentName) {
         slugs = parseAssigneeNameToSlugs(agentName);
       } else {
-        const label = matchSheetAssigneeToTeamLabel(row.sheetAssignee || "");
-        if (label) {
-          const slug =
-            assigneeSlugFromNotifyLabel(label) ?? DEFAULT_PLANNING_ASSIGNEE_SLUG;
-          slugs = normalizeAssigneeListFromStored([
-            normalizeAssigneeStoredValue(slug),
-          ]);
-        } else {
-          slugs = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
-        }
+        // App-First : jamais d’assignation lue depuis Google Sheets.
+        // Une cellule Agent périmée (IMPORTRANGE, sync descendante) ne doit
+        // ni réattribuer un service ni le masquer du filtre N-A.
+        slugs = [DEFAULT_PLANNING_ASSIGNEE_SLUG];
       }
     }
 
@@ -3057,11 +3053,16 @@ export function DailyServicesView() {
     }
     if (agentFilterLabel?.trim()) {
       const label = agentFilterLabel.trim();
-      // Filtre d'urgence N-A : non assignées OU en alarme (🚨), même assignées.
+      // Filtre N-A : toutes les missions non assignées (null / vide / Non assigné),
+      // y compris celles en alarme (🚨, D.O en attente, alarme visuelle Sheet).
       if (planningDisplayNameEquals(label, NA_FILTER_LABEL)) {
         return filtered.filter((row) => {
           const raw = assignees[serviceRowUiKey(row)];
-          return isAssignmentEmpty(raw) || hasActiveAlarm(raw);
+          const unassigned =
+            isAssignmentEmpty(raw) ||
+            isServiceUnassigned(normalizeAssigneeListFromStored(raw));
+          const alarm = hasActiveAlarm(raw) || hasSheetVisualAlarm(row);
+          return unassigned || alarm;
         });
       }
       return filtered.filter((row) => {
@@ -3456,15 +3457,17 @@ export function DailyServicesView() {
    * Secours manuel uniquement : feuille planning / PDF.
    * Les assignations suivent Supabase Realtime — pas de re-fetch automatique forcé sur ce bloc.
    */
-  const refreshAll = useCallback(() => {
+  const refreshAll = useCallback(async () => {
     // Purge + re-fetch frais de TOUTES les clés SWR de la vue (assignations,
     // planning, rapports, flags) : on ignore le cache local et le dedup SWR
     // pour récupérer instantanément l’état 100 % à jour de Supabase.
-    void globalMutate(() => true, undefined, { revalidate: true });
-    void mutatePlanningRef.current?.(undefined, { revalidate: true });
-    void mutateReportsRef.current?.(undefined, { revalidate: true });
-    void mutateAssignmentsRef.current?.(undefined, { revalidate: true });
-    void mutateServicesFlagsRef.current?.(undefined, { revalidate: true });
+    await Promise.all([
+      globalMutate(() => true, undefined, { revalidate: true }),
+      mutatePlanningRef.current?.(undefined, { revalidate: true }),
+      mutateReportsRef.current?.(undefined, { revalidate: true }),
+      mutateAssignmentsRef.current?.(undefined, { revalidate: true }),
+      mutateServicesFlagsRef.current?.(undefined, { revalidate: true }),
+    ]);
   }, [globalMutate]);
 
   /** Refresh manuel (bouton dans le header). */
@@ -4194,7 +4197,8 @@ export function DailyServicesView() {
 
             const lookupIds = serviceLookupIdsFromRow(row);
 
-            const token = readPlanningAuthSession()?.token;
+            const session = readPlanningAuthSession();
+            const token = session?.token;
             if (!token) {
               window.alert(
                 "Reconnectez-vous pour modifier les assignations (session requise)."
@@ -4246,6 +4250,10 @@ export function DailyServicesView() {
                 assigneeSlugs: safe,
                 lookupIds,
                 allowDeassign,
+                manual: true,
+                isManual: true,
+                source: "ui",
+                user_id: session?.slug || session?.displayName || "",
               }),
             });
 
@@ -4396,7 +4404,10 @@ export function DailyServicesView() {
     ]
   );
 
-  /** Détection d’urgence : nouvelles lignes du jour → 🚨 si pas encore d’assignation (y compris après refresh SWR). */
+  /**
+   * Nouvelles lignes du jour : on mémorise leur identité pour les notifications,
+   * SANS jamais écrire d’assignation (🚨 ou agent) en arrière-plan.
+   */
   useEffect(() => {
     if (typeof window === "undefined") return;
     const rows = planningPayload?.rows;
@@ -4407,9 +4418,6 @@ export function DailyServicesView() {
 
     const snapshots = loadSnapshotStore();
     const prev = snapshots[spreadsheetId]?.[todayKey] ?? [];
-    const prevSet = new Set(prev);
-
-    const mapByServiceId = assignmentsData?.assigneesByServiceId ?? {};
 
     const mergedIdentityKeys = new Set<string>(prev);
     for (const row of rows) {
@@ -4418,65 +4426,12 @@ export function DailyServicesView() {
       }
     }
 
-    if (prev.length === 0) {
-      snapshots[spreadsheetId] = {
-        ...(snapshots[spreadsheetId] ?? {}),
-        [todayKey]: [...mergedIdentityKeys],
-      };
-      saveSnapshotStore(snapshots);
-      return;
-    }
-
-    const genuinelyNewRows = rows.filter(
-      (row) => !rowKnownInIdentitySet(row, prevSet)
-    );
-
-    for (const row of genuinelyNewRows) {
-      if (!isPlanningAdmin) continue;
-      const stableKey = serviceRowUiKey(row);
-      const lookupIds = serviceLookupIdsFromRow(row);
-      const fromDb = lookupIds
-        .map((id) => mapByServiceId[id])
-        .find((name) => typeof name === "string" && name.length > 0);
-      if (
-        fromDb &&
-        shouldPreserveExistingAssignee({
-          existingAgentName: fromDb,
-          incomingSlugs: [URGENT_ASSIGNEE],
-        })
-      ) {
-        continue;
-      }
-      const current = normalizeAssigneeListFromStored(assignees[stableKey]);
-      if (
-        current.every((s) => s === DEFAULT_PLANNING_ASSIGNEE_SLUG) &&
-        !current.some(isUrgentAssignee)
-      ) {
-        // Écriture AUTOMATIQUE : ne doit jamais pouvoir effacer un agent réel
-        // (garde-fou serveur App-First via `allowDeassign: false`).
-        setAssigneesForRow(stableKey, [URGENT_ASSIGNEE], {
-          allowDeassign: false,
-        });
-      }
-    }
-
-    const mergedIdentities = [...mergedIdentityKeys];
     snapshots[spreadsheetId] = {
       ...(snapshots[spreadsheetId] ?? {}),
-      [todayKey]: mergedIdentities,
+      [todayKey]: [...mergedIdentityKeys],
     };
     saveSnapshotStore(snapshots);
-
-  }, [
-    assignees,
-    assignmentsData?.assigneesByServiceId,
-    planningPayload?.rows,
-    planningPayload?.fetchedAt,
-    isPlanningAdmin,
-    selectedDate,
-    setAssigneesForRow,
-    spreadsheetId,
-  ]);
+  }, [planningPayload?.rows, planningPayload?.fetchedAt, selectedDate, spreadsheetId]);
 
   return (
     <div
