@@ -22,6 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
+import { usePlanningAgentCatalog } from "@/hooks/use-planning-agent-catalog";
 import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import { DEFAULT_PLANNING_SPREADSHEET_ID } from "@/lib/planning/daily-services-constants";
@@ -35,8 +37,7 @@ import {
   getTomorrowPlanningDateKey,
 } from "@/lib/planning/planning-finalized-storage";
 import {
-  PLANNING_ASSIGNEE_OPTIONS,
-  displayAgents,
+  planningDisplayNameEquals,
 } from "@/lib/planning/planning-team";
 import { stableServiceRowKey } from "@/lib/planning/service-row-keys";
 import { cn } from "@/lib/utils";
@@ -115,6 +116,8 @@ export function PlanningIaClient() {
   const configuredId = useLocalSpreadsheetId();
   const isPlanningAdmin = usePlanningAdminClient();
 
+  const { operationalLabels, assignableOptions } = usePlanningAgentCatalog();
+
   const spreadsheetIdFromUrl = (searchParams.get("spreadsheetId") || "").trim();
   const spreadsheetId =
     spreadsheetIdFromUrl ||
@@ -122,9 +125,7 @@ export function PlanningIaClient() {
     configuredId ||
     DEFAULT_PLANNING_SPREADSHEET_ID;
 
-  const agentLabels = useMemo(() => {
-    return displayAgents().map((o) => o.label);
-  }, []);
+  const agentLabels = operationalLabels;
 
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [shifts, setShifts] = useState<Record<string, ShiftValue>>({});
@@ -192,15 +193,16 @@ export function PlanningIaClient() {
 
       const agents = selectedAgents
         .map((label) => {
-          const opt = PLANNING_ASSIGNEE_OPTIONS.find((o) => o.label === label);
-          if (!opt) return null;
+          const opt = assignableOptions.find((o) =>
+            planningDisplayNameEquals(o.label, label)
+          );
           return {
             label,
-            slug: opt.value,
+            slug: opt?.value ?? agentNameToSlug(label),
             shift: shifts[label] ?? "full",
           };
         })
-        .filter(Boolean) as Array<{ label: string; slug: string; shift: ShiftValue }>;
+        .filter((agent) => Boolean(agent.slug));
 
       const schedule = generateIASchedule({
         rows,

@@ -13,6 +13,10 @@ import {
   type StatsHourServiceInput,
   type StatsReportInput,
 } from "@/lib/planning/planning-stats";
+import {
+  buildPlanningAgentCatalog,
+  type AgentsAuthRow,
+} from "@/lib/planning/planning-agent-catalog";
 import { canSeeStatsWeeklyHours } from "@/lib/planning/planning-super-admins";
 import { resolveSpreadsheetIdForDate } from "@/lib/planning/planning-sources";
 import { serviceLookupIdsFromRow } from "@/lib/reports/service-report-id";
@@ -225,7 +229,19 @@ export async function GET(request: Request) {
     service_started_at: r.service_started_at,
   }));
 
-  const scores = computePlanningScores(rows, meta.start, meta.end);
+  const { data: agentRows } = await supabase
+    .from("agents_auth")
+    .select("name,role,can_login,is_active");
+  const catalogLabels = buildPlanningAgentCatalog(
+    (agentRows ?? []) as AgentsAuthRow[]
+  ).operationalLabels;
+
+  const scores = computePlanningScores(
+    rows,
+    meta.start,
+    meta.end,
+    catalogLabels
+  );
 
   const includeWeeklyHours = canSeeStatsWeeklyHours({
     displayName: admin.agentName,

@@ -9,6 +9,10 @@ import {
   assignmentLogAgentNamesDiffer,
   normalizeAssignmentLogAgentName,
 } from "@/lib/planning/service-assignment-log";
+import {
+  buildPlanningAgentCatalog,
+  type AgentsAuthRow,
+} from "@/lib/planning/planning-agent-catalog";
 import { serializeAssigneeSlugsToName } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -205,8 +209,15 @@ export async function POST(request: Request) {
     }
   }
 
+  const { data: agentRows } = await supabase
+    .from("agents_auth")
+    .select("name,role,can_login,is_active");
+  const catalogOptions = buildPlanningAgentCatalog(
+    (agentRows ?? []) as AgentsAuthRow[]
+  ).assignableOptions;
+
   // `serializeAssigneeSlugsToName` renvoie `null` si plus aucun agent réel.
-  const assigneeName = serializeAssigneeSlugsToName(slugs);
+  const assigneeName = serializeAssigneeSlugsToName(slugs, catalogOptions);
   const incomingHasRealAgent = hasRealAssigneeAgentName(assigneeName);
 
   // Garde-fou 🚨 / sync auto : ne pas écraser un agent réel par du vide,

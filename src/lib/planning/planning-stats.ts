@@ -1,5 +1,6 @@
 import { DateTime } from "luxon";
 
+import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
 import {
   PLANNING_ASSIGNEE_OPTIONS,
   PLANNING_URGENT_ASSIGNEE_DISPLAY,
@@ -125,18 +126,34 @@ export function classifyWorkday(
   return "apres_midi";
 }
 
-export function canonicalAgentLabel(raw: string | null): string | null {
+export function canonicalAgentLabel(
+  raw: string | null,
+  extraAgentLabels: readonly string[] = []
+): string | null {
   if (raw == null) return null;
   const t = raw.trim();
   if (!t) return null;
   if (/^non assign[ée]$/i.test(t) || t === "__none__" || t === "null") {
     return null;
   }
+  const slug = agentNameToSlug(t);
   for (const o of PLANNING_ASSIGNEE_OPTIONS) {
     if (o.value === "__none__" || isUrgentAssignee(o.value)) continue;
-    if (planningDisplayNameEquals(o.label, t)) return o.label;
+    if (planningDisplayNameEquals(o.label, t) || o.value === t || o.value === slug) {
+      return o.label;
+    }
   }
-  return t;
+  for (const extra of extraAgentLabels) {
+    const extraTrim = extra.trim();
+    if (!extraTrim) continue;
+    if (
+      planningDisplayNameEquals(extraTrim, t) ||
+      agentNameToSlug(extraTrim) === slug
+    ) {
+      return extraTrim;
+    }
+  }
+  return assigneeSlugToNotifyLabel(slug) ?? t;
 }
 
 function isPlaceholderAgentLabel(label: string): boolean {
@@ -152,13 +169,14 @@ function isPlaceholderAgentLabel(label: string): boolean {
  * N’utilise pas seulement le premier nom.
  */
 export function agentLabelsFromStoredAssigneeName(
-  raw: string | null | undefined
+  raw: string | null | undefined,
+  extraAgentLabels: readonly string[] = []
 ): string[] {
   const labels: string[] = [];
   const seen = new Set<string>();
 
   const add = (value: string | null | undefined) => {
-    const canonical = canonicalAgentLabel(value ?? null);
+    const canonical = canonicalAgentLabel(value ?? null, extraAgentLabels);
     if (!canonical || isPlaceholderAgentLabel(canonical)) return;
     const key = canonical.toLowerCase();
     if (seen.has(key)) return;
@@ -216,8 +234,23 @@ export function isStatsCountableReport(row: {
   return false;
 }
 
-export function defaultScoreAgentLabels(): string[] {
-  return displayAgents().map((o) => o.label);
+export function defaultScoreAgentLabels(
+  extraAgentLabels: readonly string[] = []
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const label of [
+    ...displayAgents().map((o) => o.label),
+    ...extraAgentLabels,
+  ]) {
+    const t = label.trim();
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
 }
 
 export type PlanningScoreRow = {
@@ -234,11 +267,12 @@ type DayAgg = { minStart: number; maxEnd: number; hasTime: boolean };
 export function computePlanningScores(
   rows: StatsReportInput[],
   rangeStart: string,
-  rangeEnd: string
+  rangeEnd: string,
+  extraAgentLabels: readonly string[] = []
 ): PlanningScoreRow[] {
   const accueils = new Map<string, number>();
   const dayMap = new Map<string, Map<string, DayAgg>>();
-  const agentLabels = new Set(defaultScoreAgentLabels());
+  const agentLabels = new Set(defaultScoreAgentLabels(extraAgentLabels));
 
   const ensureDay = (agent: string, date: string): DayAgg => {
     if (!dayMap.has(agent)) dayMap.set(agent, new Map());
@@ -254,7 +288,10 @@ export function computePlanningScores(
   };
 
   for (const row of rows) {
-    const agents = agentLabelsFromStoredAssigneeName(row.assignee_name);
+    const agents = agentLabelsFromStoredAssigneeName(
+      row.assignee_name,
+      extraAgentLabels
+    );
     if (agents.length === 0) continue;
 
     const date =
@@ -414,7 +451,10 @@ export function computeWeeklyHoursByAgent(
   for (const service of services) {
     const date = (service.dateIso ?? "").slice(0, 10);
     if (!date || date < startIso || date > endIso) continue;
-    const agents = agentLabelsFromStoredAssigneeName(service.assignee_name);
+    const agents = agentLabelsFromStoredAssigneeName(
+      service.assignee_name,
+      agentLabels
+    );
     if (agents.length === 0) continue;
     for (const agent of agents) {
       if (!byAgentDay.has(agent)) byAgentDay.set(agent, new Map());

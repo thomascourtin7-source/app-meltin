@@ -1031,11 +1031,11 @@ function ServiceBlockInner({
         labels.push(PLANNING_URGENT_ASSIGNEE_DISPLAY);
         continue;
       }
-      const label = assigneeSlugToNotifyLabel(slug);
+      const label = assigneeSlugToNotifyLabel(slug, assigneeOptions);
       if (label) labels.push(label);
     }
     return labels;
-  }, [assignees]);
+  }, [assignees, assigneeOptions]);
 
   const reportKind = useMemo(
     () => detectServiceReportKind(row.type),
@@ -1068,8 +1068,8 @@ function ServiceBlockInner({
   );
 
   const hasNamedAssignee = useMemo(
-    () => assignees.some((s) => assigneeSlugToNotifyLabel(s) != null),
-    [assignees]
+    () => assignees.some((s) => assigneeSlugToNotifyLabel(s, assigneeOptions) != null),
+    [assigneeOptions, assignees]
   );
 
   /** Photo / PEC / rapport / ETA : assigné(s) réel(s) ; si aucun, ouvert aux admins. */
@@ -1078,10 +1078,10 @@ function ServiceBlockInner({
     const me = meName.trim();
     if (!me) return false;
     return assignees.some((s) => {
-      const label = assigneeSlugToNotifyLabel(s);
+      const label = assigneeSlugToNotifyLabel(s, assigneeOptions);
       return label != null && planningDisplayNameEquals(label, me);
     });
-  }, [assignees, hasNamedAssignee, meName]);
+  }, [assigneeOptions, assignees, hasNamedAssignee, meName]);
 
   const canAction =
     !planningReadOnly || planningSuperAdminBypass || canActionAsAssignee;
@@ -3635,7 +3635,7 @@ export function DailyServicesView() {
         detectServiceReportKind(row.type)
       );
       for (const slug of list) {
-        const label = assigneeSlugToNotifyLabel(slug);
+        const label = assigneeSlugToNotifyLabel(slug, assignableOptions);
         if (!label) continue;
         if (!servicesByAgent.has(label)) servicesByAgent.set(label, []);
         servicesByAgent.get(label)!.push(serviceId);
@@ -3672,6 +3672,7 @@ export function DailyServicesView() {
     return out;
   }, [
     agentLabels,
+    assignableOptions,
     assignees,
     filtered,
     isCompletedByServiceId,
@@ -4235,7 +4236,10 @@ export function DailyServicesView() {
             const planningDay = planningDayBucket(dateKey, todayYmd, tomorrowYmd);
 
             /** Même valeur que `agent_name` envoyée à Supabase (serializeAssigneeSlugsToName côté `/api/planning-assignees/set`). */
-            const agentNameMerged = serializeAssigneeSlugsToName(safe);
+            const agentNameMerged = serializeAssigneeSlugsToName(
+              safe,
+              assignableOptions
+            );
             const sidSavedForPost = serviceReportIdFromRow(row);
 
             const res = await fetch("/api/planning-assignees/set", {
@@ -4359,7 +4363,7 @@ export function DailyServicesView() {
             /** Sans `mode=prep` : notifs pour chaque nouvel assigné ajouté sur la ligne. */
             for (const slug of safe) {
               if (prevNotify.has(slug)) continue;
-              const label = assigneeSlugToNotifyLabel(slug);
+              const label = assigneeSlugToNotifyLabel(slug, assignableOptions);
               if (!label) continue;
               const actorName =
                 readPlanningAuthSession()?.displayName?.trim() ?? "";
@@ -4393,6 +4397,7 @@ export function DailyServicesView() {
       }
     },
     [
+      assignableOptions,
       assignees,
       assignmentsData?.assigneesByServiceId,
       mutateAssignments,
@@ -4757,7 +4762,9 @@ export function DailyServicesView() {
                         : todayFocusAssignmentsData;
                   const crossDayReports = crossDayReportExistence;
                   const agentScrollAnchorIds = assigneeList
-                    .map((slug) => assigneeSlugToNotifyLabel(slug))
+                    .map((slug) =>
+                      assigneeSlugToNotifyLabel(slug, assignableOptions)
+                    )
                     .filter((label): label is string => Boolean(label))
                     .map((label) =>
                       buildServiceCardDomId(
@@ -4859,7 +4866,9 @@ export function DailyServicesView() {
                 assignees[rowKey]
               );
               const agentScrollAnchorIds = assigneeList
-                .map((slug) => assigneeSlugToNotifyLabel(slug))
+                .map((slug) =>
+                  assigneeSlugToNotifyLabel(slug, assignableOptions)
+                )
                 .filter((label): label is string => Boolean(label))
                 .map((label) =>
                   buildServiceCardDomId(

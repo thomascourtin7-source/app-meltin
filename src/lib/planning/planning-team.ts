@@ -26,6 +26,7 @@ export const PLANNING_ASSIGNEE_OPTIONS = [
   { value: "elias", label: "Elias" },
   { value: "pravin", label: "Pravin" },
   { value: "deva", label: "Deva" },
+  { value: "arshad", label: "Arshad" },
   { value: "kumar", label: "Kumar" },
   { value: "rayane", label: "Rayane" },
   { value: "moubine", label: "Moubine" },
@@ -48,6 +49,7 @@ export const PLANNING_ASSIGNEE_OPTIONS = [
 export const PLANNING_INTERNAL_AGENT_SLUGS = [
   "pravin",
   "deva",
+  "arshad",
   "kumar",
   "thomas",
   "simon",
@@ -81,9 +83,40 @@ export function isPlanningTechnicalAdminSlug(slug: string): boolean {
   return (PLANNING_TECHNICAL_ADMIN_SLUGS as readonly string[]).includes(slug);
 }
 
-/** Agents opérationnels (badges couleur, filtre « Me »). */
+function looksLikeAgentSlug(slug: string): boolean {
+  return /^[a-z0-9][a-z0-9_]{0,62}$/.test(slug);
+}
+
+function isPlaceholderAssigneeToken(value: string): boolean {
+  const t = value.trim();
+  if (!t) return true;
+  if (t === DEFAULT_PLANNING_ASSIGNEE_SLUG) return true;
+  if (t === "none" || t === "null") return true;
+  return /^non[_ ]?assign/i.test(t);
+}
+
+/** Libellé affichable pour un slug dynamique (ex. `arshrad` → `Arshrad`). */
+export function humanizeAssigneeSlug(slug: string): string {
+  return slug
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+/** Agents opérationnels (badges couleur, filtre « Me », localisation). */
 export function isPlanningOperationalAgentSlug(slug: string): boolean {
-  return isPlanningInternalAgentSlug(slug) && !isPlanningTechnicalAdminSlug(slug);
+  const s = slug.trim();
+  if (!s || s === DEFAULT_PLANNING_ASSIGNEE_SLUG) return false;
+  if (s === PLANNING_URGENT_ASSIGNEE_SLUG || s === PLANNING_URGENT_ASSIGNEE_DISPLAY) {
+    return false;
+  }
+  if (isPlanningTechnicalAdminSlug(s) || isPlanningAssignmentOnlySlug(s)) {
+    return false;
+  }
+  if (isPlanningInternalAgentSlug(s)) return true;
+  if (KNOWN_PLANNING_ASSIGNEE_SLUGS.includes(s)) return false;
+  return looksLikeAgentSlug(s);
 }
 
 export type PlanningAssigneeSlug = (typeof PLANNING_ASSIGNEE_OPTIONS)[number]["value"];
@@ -127,12 +160,27 @@ export function normalizeAssigneeStoredValue(
   value: string | undefined
 ): string {
   if (value === undefined || value === "") return DEFAULT_PLANNING_ASSIGNEE_SLUG;
-  if (value === PLANNING_URGENT_ASSIGNEE_DISPLAY) {
+  const t = value.trim();
+  if (!t || isPlaceholderAssigneeToken(t)) return DEFAULT_PLANNING_ASSIGNEE_SLUG;
+  if (t === PLANNING_URGENT_ASSIGNEE_DISPLAY || t === PLANNING_URGENT_ASSIGNEE_SLUG) {
     return PLANNING_URGENT_ASSIGNEE_SLUG;
   }
-  if (value === PLANNING_URGENT_ASSIGNEE_SLUG) return PLANNING_URGENT_ASSIGNEE_SLUG;
-  if (KNOWN_PLANNING_ASSIGNEE_SLUGS.includes(value)) return value;
-  return DEFAULT_PLANNING_ASSIGNEE_SLUG;
+  if (KNOWN_PLANNING_ASSIGNEE_SLUGS.includes(t)) return t;
+  for (const o of PLANNING_ASSIGNEE_OPTIONS) {
+    if (
+      o.value === DEFAULT_PLANNING_ASSIGNEE_SLUG ||
+      isUrgentAssignee(o.value)
+    ) {
+      continue;
+    }
+    if (planningDisplayNameEquals(o.label, t) || planningDisplayNameEquals(o.value, t)) {
+      return o.value;
+    }
+  }
+  const slug = agentNameToSlug(t);
+  if (!slug || !looksLikeAgentSlug(slug)) return DEFAULT_PLANNING_ASSIGNEE_SLUG;
+  if (isPlanningTechnicalAdminSlug(slug)) return DEFAULT_PLANNING_ASSIGNEE_SLUG;
+  return slug;
 }
 
 /**
@@ -165,7 +213,7 @@ export function isUrgentAssignee(stored: string): boolean {
 }
 
 export type PlanningAgentOption = {
-  value: PlanningAssigneeSlug;
+  value: string;
   label: string;
 };
 
@@ -217,8 +265,23 @@ export function isPlanningSelectableAssigneeValue(value: string): boolean {
     return true;
   }
   if (isPlanningTechnicalAdminSlug(value)) return false;
+  if (
+    isPlanningOperationalAgentSlug(value) ||
+    isPlanningAssignmentOnlySlug(value)
+  ) {
+    return true;
+  }
+  const normalized = normalizeAssigneeStoredValue(value);
+  if (
+    normalized === DEFAULT_PLANNING_ASSIGNEE_SLUG ||
+    isUrgentAssignee(normalized) ||
+    isPlanningTechnicalAdminSlug(normalized)
+  ) {
+    return false;
+  }
   return (
-    isPlanningOperationalAgentSlug(value) || isPlanningAssignmentOnlySlug(value)
+    isPlanningOperationalAgentSlug(normalized) ||
+    isPlanningAssignmentOnlySlug(normalized)
   );
 }
 
@@ -244,6 +307,7 @@ export const PLANNING_AGENT_FILTER_BAR_LABELS = [
   "Elias",
   "Pravin",
   "Deva",
+  "Arshad",
   "Kumar",
   "Rayane",
   "Moubine",
@@ -301,7 +365,10 @@ export function isServiceStrictlyAssignedToAgentLabel(
  * Libellé pour notifications push (`user_name` en base) : même chaîne que le prénom chat.
  * Retourne null si non assigné ou urgence (pas de push nominatif).
  */
-export function assigneeSlugToNotifyLabel(slug: string): string | null {
+export function assigneeSlugToNotifyLabel(
+  slug: string,
+  extraOptions: readonly PlanningAgentOption[] = []
+): string | null {
   if (
     slug === DEFAULT_PLANNING_ASSIGNEE_SLUG ||
     isUrgentAssignee(slug) ||
@@ -309,8 +376,12 @@ export function assigneeSlugToNotifyLabel(slug: string): string | null {
   ) {
     return null;
   }
+  const extra = extraOptions.find((o) => o.value === slug);
+  if (extra?.label) return extra.label;
   const opt = PLANNING_ASSIGNEE_OPTIONS.find((o) => o.value === slug);
-  return opt?.label ?? slug;
+  if (opt) return opt.label;
+  if (!looksLikeAgentSlug(slug)) return slug;
+  return humanizeAssigneeSlug(slug);
 }
 
 export function normKey(s: string): string {
@@ -359,7 +430,15 @@ export function matchSheetAssigneeToTeamLabel(raw: string): string | null {
       return o.label;
     }
   }
-  return null;
+  const trimmed = raw.trim();
+  if (isPlaceholderAssigneeToken(trimmed) || isUrgentAssignee(trimmed)) {
+    return null;
+  }
+  const slug = agentNameToSlug(trimmed);
+  if (!slug || !looksLikeAgentSlug(slug) || isPlanningTechnicalAdminSlug(slug)) {
+    return null;
+  }
+  return trimmed;
 }
 
 /**
@@ -397,7 +476,10 @@ export function parseAssigneeNameToSlugs(raw: string | null | undefined): string
  * Encode slugs into a stable, human-readable string for `service_reports.assignee_name`.
  * Uses team labels, separated by `;` (to allow multiple assignees).
  */
-export function serializeAssigneeSlugsToName(slugs: string[]): string | null {
+export function serializeAssigneeSlugsToName(
+  slugs: string[],
+  extraOptions: readonly PlanningAgentOption[] = []
+): string | null {
   const list = normalizeAssigneeListFromStored(slugs);
   const labels: string[] = [];
   for (const slug of list) {
@@ -406,7 +488,7 @@ export function serializeAssigneeSlugsToName(slugs: string[]): string | null {
       labels.push(PLANNING_URGENT_ASSIGNEE_DISPLAY);
       continue;
     }
-    const label = assigneeSlugToNotifyLabel(slug);
+    const label = assigneeSlugToNotifyLabel(slug, extraOptions);
     if (label) labels.push(label);
   }
   const out = labels.join(";");

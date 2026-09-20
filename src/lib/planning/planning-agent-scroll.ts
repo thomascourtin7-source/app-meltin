@@ -3,6 +3,7 @@ import { detectServiceReportKind } from "@/lib/planning/service-kind";
 import {
   assigneeSlugToNotifyLabel,
   normalizeAssigneeListFromStored,
+  planningDisplayNameEquals,
 } from "@/lib/planning/planning-team";
 import { stableServiceRowKey } from "@/lib/planning/service-row-keys";
 import { extractFirstTimeMinutes } from "@/lib/planning/time-conflicts";
@@ -52,7 +53,10 @@ export function getAgentAssignedRows(
   const assigned = rows.filter((row) => {
     const rowKey = stableServiceRowKey(row);
     const list = normalizeAssigneeListFromStored(assigneesByRowKey[rowKey]);
-    return list.some((slug) => assigneeSlugToNotifyLabel(slug) === agentLabel);
+    return list.some((slug) => {
+      const label = assigneeSlugToNotifyLabel(slug);
+      return label != null && planningDisplayNameEquals(label, agentLabel);
+    });
   });
   return sortRowsByRdvChronology(assigned);
 }

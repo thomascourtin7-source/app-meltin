@@ -6,7 +6,9 @@ import {
   isPlanningAssignmentOnlySlug,
   isPlanningInternalAgentSlug,
   isPlanningTechnicalAdminSlug,
+  KNOWN_PLANNING_ASSIGNEE_SLUGS,
   normKey,
+  PLANNING_AGENT_FILTER_BAR_LABELS,
   PLANNING_ASSIGNEE_OPTIONS,
   planningDisplayNameEquals,
   type PlanningAgentOption,
@@ -56,13 +58,35 @@ function optionFromName(name: string): PlanningAgentOption {
   );
   if (staticOpt) return staticOpt;
   return {
-    value: agentNameToSlug(label) as PlanningAgentOption["value"],
+    value: agentNameToSlug(label),
     label,
   };
 }
 
+function isLegacyNonOperationalSlug(slug: string): boolean {
+  return (
+    KNOWN_PLANNING_ASSIGNEE_SLUGS.includes(slug) &&
+    !isPlanningInternalAgentSlug(slug)
+  );
+}
+
 function isRowActive(row: AgentsAuthRow): boolean {
   return row.is_active !== false;
+}
+
+const TEAM_INSERT_AFTER_LABEL = "Deva";
+
+function insertAfterDeva<T>(
+  list: T[],
+  extras: T[],
+  getLabel: (item: T) => string
+): void {
+  if (extras.length === 0) return;
+  const idx = list.findIndex((item) =>
+    planningDisplayNameEquals(getLabel(item), TEAM_INSERT_AFTER_LABEL)
+  );
+  const at = idx >= 0 ? idx + 1 : list.length;
+  list.splice(at, 0, ...extras);
 }
 
 export function buildManagedAgentRows(rows: AgentsAuthRow[]): ManagedAgentRow[] {
@@ -118,6 +142,8 @@ export function buildPlanningAgentCatalog(
     seenAssignable.add(opt.value);
     assignableOptions.push(opt);
   }
+  const extraAssignableReal: PlanningAgentOption[] = [];
+  const extraAssignableOther: PlanningAgentOption[] = [];
   for (const row of activeRows) {
     const name = row.name?.trim() ?? "";
     if (!name) continue;
@@ -128,8 +154,17 @@ export function buildPlanningAgentCatalog(
       continue;
     }
     seenAssignable.add(opt.value);
-    assignableOptions.push(opt);
+    if (
+      isPlanningAssignmentOnlySlug(opt.value) ||
+      isLegacyNonOperationalSlug(opt.value)
+    ) {
+      extraAssignableOther.push(opt);
+    } else {
+      extraAssignableReal.push(opt);
+    }
   }
+  insertAfterDeva(assignableOptions, extraAssignableReal, (o) => o.label);
+  assignableOptions.push(...extraAssignableOther);
 
   const operationalLabels: string[] = [];
   const seenOperational = new Set<string>();
@@ -138,62 +173,47 @@ export function buildPlanningAgentCatalog(
     seenOperational.add(normKey(opt.label));
     operationalLabels.push(opt.label);
   }
+  const extraOperational: string[] = [];
   for (const row of activeRows) {
     const name = row.name?.trim() ?? "";
     if (!name || row.can_login === false) continue;
     const slug = optionFromName(name).value;
     if (
-      !isPlanningInternalAgentSlug(slug) ||
       isPlanningTechnicalAdminSlug(slug) ||
+      isPlanningAssignmentOnlySlug(slug) ||
+      isLegacyNonOperationalSlug(slug) ||
       seenOperational.has(normKey(name))
     ) {
       continue;
     }
     seenOperational.add(normKey(name));
-    operationalLabels.push(name);
+    extraOperational.push(name);
   }
-  operationalLabels.sort((a, b) =>
-    a.localeCompare(b, "fr", { sensitivity: "base" })
-  );
-
-  const filterStatic = [
-    "Javed",
-    "Thomas",
-    "Simon",
-    "Karthik",
-    "Elias",
-    "Pravin",
-    "Deva",
-    "Kumar",
-    "Rayane",
-    "Moubine",
-    "AIDA",
-    "YAYA",
-    "ESCALE",
-    "AUTRE",
-  ] as const;
+  insertAfterDeva(operationalLabels, extraOperational, (label) => label);
 
   const filterBarLabels: string[] = [];
   const seenFilter = new Set<string>();
-  for (const label of filterStatic) {
+  for (const label of PLANNING_AGENT_FILTER_BAR_LABELS) {
     if (inactiveNames.has(normKey(label))) continue;
     seenFilter.add(normKey(label));
     filterBarLabels.push(label);
   }
+  const extraFilter: string[] = [];
   for (const row of activeRows) {
     const name = row.name?.trim() ?? "";
     if (!name || row.can_login === false) continue;
     const slug = optionFromName(name).value;
     if (
-      !isPlanningInternalAgentSlug(slug) ||
       isPlanningTechnicalAdminSlug(slug) ||
+      isLegacyNonOperationalSlug(slug) ||
       seenFilter.has(normKey(name))
     ) {
       continue;
     }
     seenFilter.add(normKey(name));
-    filterBarLabels.push(name);
+    extraFilter.push(name);
   }
+  insertAfterDeva(filterBarLabels, extraFilter, (label) => label);
 
   const authOptions: PlanningAgentOption[] = [];
   const seenAuth = new Set<string>();
@@ -202,6 +222,7 @@ export function buildPlanningAgentCatalog(
     seenAuth.add(opt.value);
     authOptions.push(opt);
   }
+  const extraAuth: PlanningAgentOption[] = [];
   for (const row of activeRows) {
     const name = row.name?.trim() ?? "";
     if (!name || row.can_login === false) continue;
@@ -209,8 +230,9 @@ export function buildPlanningAgentCatalog(
     if (seenAuth.has(opt.value)) continue;
     if (isPlanningAssignmentOnlySlug(opt.value)) continue;
     seenAuth.add(opt.value);
-    authOptions.push(opt);
+    extraAuth.push(opt);
   }
+  insertAfterDeva(authOptions, extraAuth, (o) => o.label);
 
   return {
     operationalLabels,
