@@ -69,6 +69,12 @@ import {
   scrollToAgentBadgeTarget,
 } from "@/lib/planning/planning-agent-scroll";
 import { usePlanningAgentCatalog } from "@/hooks/use-planning-agent-catalog";
+import { usePlanningExternalClient } from "@/hooks/use-planning-external-client";
+import { planningAuthHeaders } from "@/lib/auth/planning-auth-headers";
+import {
+  formatEscaleAssignmentNotice,
+} from "@/lib/auth/planning-external";
+import { storedAssigneeIncludesAgent } from "@/lib/planning/filter-planning-rows-for-agent";
 import { cn } from "@/lib/utils";
 import { PlanningPhoneRichText } from "@/components/planning/planning-phone-rich-text";
 import { ServiceAssignmentHistory } from "@/components/planning/service-assignment-history";
@@ -607,7 +613,7 @@ async function readJsonResponse(res: Response): Promise<unknown> {
 async function planningServicesFetcher(
   url: string
 ): Promise<PlanningServicesPayload> {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: planningAuthHeaders() });
   const data = await readJsonResponse(res);
   if (!res.ok) {
     const body = data as { error?: unknown; message?: unknown };
@@ -2034,6 +2040,7 @@ export function DailyServicesView() {
   const [meName, setMeName] = useState<string>("");
   const [meSlug, setMeSlug] = useState<string>("");
   const isPlanningAdmin = usePlanningAdminClient();
+  const isExternalAgent = usePlanningExternalClient();
   const { role: meRole } = useAgentAuthRole();
   const { operationalLabels, filterBarLabels, assignableOptions } =
     usePlanningAgentCatalog();
@@ -2060,6 +2067,21 @@ export function DailyServicesView() {
   const [planningValidatedBanner, setPlanningValidatedBanner] = useState<
     string | null
   >(null);
+  const [escaleNotice, setEscaleNotice] = useState<string | null>(null);
+  const escaleNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+
+  const showEscaleNotice = useCallback((text: string) => {
+    setEscaleNotice(text);
+    if (escaleNoticeTimerRef.current) {
+      clearTimeout(escaleNoticeTimerRef.current);
+    }
+    escaleNoticeTimerRef.current = setTimeout(() => {
+      setEscaleNotice(null);
+      escaleNoticeTimerRef.current = null;
+    }, 8000);
+  }, []);
   const [conflictRowKeys, setConflictRowKeys] = useState<Set<string>>(
     () => new Set()
   );
@@ -2310,7 +2332,10 @@ export function DailyServicesView() {
     }): Promise<PlanningAssignmentsPayload> => {
       const res = await fetch("/api/planning-assignments/batch", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...planningAuthHeaders(),
+        },
         body: JSON.stringify({
           serviceIds: opts.serviceIds,
           serviceDate: opts.serviceDate,
@@ -2773,6 +2798,59 @@ export function DailyServicesView() {
       const parsed = assignmentRowFromRealtimeRecord(rec);
       if (!parsed) return;
 
+      const oldParsed = assignmentRowFromRealtimeRecord(payload.old ?? null);
+      const newParsed = del
+        ? null
+        : assignmentRowFromRealtimeRecord(payload.new ?? null);
+
+      if (isExternalAgent && meName.trim()) {
+        const wasMine = storedAssigneeIncludesAgent(
+          oldParsed?.agent_name,
+          meName
+        );
+        const isMine = storedAssigneeIncludesAgent(
+          newParsed?.agent_name,
+          meName
+        );
+        if (!wasMine && !isMine) return;
+
+        const currentRows = planningDisplayedRef.current?.rows ?? [];
+        const currentRow =
+          currentRows.find((r) =>
+            serviceLookupIdsFromRow(r).includes(parsed.service_id)
+          ) ?? null;
+
+        if (wasMine && !isMine) {
+          showEscaleNotice(
+            formatEscaleAssignmentNotice({
+              kind: "removed",
+              vol: currentRow?.vol,
+            })
+          );
+        }
+
+        void (async () => {
+          const next = await mutatePlanningRef.current?.(undefined, {
+            revalidate: true,
+          });
+          await mutateAssignments(undefined, { revalidate: true });
+          if (isMine && !wasMine) {
+            const nextRow =
+              (next?.rows ?? []).find((r) =>
+                serviceLookupIdsFromRow(r).includes(parsed.service_id)
+              ) ?? currentRow;
+            showEscaleNotice(
+              formatEscaleAssignmentNotice({
+                kind: "assigned",
+                vol: nextRow?.vol,
+                rdv: nextRow?.rdv1,
+              })
+            );
+          }
+        })();
+        return;
+      }
+
       void mutateAssignments(
         (prev) => {
           const allowed = new Set(serviceIdsForAssignmentsRef.current);
@@ -2822,7 +2900,7 @@ export function DailyServicesView() {
         { revalidate: false }
       );
     },
-    [mutateAssignments]
+    [isExternalAgent, meName, mutateAssignments, showEscaleNotice]
   );
 
   /**
@@ -3044,6 +3122,14 @@ export function DailyServicesView() {
   }, [isTodaySelected, isTomorrowSelected]);
 
   const visibleRows = useMemo(() => {
+    if (isExternalAgent) {
+      return filtered.filter((row) =>
+        isServiceAssignedToSessionAgent(
+          assignees[serviceRowUiKey(row)],
+          meSlug
+        )
+      );
+    }
     if (meOnly) {
       if (!showMeFilter) return [];
       return filtered.filter((row) =>
@@ -3072,7 +3158,7 @@ export function DailyServicesView() {
       });
     }
     return filtered;
-  }, [agentFilterLabel, assignees, filtered, meOnly, meSlug, showMeFilter]);
+  }, [agentFilterLabel, assignees, filtered, isExternalAgent, meOnly, meSlug, showMeFilter]);
 
   const myMonitoredServiceIds = useMemo(() => {
     if (!meSlug.trim()) return [];
@@ -4258,6 +4344,8 @@ export function DailyServicesView() {
                 isManual: true,
                 source: "ui",
                 user_id: session?.slug || session?.displayName || "",
+                flightNumber: row.vol,
+                meetingTime: row.rdv1,
               }),
             });
 
@@ -4443,13 +4531,21 @@ export function DailyServicesView() {
       className={cn(
         "relative mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6",
         showPrepModeBar && "pb-28 sm:pb-24",
-        planningValidatedBanner && "pt-10 sm:pt-11"
+        (planningValidatedBanner || escaleNotice) && "pt-10 sm:pt-11"
       )}
     >
       {showPrepModeBar ? (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200 dark:border-amber-400/30 dark:bg-amber-400/10">
           <span className="font-semibold">Mode Préparation</span> : les agents ne
           voient pas encore ces changements (aucune notification envoyée).
+        </div>
+      ) : null}
+      {escaleNotice ? (
+        <div
+          role="status"
+          className="fixed top-14 inset-x-0 z-30 border-b border-sky-700/30 bg-sky-700 px-4 py-2.5 text-center text-sm font-medium text-white shadow-sm"
+        >
+          {escaleNotice}
         </div>
       ) : null}
       {planningValidatedBanner ? (
@@ -4466,8 +4562,14 @@ export function DailyServicesView() {
           <h1 className="text-2xl font-semibold tracking-tight">
             Planning du jour
           </h1>
+          {isExternalAgent ? (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Vos missions assignées uniquement.
+            </p>
+          ) : null}
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            {agentLabels.map((label) => {
+            {!isExternalAgent
+              ? agentLabels.map((label) => {
               const status = agentStatusByLabel[label] ?? "black";
               const isNavigable = status !== "black";
               return (
@@ -4505,15 +4607,16 @@ export function DailyServicesView() {
                   <span className="truncate max-w-[9rem]">{label}</span>
                 </Badge>
               );
-            })}
+            })
+              : null}
           </div>
         </div>
       </div>
 
       <div className="mb-3 mt-1 px-1 text-sm font-medium text-gray-400">
-        {totalServicesDayLabel}{" "}
+          {isExternalAgent ? "Vos services : " : totalServicesDayLabel}{" "}
         <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs font-bold text-white">
-          {filtered.length}
+          {isExternalAgent ? visibleRows.length : filtered.length}
         </span>
       </div>
 
@@ -4598,7 +4701,7 @@ export function DailyServicesView() {
             </Button>
           ) : null}
 
-          {showAgentFilterBar ? (
+          {showAgentFilterBar && !isExternalAgent ? (
             <div
               className="flex w-full flex-wrap items-center gap-2 border-t border-border/60 pt-2 sm:w-auto sm:border-t-0 sm:pt-0"
               role="group"
@@ -4700,8 +4803,8 @@ export function DailyServicesView() {
       ) : displayRows.length === 0 &&
         !(isCrossDayDoChatFocus && focusBlockingRow) ? (
         <p className="rounded-xl border border-dashed px-4 py-12 text-center text-muted-foreground">
-          {meOnly
-            ? "Aucun service assigné à vous"
+          {isExternalAgent || meOnly
+            ? "Aucun service ne vous est assigné pour cette journée"
             : agentFilterLabel?.trim()
               ? planningDisplayNameEquals(agentFilterLabel.trim(), NA_FILTER_LABEL)
                 ? "Aucune mission non assignée ni en alarme 🚨"

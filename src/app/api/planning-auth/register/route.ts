@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 
 import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
+import { isExternalPlanningAgent } from "@/lib/auth/planning-external";
 import {
   displayNameForPlanningAuthSlug,
   isAllowedPlanningAuthSlug,
@@ -33,7 +34,10 @@ export async function POST(request: Request) {
   const password = typeof b.password === "string" ? b.password : "";
   const deviceId = typeof b.deviceId === "string" ? b.deviceId.trim() : "";
 
-  if (!slug || isPlanningAssignmentOnlySlug(slug)) {
+  if (
+    !slug ||
+    (isPlanningAssignmentOnlySlug(slug) && !isExternalPlanningAgent({ slug }))
+  ) {
     return NextResponse.json({ error: "Prénom non autorisé." }, { status: 400 });
   }
   if (password.length < 6) {
@@ -146,5 +150,9 @@ export async function POST(request: Request) {
     slug: agentNameToSlug(displayName),
     displayName,
     token: sessionToken,
+    isExternal: isExternalPlanningAgent({
+      slug: agentNameToSlug(displayName),
+      displayName,
+    }),
   });
 }

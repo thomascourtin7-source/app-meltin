@@ -14,6 +14,7 @@ import {
   type AgentsAuthRow,
 } from "@/lib/planning/planning-agent-catalog";
 import { serializeAssigneeSlugsToName } from "@/lib/planning/planning-team";
+import { notifyExternalAssigneeChange } from "@/lib/planning/notify-external-assignee";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 type Body = {
@@ -37,6 +38,8 @@ type Body = {
   source?: unknown;
   automated?: unknown;
   user_id?: unknown;
+  flightNumber?: unknown;
+  meetingTime?: unknown;
 };
 
 async function insertServiceAssignmentLogIfChanged(
@@ -381,6 +384,14 @@ export async function POST(request: Request) {
             lookupIds: uniqueLookupIds,
             assigneeLabel: assigneeName,
           });
+          await notifyExternalAssigneeChange({
+            oldAgent: oldAgentForLog,
+            newAgent: assigneeName,
+            serviceId,
+            serviceDate,
+            vol: typeof b.flightNumber === "string" ? b.flightNumber : "",
+            rdv: typeof b.meetingTime === "string" ? b.meetingTime : "",
+          });
           return NextResponse.json({ ok: true, assignment: first, sheetSync });
         } catch {
           // fallthrough to normal error
@@ -402,6 +413,15 @@ export async function POST(request: Request) {
     serviceDate,
     lookupIds: uniqueLookupIds,
     assigneeLabel: assigneeName,
+  });
+
+  await notifyExternalAssigneeChange({
+    oldAgent: oldAgentForLog,
+    newAgent: assigneeName,
+    serviceId,
+    serviceDate,
+    vol: typeof b.flightNumber === "string" ? b.flightNumber : "",
+    rdv: typeof b.meetingTime === "string" ? b.meetingTime : "",
   });
 
   return NextResponse.json({ ok: true, assignment: data, sheetSync });

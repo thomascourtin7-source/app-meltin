@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { normalizeAgentRole } from "@/lib/auth/agent-role";
+import { isExternalPlanningAgent } from "@/lib/auth/planning-external";
 import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
 import { requirePlanningAgentBearer } from "@/lib/auth/planning-agent-server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -36,10 +37,15 @@ export async function GET(request: Request) {
       ? (data as { name: string }).name.trim()
       : auth.agentName;
   const role = normalizeAgentRole((data as { role?: unknown }).role);
+  const slug = agentNameToSlug(displayName);
 
   return NextResponse.json({
     displayName,
-    slug: agentNameToSlug(displayName),
+    slug,
     role,
+    isExternal: isExternalPlanningAgent({
+      slug,
+      displayName,
+    }),
   });
 }

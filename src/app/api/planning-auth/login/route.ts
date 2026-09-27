@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 
 import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
 import { normalizeAgentRole } from "@/lib/auth/agent-role";
+import { isExternalPlanningAgent } from "@/lib/auth/planning-external";
 import { slugFromDisplayName } from "@/lib/auth/planning-auth-slugs";
 import { isPlanningAssignmentOnlySlug } from "@/lib/planning/planning-team";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -71,7 +72,16 @@ export async function POST(request: Request) {
     : nameRaw;
 
   const slug = slugFromDisplayName(dbName) ?? agentNameToSlug(dbName);
-  if (!slug || isPlanningAssignmentOnlySlug(slug)) {
+  if (!slug) {
+    return NextResponse.json(
+      { error: "Prénom non reconnu pour cette application." },
+      { status: 400 }
+    );
+  }
+  if (
+    isPlanningAssignmentOnlySlug(slug) &&
+    !isExternalPlanningAgent({ slug, displayName: dbName })
+  ) {
     return NextResponse.json(
       { error: "Prénom non reconnu pour cette application." },
       { status: 400 }
@@ -80,6 +90,10 @@ export async function POST(request: Request) {
 
   const displayName = dbName;
   const role = normalizeAgentRole((row as { role?: unknown }).role);
+  const isExternal = isExternalPlanningAgent({
+    slug,
+    displayName,
+  });
   const sessionToken = randomUUID();
 
   // Session multi-appareils : enregistre un token indépendant (ne déconnecte pas les autres).
@@ -97,5 +111,6 @@ export async function POST(request: Request) {
     displayName,
     token: sessionToken,
     role,
+    isExternal,
   });
 }

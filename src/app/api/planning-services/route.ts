@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 
+import { requirePlanningAgentBearer } from "@/lib/auth/planning-agent-server";
 import { fetchDailyServicesFromSheet, GoogleSheetsPermissionDeniedError } from "@/lib/google/fetch-daily-services";
 import { resolveRequestUrl } from "@/lib/http/resolve-request-url";
 import { normalizeCanonicalDateKey } from "@/lib/planning/daily-services";
 import type { DailyServiceRow } from "@/lib/planning/daily-services-types";
+import { filterPlanningRowsForAgent } from "@/lib/planning/filter-planning-rows-for-agent";
 import {
   PLANNING_SOURCE_MISSING_ERROR,
   readEnvPlanningSpreadsheetId,
@@ -15,6 +17,9 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function GET(request: Request) {
   try {
+    const session = await requirePlanningAgentBearer(request);
+    if (!session.ok) return session.response;
+
     const url = resolveRequestUrl(request);
     const dateParam = url.searchParams.get("date")?.trim();
     const filterDateIso = dateParam
@@ -22,6 +27,21 @@ export async function GET(request: Request) {
       : undefined;
     const anchorDateIso = filterDateIso ?? todayIsoParis();
     const date = anchorDateIso;
+
+    async function rowsForViewer(
+      rows: DailyServiceRow[],
+      dateIso?: string | null
+    ): Promise<DailyServiceRow[]> {
+      if (!session.isExternal) return rows;
+      const db = getSupabaseAdmin();
+      if (!db) return [];
+      return filterPlanningRowsForAgent(
+        db,
+        rows,
+        session.agentName,
+        dateIso ?? undefined
+      );
+    }
 
     console.log("--- REQUÊTE REÇUE ---", {
       date,
@@ -71,11 +91,14 @@ export async function GET(request: Request) {
         }
       }
 
-      const rows = [...rowsByKey.values()].sort((a, b) => {
-        const d = a.dateIso.localeCompare(b.dateIso);
-        if (d !== 0) return d;
-        return a.rdv1.localeCompare(b.rdv1);
-      });
+      const rows = await rowsForViewer(
+        [...rowsByKey.values()].sort((a, b) => {
+          const d = a.dateIso.localeCompare(b.dateIso);
+          if (d !== 0) return d;
+          return a.rdv1.localeCompare(b.rdv1);
+        }),
+        filterDateIso
+      );
 
       return NextResponse.json({
         rows,
@@ -107,9 +130,10 @@ export async function GET(request: Request) {
     }
 
     console.log("TENTATIVE LECTURE GOOGLE:", finalSpreadsheetId);
-    const { rows, debug } = await fetchDailyServicesFromSheet(finalSpreadsheetId, {
+    const { rows: sheetRows, debug } = await fetchDailyServicesFromSheet(finalSpreadsheetId, {
       filterDateIso,
     });
+    const rows = await rowsForViewer(sheetRows, filterDateIso);
 
     console.log("RÉSULTAT LECTURE GOOGLE:", {
       spreadsheetId: finalSpreadsheetId,
@@ -121,7 +145,7 @@ export async function GET(request: Request) {
       uniqueParsedDates: debug?.uniqueParsedDates,
     });
 
-    if (filterDateIso && rows.length === 0) {
+    if (filterDateIso && sheetRows.length === 0) {
       // Garde-fou : aucune ligne pour la date demandée. On ne purge RIEN
       // (la table `services` est en upsert seul) ; on journalise pour diagnostic
       // (mauvaise feuille résolue, format de date, ou colonnes manquantes ?).

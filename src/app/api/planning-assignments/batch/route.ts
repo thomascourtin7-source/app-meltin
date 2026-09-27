@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requirePlanningAgentBearer } from "@/lib/auth/planning-agent-server";
+import { storedAssigneeIncludesAgent } from "@/lib/planning/filter-planning-rows-for-agent";
 import { reconcileAssignmentsByCanonicalId } from "@/lib/planning/planning-batch-reconcile";
 import {
   parsePlanningRowPayloads,
@@ -8,6 +10,9 @@ import {
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
+  const session = await requirePlanningAgentBearer(request);
+  if (!session.ok) return session.response;
+
   const supabase = getSupabaseAdmin();
   if (!supabase) {
     return NextResponse.json(
@@ -40,6 +45,21 @@ export async function POST(request: Request) {
   const rows = parsePlanningRowPayloads(b.rows);
   const spreadsheetId =
     typeof b.spreadsheetId === "string" ? b.spreadsheetId.trim() : "";
+
+  const restrictIfExternal = (payload: {
+    assigneesByServiceId: Record<string, string>;
+    etaTimeByServiceId: Record<string, string | null>;
+  }) => {
+    if (!session.isExternal) return payload;
+    const assigneesByServiceId: Record<string, string> = {};
+    const etaTimeByServiceId: Record<string, string | null> = {};
+    for (const [id, name] of Object.entries(payload.assigneesByServiceId)) {
+      if (!storedAssigneeIncludesAgent(name, session.agentName)) continue;
+      assigneesByServiceId[id] = name;
+      etaTimeByServiceId[id] = payload.etaTimeByServiceId[id] ?? null;
+    }
+    return { assigneesByServiceId, etaTimeByServiceId };
+  };
 
   if (serviceDate && rows.length > 0) {
     const { data: assignments, error: assignError } = await supabase
@@ -86,7 +106,7 @@ export async function POST(request: Request) {
       reports
     );
 
-    return NextResponse.json(reconciled);
+    return NextResponse.json(restrictIfExternal(reconciled));
   }
 
   if (serviceIds.length === 0) {
@@ -121,5 +141,7 @@ export async function POST(request: Request) {
         : null;
   }
 
-  return NextResponse.json({ assigneesByServiceId, etaTimeByServiceId });
+  return NextResponse.json(
+    restrictIfExternal({ assigneesByServiceId, etaTimeByServiceId })
+  );
 }

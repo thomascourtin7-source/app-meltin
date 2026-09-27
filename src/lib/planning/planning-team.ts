@@ -67,12 +67,20 @@ export const PLANNING_TECHNICAL_ADMIN_SLUGS = ["javed_ordo"] as const;
 export const PLANNING_ASSIGNMENT_ONLY_SLUGS = [
   "aida",
   "yaya",
-  "escale",
   "autre",
 ] as const;
 
+/** Agents externes : connexion OK, vue limitée à leurs propres assignations. */
+export const PLANNING_EXTERNAL_AGENT_SLUGS = ["escale"] as const;
+
 export function isPlanningAssignmentOnlySlug(slug: string): boolean {
   return (PLANNING_ASSIGNMENT_ONLY_SLUGS as readonly string[]).includes(slug);
+}
+
+export function isPlanningExternalAgentSlug(slug: string): boolean {
+  return (PLANNING_EXTERNAL_AGENT_SLUGS as readonly string[]).includes(
+    slug.trim().toLowerCase()
+  );
 }
 
 export function isPlanningInternalAgentSlug(slug: string): boolean {
@@ -114,6 +122,7 @@ export function isPlanningOperationalAgentSlug(slug: string): boolean {
   if (isPlanningTechnicalAdminSlug(s) || isPlanningAssignmentOnlySlug(s)) {
     return false;
   }
+  if (isPlanningExternalAgentSlug(s)) return false;
   if (isPlanningInternalAgentSlug(s)) return true;
   if (KNOWN_PLANNING_ASSIGNEE_SLUGS.includes(s)) return false;
   return looksLikeAgentSlug(s);
@@ -235,7 +244,8 @@ export function assignableAgents(): PlanningAgentOption[] {
       o.value === DEFAULT_PLANNING_ASSIGNEE_SLUG ||
       isUrgentAssignee(o.value) ||
       isPlanningOperationalAgentSlug(o.value) ||
-      isPlanningAssignmentOnlySlug(o.value)
+      isPlanningAssignmentOnlySlug(o.value) ||
+      isPlanningExternalAgentSlug(o.value)
     );
   });
 }
@@ -267,7 +277,8 @@ export function isPlanningSelectableAssigneeValue(value: string): boolean {
   if (isPlanningTechnicalAdminSlug(value)) return false;
   if (
     isPlanningOperationalAgentSlug(value) ||
-    isPlanningAssignmentOnlySlug(value)
+    isPlanningAssignmentOnlySlug(value) ||
+    isPlanningExternalAgentSlug(value)
   ) {
     return true;
   }
@@ -281,7 +292,8 @@ export function isPlanningSelectableAssigneeValue(value: string): boolean {
   }
   return (
     isPlanningOperationalAgentSlug(normalized) ||
-    isPlanningAssignmentOnlySlug(normalized)
+    isPlanningAssignmentOnlySlug(normalized) ||
+    isPlanningExternalAgentSlug(normalized)
   );
 }
 
@@ -293,7 +305,12 @@ export function isServiceAssignedToSessionAgent(
   sessionSlug: string | null | undefined
 ): boolean {
   const slug = sessionSlug?.trim().toLowerCase() ?? "";
-  if (!slug || !isPlanningOperationalAgentSlug(slug)) return false;
+  if (
+    !slug ||
+    (!isPlanningOperationalAgentSlug(slug) && !isPlanningExternalAgentSlug(slug))
+  ) {
+    return false;
+  }
   const list = normalizeAssigneeListFromStored(assigneesRaw);
   return list.some((entry) => entry === slug);
 }

@@ -18,6 +18,7 @@ export type PlanningAuthSession = {
   displayName: string;
   token: string;
   role?: AgentAuthRole;
+  isExternal?: boolean;
 };
 
 export function getOrCreatePlanningDeviceId(): string {
@@ -49,8 +50,15 @@ function parseSession(raw: string | null): PlanningAuthSession | null {
     const token = typeof o.token === "string" ? o.token.trim() : "";
     const roleRaw = typeof o.role === "string" ? o.role.trim() : "";
     const role = roleRaw ? normalizeAgentRole(roleRaw) : undefined;
+    const isExternal = o.isExternal === true;
     if (!slug || !displayName || !token) return null;
-    return { slug, displayName, token, ...(role ? { role } : {}) };
+    return {
+      slug,
+      displayName,
+      token,
+      ...(role ? { role } : {}),
+      ...(isExternal ? { isExternal: true } : {}),
+    };
   } catch {
     return null;
   }
@@ -80,6 +88,7 @@ export function persistPlanningAuthSession(session: PlanningAuthSession): void {
   const normalized: PlanningAuthSession = {
     ...session,
     ...(session.role ? { role: normalizeAgentRole(session.role) } : {}),
+    ...(session.isExternal ? { isExternal: true } : {}),
   };
   window.localStorage.setItem(
     MELTIN_PLANNING_AUTH_SESSION_KEY,

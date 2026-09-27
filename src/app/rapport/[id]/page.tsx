@@ -6,6 +6,7 @@ import useSWR, { useSWRConfig } from "swr";
 
 import { Pencil } from "lucide-react";
 
+import { planningAuthHeaders } from "@/lib/auth/planning-auth-headers";
 import { Button } from "@/components/ui/button";
 import { ServiceDoChatSection } from "@/components/client-chat/service-do-chat-section";
 import { ServicePhotoCopyPreview } from "@/components/service-photo-copy-preview";
@@ -126,7 +127,7 @@ type ServiceReportRow = {
 };
 
 async function jsonFetcher<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: planningAuthHeaders() });
   const data: unknown = await res.json();
   if (!res.ok) {
     const msg =

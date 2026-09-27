@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { planningAuthHeaders } from "@/lib/auth/planning-auth-headers";
 import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
 import { usePlanningAgentCatalog } from "@/hooks/use-planning-agent-catalog";
 import { useLocalSpreadsheetId } from "@/hooks/use-local-spreadsheet-id";
@@ -69,7 +70,8 @@ async function fetchPlanningRows(opts: {
   dateIso: string;
 }): Promise<{ rows: DailyServiceRow[]; spreadsheetId: string }> {
   const res = await fetch(
-    `/api/planning-services?date=${encodeURIComponent(opts.dateIso)}`
+    `/api/planning-services?date=${encodeURIComponent(opts.dateIso)}`,
+    { headers: planningAuthHeaders() }
   );
   const json = (await res.json()) as {
     rows?: DailyServiceRow[];

@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { normalizeAgentRole } from "@/lib/auth/agent-role";
 import {
   PLANNING_ASSIGNEE_OPTIONS,
   authAgents,
+  isPlanningExternalAgentSlug,
 } from "@/lib/planning/planning-team";
 
 type AgentAuthSeed = {
@@ -12,6 +12,7 @@ type AgentAuthSeed = {
   role: "agent" | "admin";
   can_login: boolean;
   password: string | null;
+  is_external: boolean;
 };
 
 function buildAgentAuthSeeds(): AgentAuthSeed[] {
@@ -25,12 +26,14 @@ function buildAgentAuthSeeds(): AgentAuthSeed[] {
     // vérité, alignée sur le contrôle front-end et serveur). Un agent interne
     // opérationnel hors de cette liste (ex. Rayane) reste un agent STANDARD.
     const role: AgentAuthSeed["role"] = "agent";
+    const isExternal = isPlanningExternalAgentSlug(option.value);
     seeds.push({
       name: option.label,
       email: null,
       role,
       can_login: canLogin,
       password: null,
+      is_external: isExternal,
     });
   }
 
@@ -69,30 +72,49 @@ export async function initAgentsAuth(supabase: SupabaseClient): Promise<void> {
         continue;
       }
 
+      const payload: Record<string, unknown> = {
+        email: seed.email,
+        can_login: seed.can_login,
+        is_external: seed.is_external,
+        ...(seed.can_login ? {} : { password: null }),
+      };
       const { error } = await supabase
         .from("agents_auth")
-        .update({
-          email: seed.email,
-          can_login: seed.can_login,
-          ...(seed.can_login ? {} : { password: null }),
-        })
+        .update(payload)
         .eq("name", seed.name);
 
-      if (error) {
+      if (error && /is_external/i.test(error.message)) {
+        delete payload.is_external;
+        const retry = await supabase
+          .from("agents_auth")
+          .update(payload)
+          .eq("name", seed.name);
+        if (retry.error) {
+          throw new Error(retry.error.message);
+        }
+      } else if (error) {
         throw new Error(error.message);
       }
       continue;
     }
 
-    const { error } = await supabase.from("agents_auth").insert({
+    const insertPayload: Record<string, unknown> = {
       name: seed.name,
       email: seed.email,
       role: seed.role,
       can_login: seed.can_login,
       password: seed.password,
-    });
+      is_external: seed.is_external,
+    };
+    const { error } = await supabase.from("agents_auth").insert(insertPayload);
 
-    if (error) {
+    if (error && /is_external/i.test(error.message)) {
+      delete insertPayload.is_external;
+      const retry = await supabase.from("agents_auth").insert(insertPayload);
+      if (retry.error) {
+        throw new Error(retry.error.message);
+      }
+    } else if (error) {
       throw new Error(error.message);
     }
   }

@@ -4,9 +4,11 @@ import { CalendarDays, Settings2 } from "lucide-react";
 import { HeaderPlanningUser } from "@/components/auth/header-planning-user";
 import { ChatNavButton } from "@/components/chat/chat-nav-button";
 import { buttonVariants } from "@/components/ui/button";
+import { usePlanningExternalClient } from "@/hooks/use-planning-external-client";
 import { cn } from "@/lib/utils";
 
 export function SiteHeader() {
+  const isExternalAgent = usePlanningExternalClient();
   return (
     <header className="sticky top-0 z-40 border-b border-border/80 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
@@ -21,7 +23,7 @@ export function SiteHeader() {
         </Link>
         <div className="flex items-center gap-2">
           <HeaderPlanningUser />
-          <ChatNavButton />
+          {isExternalAgent ? null : <ChatNavButton />}
           <Link
             href="/configuration"
             className={cn(

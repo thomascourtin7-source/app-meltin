@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { Chat } from "@/components/chat/Chat";
 import { SiteHeader } from "@/components/site-header";
+import { usePlanningExternalClient } from "@/hooks/use-planning-external-client";
 
 /**
  * Hors route /chat : header + zone principale avec chat desktop en colonne.
@@ -15,6 +16,7 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
   const isChatPage = pathname === "/chat";
   const isLoginPage = pathname === "/login";
   const isPublicTrackPage = pathname.startsWith("/track/");
+  const isExternalAgent = usePlanningExternalClient();
 
   if (isPublicTrackPage) {
     return <>{children}</>;
@@ -34,11 +36,13 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
         <div className="flex min-h-0 min-h-[100dvh] w-full flex-1 flex-col">
           <SiteHeader />
           <div className="flex min-h-0 flex-1">
+            {isExternalAgent ? null : (
             <aside className="hidden md:block md:w-80 md:shrink-0 md:border-r md:border-border/80 md:bg-background">
               <div className="sticky top-14 h-[calc(100dvh-3.5rem)]">
                 <Chat variant="desktop" />
               </div>
             </aside>
+            )}
             <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
           </div>
         </div>

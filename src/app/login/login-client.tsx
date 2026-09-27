@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { agentNameToSlug } from "@/lib/auth/agent-name-slug";
 import { normalizeAgentRole } from "@/lib/auth/agent-role";
+import { isExternalPlanningAgent } from "@/lib/auth/planning-external";
 import {
   getOrCreatePlanningDeviceId,
   persistPlanningAuthSession,
@@ -41,6 +42,7 @@ type AuthOkPayload = {
   displayName: string;
   token: string;
   role?: string;
+  isExternal?: boolean;
   error?: string;
 };
 
@@ -109,6 +111,12 @@ export function LoginClient() {
         displayName: payload.displayName,
         token: payload.token,
         role: normalizeAgentRole(payload.role),
+        isExternal:
+          payload.isExternal === true ||
+          isExternalPlanningAgent({
+            slug: payload.slug,
+            displayName: payload.displayName,
+          }),
       });
       await ensureServiceWorkerRegistered();
       const sub = await subscribeChatPush(payload.displayName);
