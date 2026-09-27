@@ -20,6 +20,9 @@ export async function GET(request: Request) {
     const session = await requirePlanningAgentBearer(request);
     if (!session.ok) return session.response;
 
+    const isExternal = session.isExternal;
+    const agentName = session.agentName;
+
     const url = resolveRequestUrl(request);
     const dateParam = url.searchParams.get("date")?.trim();
     const filterDateIso = dateParam
@@ -32,13 +35,13 @@ export async function GET(request: Request) {
       rows: DailyServiceRow[],
       dateIso?: string | null
     ): Promise<DailyServiceRow[]> {
-      if (!session.isExternal) return rows;
+      if (!isExternal) return rows;
       const db = getSupabaseAdmin();
       if (!db) return [];
       return filterPlanningRowsForAgent(
         db,
         rows,
-        session.agentName,
+        agentName,
         dateIso ?? undefined
       );
     }

@@ -79,26 +79,25 @@ export async function requirePlanningAgentBearer(
         .maybeSingle()
     : flagged;
 
-  const agentRow = agentLookup.data;
+  const agentRow = agentLookup.data as {
+    name?: unknown;
+    is_active?: unknown;
+    is_external?: unknown;
+  } | null;
 
-  if (agentRow && (agentRow as { is_active?: boolean }).is_active === false) {
+  if (agentRow && agentRow.is_active === false) {
     return {
       ok: false,
       response: NextResponse.json({ error: "Compte introuvable." }, { status: 401 }),
     };
   }
 
-  if (
-    agentRow &&
-    typeof (agentRow as { is_external?: unknown }).is_external === "boolean"
-  ) {
-    isExternalFlag = (agentRow as { is_external: boolean }).is_external;
+  if (typeof agentRow?.is_external === "boolean") {
+    isExternalFlag = agentRow.is_external;
   }
 
   const dbName =
-    agentRow && typeof (agentRow as { name?: unknown }).name === "string"
-      ? (agentRow as { name: string }).name.trim()
-      : name;
+    typeof agentRow?.name === "string" ? agentRow.name.trim() : name;
 
   return {
     ok: true,

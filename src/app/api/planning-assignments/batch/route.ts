@@ -13,6 +13,9 @@ export async function POST(request: Request) {
   const session = await requirePlanningAgentBearer(request);
   if (!session.ok) return session.response;
 
+  const isExternal = session.isExternal;
+  const agentName = session.agentName;
+
   const supabase = getSupabaseAdmin();
   if (!supabase) {
     return NextResponse.json(
@@ -50,11 +53,11 @@ export async function POST(request: Request) {
     assigneesByServiceId: Record<string, string>;
     etaTimeByServiceId: Record<string, string | null>;
   }) => {
-    if (!session.isExternal) return payload;
+    if (!isExternal) return payload;
     const assigneesByServiceId: Record<string, string> = {};
     const etaTimeByServiceId: Record<string, string | null> = {};
     for (const [id, name] of Object.entries(payload.assigneesByServiceId)) {
-      if (!storedAssigneeIncludesAgent(name, session.agentName)) continue;
+      if (!storedAssigneeIncludesAgent(name, agentName)) continue;
       assigneesByServiceId[id] = name;
       etaTimeByServiceId[id] = payload.etaTimeByServiceId[id] ?? null;
     }
